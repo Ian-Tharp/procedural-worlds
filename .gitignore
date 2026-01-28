@@ -1,6 +1,9 @@
 # Build output
 /target
 
+# Archive C++ build artifacts
+_archive_v1_cpp/build/
+
 # Cargo.lock is typically committed for binaries, ignored for libraries
 # Uncomment the next line if this is a library
 # Cargo.lock
