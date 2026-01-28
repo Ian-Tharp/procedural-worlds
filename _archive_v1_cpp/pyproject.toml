@@ -1,0 +1,20 @@
+[project]
+name = "procedural-worlds"
+version = "0.1.0"
+description = ""
+readme = "README.md"
+requires-python = ">=3.12"
+authors = [
+    { name = "Ian Tharp", email = "praht09ian@gmail.com" }
+]
+dependencies = [
+    "fastapi>=0.115.0",
+    "uvicorn>=0.31.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.uv]
+dev-dependencies = []

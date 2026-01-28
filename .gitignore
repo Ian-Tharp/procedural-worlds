@@ -1,0 +1,34 @@
+# Build output
+/target
+
+# Cargo.lock is typically committed for binaries, ignored for libraries
+# Uncomment the next line if this is a library
+# Cargo.lock
+
+# IDE and editor files
+.idea/
+.vscode/
+.vs/
+*.swp
+*.swo
+*~
+
+# Cursor
+.cursor/
+
+# Claude
+.claude/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Debug files
+*.pdb
+
+# Log files
+*.log
+
+# Environment files
+.env
+.env.local

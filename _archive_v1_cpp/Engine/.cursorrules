@@ -1,0 +1,186 @@
+# Procedural Worlds Engine Implementation Rules
+
+## Engine Architecture Context
+
+### Directory Structure
+```
+Engine/
+├── assets/          # Game assets (textures, models, sounds)
+├── include/         # Public headers
+├── scripts/         # Python scripts for procedural generation
+├── src/            # Implementation files
+└── third_party/    # External libraries (if not using vcpkg)
+```
+
+### Core Components
+
+#### Main Application Loop (main.cpp)
+- Initializes SDL2, OpenGL context, and Python interpreter
+- Manages the main game loop
+- Handles event processing and frame timing
+- Entry point for the entire engine
+
+#### EngineGUI (EngineGUI.h/cpp)
+- Manages ImGui context and rendering
+- Provides editor interface
+- Hosts viewport for 3D scene display
+- Handles menu system and tool windows
+
+#### Viewport (Viewport.h/cpp)
+- Manages framebuffer for off-screen rendering
+- Handles resize events
+- Provides texture for ImGui display
+- Future: Will contain 3D scene rendering
+
+#### PythonInterface (PythonInterface.h/cpp)
+- Embeds Python interpreter
+- Executes Python scripts
+- Future: Will expose engine API to Python
+
+## Implementation Guidelines
+
+### Adding New Engine Components
+
+1. **Header Files**
+   - Place in `include/` directory
+   - Use `#pragma once` for include guards
+   - Follow naming convention: `ComponentName.h`
+
+2. **Source Files**
+   - Place in `src/` directory
+   - Include corresponding header first
+   - Follow naming convention: `ComponentName.cpp`
+
+3. **Class Design**
+   ```cpp
+   class ComponentName {
+   public:
+       void Init(...);      // Initialization
+       void Update(...);    // Per-frame update (if needed)
+       void Render();       // Rendering (if applicable)
+       void Shutdown();     // Cleanup
+       
+   private:
+       void _internalMethod();  // Prefix with underscore
+       Type memberVariable;     // No prefix for members
+   };
+   ```
+
+### OpenGL Best Practices
+
+1. **Resource Management**
+   - Always check framebuffer completeness
+   - Clean up OpenGL resources in destructors
+   - Use RAII wrappers where appropriate
+
+2. **Error Handling**
+   - Check GL errors in debug builds
+   - Log errors with context information
+   - Fail gracefully with fallbacks
+
+3. **State Management**
+   - Minimize state changes
+   - Restore previous state when needed
+   - Use state tracking to avoid redundant calls
+
+### Python Integration Guidelines
+
+1. **Script Location**
+   - Place scripts in `Engine/scripts/`
+   - Use descriptive names: `terrain_generator.py`
+
+2. **Binding New Functions**
+   ```cpp
+   // In PythonInterface or dedicated binding file
+   PYBIND11_MODULE(procedural_worlds, m) {
+       m.def("function_name", &function_name, "Description");
+   }
+   ```
+
+3. **Error Handling**
+   - Always wrap Python calls in try-catch
+   - Log Python errors clearly
+   - Provide fallback behavior
+
+### ImGui Integration
+
+1. **Window Management**
+   - Each major feature gets its own window
+   - Use consistent window flags
+   - Save/restore window positions
+
+2. **Custom Widgets**
+   - Place in separate functions
+   - Prefix with `DrawCustom` or similar
+   - Make reusable across different windows
+
+## Common Tasks
+
+### Adding a New Render Pass
+1. Create framebuffer in Viewport or new class
+2. Implement render function
+3. Integrate with main render loop
+4. Update documentation in Technical Details.md
+
+### Exposing Engine Feature to Python
+1. Create C++ API function
+2. Add pybind11 binding
+3. Write example Python script
+4. Update Project Overview.md
+
+### Adding Editor Tool
+1. Create new ImGui window in EngineGUI
+2. Add menu item to access it
+3. Implement tool logic
+4. Update roadmap when complete
+
+## Performance Considerations
+
+### Rendering
+- Target 60 FPS minimum
+- Profile before optimizing
+- Use GPU timing for accurate measurements
+- Consider batching draw calls
+
+### Memory
+- Prefer stack allocation for small objects
+- Use object pools for frequently allocated items
+- Monitor memory usage in debug builds
+
+### Python
+- Minimize Python calls in hot paths
+- Cache Python objects when possible
+- Consider C++ alternatives for performance-critical code
+
+## Debugging Tips
+
+1. **OpenGL Issues**
+   - Use RenderDoc for GPU debugging
+   - Enable GL_KHR_debug for error callbacks
+   - Check framebuffer status
+
+2. **Python Issues**
+   - Print Python traceback
+   - Use Python debugger when needed
+   - Check Python path and imports
+
+3. **Memory Issues**
+   - Use AddressSanitizer
+   - Enable CRT debug heap (Windows)
+   - Check for OpenGL resource leaks
+
+## Future Considerations
+
+When implementing new features, consider:
+1. How it fits with the LLM integration plans
+2. Whether it should be exposed to Python
+3. How it affects the modding API
+4. Performance implications for procedural generation
+
+## Documentation Updates
+
+After implementing features, update:
+1. Technical Details.md - for architecture changes
+2. Project Overview.md - for new components
+3. Development Roadmap.md - mark completed items
+4. Build Instructions.md - if build process changes 

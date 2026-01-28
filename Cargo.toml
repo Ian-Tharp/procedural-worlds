@@ -1,0 +1,51 @@
+[package]
+name = "procedural_worlds"
+version = "0.1.0"
+edition = "2024"
+authors = ["Ian Tharp <praht09ian@gmail.com>"]
+description = "AI-driven voxel game engine for collaborative world-building"
+repository = "https://github.com/yourusername/procedural-worlds"
+license = "MIT"
+
+[dependencies]
+# Bevy game engine (ECS, rendering, windowing, input)
+bevy = { version = "0.15", features = ["dynamic_linking"] }
+
+# Editor UI (immediate mode GUI like ImGui)
+bevy_egui = "0.31"
+
+# Math library (vectors, matrices, quaternions)
+glam = "0.29"
+
+# Noise generation for terrain (Perlin, Simplex, etc.)
+noise = "0.9"
+
+# Parallel processing for chunk meshing
+rayon = "1.10"
+
+# Serialization for save files, configs
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# Logging
+log = "0.4"
+env_logger = "0.11"
+
+# Random number generation
+rand = "0.8"
+
+[dev-dependencies]
+criterion = "0.5"  # Benchmarking
+
+# Faster compilation during development
+[profile.dev]
+opt-level = 1
+
+# Optimize dependencies even in dev builds
+[profile.dev.package."*"]
+opt-level = 3
+
+# Release optimizations
+[profile.release]
+lto = true
+codegen-units = 1
