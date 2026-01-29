@@ -1,5 +1,9 @@
 //! Editor systems - UI panels, viewport, tools
 
+pub mod debug_overlay;
+
+pub use debug_overlay::DebugOverlayPlugin;
+
 use bevy::prelude::*;
 use bevy::diagnostic::{DiagnosticsStore, FrameTimeDiagnosticsPlugin};
 use bevy_egui::{egui, EguiContexts};

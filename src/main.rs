@@ -29,6 +29,7 @@ fn main() {
         .add_plugins(EguiPlugin)
         // Our custom plugins
         .add_plugins(editor::EditorPlugin)
+        .add_plugins(editor::DebugOverlayPlugin)
         .add_plugins(engine::CameraPlugin)
         .add_plugins(world::WorldPlugin)
         .add_plugins(physics::PhysicsPlugin)
