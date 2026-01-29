@@ -25,6 +25,7 @@ use bevy::prelude::*;
 pub mod player;
 
 // Re-export commonly used items
+#[allow(unused_imports)]
 pub use player::spawn_player_flying;
 
 // These are used but re-exported for public API completeness

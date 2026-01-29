@@ -108,7 +108,6 @@ impl Default for PlayerCameraBundle {
 ///     let player = spawn_player(&mut commands, Vec3::new(32.0, 50.0, 32.0));
 /// }
 /// ```
-#[allow(dead_code)]
 pub fn spawn_player(commands: &mut Commands, position: Vec3) -> Entity {
     commands
         .spawn(PlayerBundle {
@@ -122,6 +121,7 @@ pub fn spawn_player(commands: &mut Commands, position: Vec3) -> Entity {
 }
 
 /// Spawn a player in flying mode (for creative/editor use)
+#[allow(dead_code)]
 pub fn spawn_player_flying(commands: &mut Commands, position: Vec3) -> Entity {
     commands
         .spawn(PlayerBundle {

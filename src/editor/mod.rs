@@ -4,6 +4,8 @@ use bevy::prelude::*;
 use bevy::diagnostic::{DiagnosticsStore, FrameTimeDiagnosticsPlugin};
 use bevy_egui::{egui, EguiContexts};
 
+use crate::actors::{Movement, Player};
+
 /// Plugin for editor UI systems
 pub struct EditorPlugin;
 
@@ -130,7 +132,8 @@ fn editor_ui_system(
     camera_query: Query<&Transform, With<Camera3d>>,
     metrics: Res<PerformanceMetrics>,
     mut chunk_manager: Option<ResMut<crate::world::ChunkManager>>,
-    mut physics: Option<ResMut<crate::physics::PlayerPhysics>>,
+    physics: Option<Res<crate::physics::PlayerPhysics>>,
+    mut player_query: Query<&mut Movement, With<Player>>,
 ) {
     // Update camera position and rotation for display
     if let Ok(transform) = camera_query.get_single() {
@@ -223,23 +226,23 @@ fn editor_ui_system(
 
                         ui.separator();
 
-                        // Physics mode toggles
-                        if let Some(ref mut phys) = physics {
+                        // Physics mode toggles - modify Movement component directly
+                        if let Ok(mut movement) = player_query.get_single_mut() {
                             ui.horizontal(|ui| {
-                                let flying_text = if phys.flying {
+                                let flying_text = if movement.flying {
                                     egui::RichText::new("Flying").color(egui::Color32::from_rgb(100, 255, 100))
                                 } else {
                                     egui::RichText::new("Walking").color(egui::Color32::from_rgb(255, 200, 100))
                                 };
-                                ui.checkbox(&mut phys.flying, flying_text);
+                                ui.checkbox(&mut movement.flying, flying_text);
                             });
                             ui.horizontal(|ui| {
-                                let noclip_text = if phys.noclip {
+                                let noclip_text = if movement.noclip {
                                     egui::RichText::new("Noclip").color(egui::Color32::from_rgb(255, 100, 100))
                                 } else {
                                     egui::RichText::new("Collision").color(egui::Color32::from_rgb(150, 150, 150))
                                 };
-                                ui.checkbox(&mut phys.noclip, noclip_text);
+                                ui.checkbox(&mut movement.noclip, noclip_text);
                             });
                             ui.separator();
                         }
@@ -248,6 +251,12 @@ fn editor_ui_system(
                         ui.label("  WASD - Move");
                         if let Some(ref phys) = physics {
                             if phys.flying {
+                                ui.label("  Space/Ctrl - Up/Down");
+                            } else {
+                                ui.label("  Space - Jump");
+                            }
+                        } else if let Ok(movement) = player_query.get_single() {
+                            if movement.flying {
                                 ui.label("  Space/Ctrl - Up/Down");
                             } else {
                                 ui.label("  Space - Jump");
