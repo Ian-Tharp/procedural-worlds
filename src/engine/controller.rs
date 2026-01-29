@@ -19,6 +19,7 @@ use bevy::window::{CursorGrabMode, PrimaryWindow};
 use bevy_egui::EguiContexts;
 
 use crate::actors::{Movement, Player, Velocity};
+use crate::editor::EditorUiSet;
 use crate::physics::PlayerPhysics;
 
 use super::input::{ActionStates, InputAction};
@@ -122,8 +123,8 @@ pub struct ControllerPlugin;
 impl Plugin for ControllerPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<CursorState>()
-            // Input runs BEFORE physics
-            .configure_sets(Update, ControllerInputSet.before(crate::physics::PhysicsSet))
+            // Input runs AFTER editor UI (so egui state is current) and BEFORE physics
+            .configure_sets(Update, ControllerInputSet.after(EditorUiSet).before(crate::physics::PhysicsSet))
             // Sync runs AFTER physics
             .configure_sets(Update, ControllerSyncSet.after(crate::physics::PhysicsSet))
             .add_systems(Startup, setup_cursor_grab)
@@ -182,10 +183,17 @@ fn cursor_grab_system(
 
     // Click to recapture - only if not clicking on UI
     if mouse_button.just_pressed(MouseButton::Left) && !cursor_state.grabbed {
-        // Check if egui wants this click (pointer is over a UI element)
+        // Combined check: egui owns the pointer if ANY of these are true:
+        //   - is_pointer_over_area(): pointer hovering over a panel/window
+        //   - wants_pointer_input(): egui wants to consume the click (dropdowns, combo boxes)
+        //   - is_using_pointer(): egui is mid-interaction (dragging a slider, etc.)
         let egui_wants_pointer = egui_contexts
             .try_ctx_mut()
-            .map(|ctx| ctx.is_pointer_over_area())
+            .map(|ctx| {
+                ctx.is_pointer_over_area()
+                    || ctx.wants_pointer_input()
+                    || ctx.is_using_pointer()
+            })
             .unwrap_or(false);
 
         if !egui_wants_pointer {

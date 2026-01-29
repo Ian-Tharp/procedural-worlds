@@ -11,6 +11,7 @@ use bevy::prelude::*;
 use bevy::diagnostic::{DiagnosticsStore, FrameTimeDiagnosticsPlugin};
 use bevy_egui::{egui, EguiContexts};
 
+use crate::actors::Player;
 use crate::engine::input::{ActionState, ActionStates, InputAction};
 use crate::world::{ChunkManager, CHUNK_SIZE, CHUNK_VOLUME};
 
@@ -165,7 +166,7 @@ pub struct WireframeConfig {
 pub fn debug_overlay_ui(
     mut contexts: EguiContexts,
     mut overlay_state: ResMut<DebugOverlayState>,
-    camera_query: Query<&Transform, With<Camera3d>>,
+    player_query: Query<&GlobalTransform, With<Player>>,
     chunk_manager: Option<Res<ChunkManager>>,
     action_states: Option<Res<ActionStates>>,
     keyboard: Res<ButtonInput<KeyCode>>,
@@ -179,12 +180,12 @@ pub fn debug_overlay_ui(
         return;
     }
 
-    // Get camera/player position
-    let camera_pos = camera_query
+    // Get player world position (feet). This is the canonical "where am I?" location.
+    let player_pos = player_query
         .get_single()
-        .map(|t| t.translation)
+        .map(|t| t.translation())
         .unwrap_or(Vec3::ZERO);
-    let chunk_coords = world_to_chunk_coords(camera_pos);
+    let chunk_coords = world_to_chunk_coords(player_pos);
     
     // Get chunk count
     let chunk_count = chunk_manager.as_ref().map(|cm| cm.chunks.len()).unwrap_or(0);
@@ -202,7 +203,7 @@ pub fn debug_overlay_ui(
                     ui.label("World:");
                     ui.monospace(format!(
                         "X:{:.1} Y:{:.1} Z:{:.1}",
-                        camera_pos.x, camera_pos.y, camera_pos.z
+                        player_pos.x, player_pos.y, player_pos.z
                     ));
                 });
                 ui.horizontal(|ui| {
@@ -214,9 +215,12 @@ pub fn debug_overlay_ui(
                 });
                 ui.horizontal(|ui| {
                     ui.label("Local:");
-                    let local_x = ((camera_pos.x % CHUNK_SIZE as f32) + CHUNK_SIZE as f32) % CHUNK_SIZE as f32;
-                    let local_y = ((camera_pos.y % CHUNK_SIZE as f32) + CHUNK_SIZE as f32) % CHUNK_SIZE as f32;
-                    let local_z = ((camera_pos.z % CHUNK_SIZE as f32) + CHUNK_SIZE as f32) % CHUNK_SIZE as f32;
+                    let local_x =
+                        ((player_pos.x % CHUNK_SIZE as f32) + CHUNK_SIZE as f32) % CHUNK_SIZE as f32;
+                    let local_y =
+                        ((player_pos.y % CHUNK_SIZE as f32) + CHUNK_SIZE as f32) % CHUNK_SIZE as f32;
+                    let local_z =
+                        ((player_pos.z % CHUNK_SIZE as f32) + CHUNK_SIZE as f32) % CHUNK_SIZE as f32;
                     ui.monospace(format!("({:.1}, {:.1}, {:.1})", local_x, local_y, local_z));
                 });
             });
