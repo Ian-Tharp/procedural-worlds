@@ -83,6 +83,7 @@ impl Plugin for PhysicsPlugin {
             .add_systems(
                 Update,
                 (
+                    sync_movement_to_physics,
                     buffer_jump_input,
                     handle_jump,
                     apply_gravity,
@@ -161,6 +162,20 @@ struct JumpBuffer {
 // ============================================================================
 // SYSTEMS
 // ============================================================================
+
+/// Sync Movement component state to PlayerPhysics resource
+///
+/// This keeps the legacy PlayerPhysics resource in sync with the
+/// authoritative Movement component on the Player entity.
+fn sync_movement_to_physics(
+    mut physics: ResMut<PlayerPhysics>,
+    player_query: Query<&Movement, With<Player>>,
+) {
+    if let Ok(movement) = player_query.get_single() {
+        physics.flying = movement.flying;
+        physics.noclip = movement.noclip;
+    }
+}
 
 /// Buffer jump input for responsive feel
 fn buffer_jump_input(

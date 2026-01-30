@@ -25,6 +25,7 @@ use bevy::prelude::*;
 pub mod player;
 
 // Re-export commonly used items
+#[allow(unused_imports)]
 pub use player::spawn_player_flying;
 
 // These are used but re-exported for public API completeness
@@ -35,8 +36,9 @@ pub use player::{PlayerBundle, PlayerCameraBundle, spawn_player};
 pub struct ActorPlugin;
 
 impl Plugin for ActorPlugin {
-    fn build(&self, app: &mut App) {
-        app.add_systems(Update, sync_actor_debug_info);
+    fn build(&self, _app: &mut App) {
+        // Actor systems live here. Debug UI should query actor state directly
+        // (avoid coupling `actors` → `editor`).
     }
 }
 
@@ -241,23 +243,6 @@ impl CapsuleCollider {
         let closest_on_axis = Vec3::new(0.0, clamped_y, 0.0);
         let distance = local_point.distance(closest_on_axis);
         distance <= self.radius
-    }
-}
-
-// ============================================================================
-// SYSTEMS
-// ============================================================================
-
-/// Sync actor state to editor for debug display
-fn sync_actor_debug_info(
-    player_query: Query<(&Transform, &Movement, &Grounded), With<Player>>,
-    mut editor_state: Option<ResMut<crate::editor::EditorState>>,
-) {
-    let Some(ref mut editor) = editor_state else { return };
-
-    if let Ok((transform, _movement, _grounded)) = player_query.get_single() {
-        // Update camera position display to show player position
-        editor.camera_position = transform.translation;
     }
 }
 

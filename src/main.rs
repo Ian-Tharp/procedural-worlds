@@ -29,6 +29,7 @@ fn main() {
         .add_plugins(EguiPlugin)
         // Our custom plugins
         .add_plugins(editor::EditorPlugin)
+        .add_plugins(editor::DebugOverlayPlugin)
         .add_plugins(engine::CameraPlugin)
         .add_plugins(world::WorldPlugin)
         .add_plugins(physics::PhysicsPlugin)
@@ -45,9 +46,9 @@ fn setup_scene(mut commands: Commands) {
 
     // Spawn player entity with camera as child
     // Position is FEET position, camera is offset by eye height (1.62)
-    // Start in flying mode for easier exploration
+    // Start in walking mode with gravity
     let player_feet_y = 64.0 - actors::CapsuleCollider::EYE_HEIGHT; // Eyes at 64
-    let player_id = actors::spawn_player_flying(
+    let player_id = actors::spawn_player(
         &mut commands,
         Vec3::new(32.0, player_feet_y, 32.0),
     );

@@ -1,8 +1,21 @@
 //! Editor systems - UI panels, viewport, tools
 
+pub mod debug_overlay;
+
+pub use debug_overlay::DebugOverlayPlugin;
+
 use bevy::prelude::*;
 use bevy::diagnostic::{DiagnosticsStore, FrameTimeDiagnosticsPlugin};
 use bevy_egui::{egui, EguiContexts};
+
+use crate::actors::{Movement, Player};
+
+/// System set for editor UI (runs in Update).
+///
+/// Other sets (e.g. `ControllerInputSet`) should declare `.after(EditorUiSet)`
+/// so that egui has drawn all panels before any pointer-ownership checks run.
+#[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
+pub struct EditorUiSet;
 
 /// Plugin for editor UI systems
 pub struct EditorPlugin;
@@ -12,7 +25,12 @@ impl Plugin for EditorPlugin {
         app.add_plugins(FrameTimeDiagnosticsPlugin::default())
             .init_resource::<EditorState>()
             .init_resource::<PerformanceMetrics>()
-            .add_systems(Update, (update_performance_metrics, editor_ui_system).chain());
+            .add_systems(
+                Update,
+                (update_performance_metrics, editor_ui_system)
+                    .chain()
+                    .in_set(EditorUiSet),
+            );
     }
 }
 
@@ -25,7 +43,9 @@ pub struct EditorState {
     pub show_world_settings: bool,
     /// Show debug info
     pub show_debug: bool,
-    /// Camera position for display
+    /// Player world position for display (feet position)
+    pub player_position: Vec3,
+    /// Camera world position for display (eye position)
     pub camera_position: Vec3,
     /// Camera yaw angle in degrees (for compass)
     pub camera_yaw: f32,
@@ -39,6 +59,7 @@ impl Default for EditorState {
             show_inspector: true,
             show_world_settings: false,
             show_debug: true,
+            player_position: Vec3::ZERO,
             camera_position: Vec3::ZERO,
             camera_yaw: 0.0,
             chunk_count: 0,
@@ -127,16 +148,26 @@ fn update_performance_metrics(
 fn editor_ui_system(
     mut contexts: EguiContexts,
     mut editor_state: ResMut<EditorState>,
-    camera_query: Query<&Transform, With<Camera3d>>,
+    camera_query: Query<&GlobalTransform, With<Camera3d>>,
     metrics: Res<PerformanceMetrics>,
     mut chunk_manager: Option<ResMut<crate::world::ChunkManager>>,
-    mut physics: Option<ResMut<crate::physics::PlayerPhysics>>,
+    physics: Option<Res<crate::physics::PlayerPhysics>>,
+    player_transform_query: Query<&GlobalTransform, With<Player>>,
+    mut player_query: Query<&mut Movement, With<Player>>,
 ) {
-    // Update camera position and rotation for display
-    if let Ok(transform) = camera_query.get_single() {
-        editor_state.camera_position = transform.translation;
+    // Update player position for display (world-space, robust to parenting)
+    if let Ok(player_global) = player_transform_query.get_single() {
+        editor_state.player_position = player_global.translation();
+    }
+
+    // Update camera position and rotation for display (world-space)
+    if let Ok(camera_global) = camera_query.get_single() {
+        editor_state.camera_position = camera_global.translation();
         // Extract yaw from camera rotation
-        let (yaw, _pitch, _roll) = transform.rotation.to_euler(bevy::math::EulerRot::YXZ);
+        let camera_transform = camera_global.compute_transform();
+        let (yaw, _pitch, _roll) = camera_transform
+            .rotation
+            .to_euler(bevy::math::EulerRot::YXZ);
         editor_state.camera_yaw = yaw.to_degrees();
     }
 
@@ -203,11 +234,19 @@ fn editor_ui_system(
                 ui.heading("Inspector");
                 ui.separator();
 
-                egui::CollapsingHeader::new("Camera")
+                egui::CollapsingHeader::new("Player")
                     .default_open(true)
                     .show(ui, |ui| {
-                        let pos = editor_state.camera_position;
-                        ui.label(format!("Position: ({:.1}, {:.1}, {:.1})", pos.x, pos.y, pos.z));
+                        let pos = editor_state.player_position;
+                        ui.label(format!(
+                            "Feet: ({:.1}, {:.1}, {:.1})",
+                            pos.x, pos.y, pos.z
+                        ));
+                        let cam = editor_state.camera_position;
+                        ui.label(format!(
+                            "Camera: ({:.1}, {:.1}, {:.1})",
+                            cam.x, cam.y, cam.z
+                        ));
 
                         // Compass direction
                         let cardinal = yaw_to_cardinal(editor_state.camera_yaw);
@@ -223,23 +262,23 @@ fn editor_ui_system(
 
                         ui.separator();
 
-                        // Physics mode toggles
-                        if let Some(ref mut phys) = physics {
+                        // Physics mode toggles - modify Movement component directly
+                        if let Ok(mut movement) = player_query.get_single_mut() {
                             ui.horizontal(|ui| {
-                                let flying_text = if phys.flying {
+                                let flying_text = if movement.flying {
                                     egui::RichText::new("Flying").color(egui::Color32::from_rgb(100, 255, 100))
                                 } else {
                                     egui::RichText::new("Walking").color(egui::Color32::from_rgb(255, 200, 100))
                                 };
-                                ui.checkbox(&mut phys.flying, flying_text);
+                                ui.checkbox(&mut movement.flying, flying_text);
                             });
                             ui.horizontal(|ui| {
-                                let noclip_text = if phys.noclip {
+                                let noclip_text = if movement.noclip {
                                     egui::RichText::new("Noclip").color(egui::Color32::from_rgb(255, 100, 100))
                                 } else {
                                     egui::RichText::new("Collision").color(egui::Color32::from_rgb(150, 150, 150))
                                 };
-                                ui.checkbox(&mut phys.noclip, noclip_text);
+                                ui.checkbox(&mut movement.noclip, noclip_text);
                             });
                             ui.separator();
                         }
@@ -248,6 +287,12 @@ fn editor_ui_system(
                         ui.label("  WASD - Move");
                         if let Some(ref phys) = physics {
                             if phys.flying {
+                                ui.label("  Space/Ctrl - Up/Down");
+                            } else {
+                                ui.label("  Space - Jump");
+                            }
+                        } else if let Ok(movement) = player_query.get_single() {
+                            if movement.flying {
                                 ui.label("  Space/Ctrl - Up/Down");
                             } else {
                                 ui.label("  Space - Jump");
@@ -329,19 +374,22 @@ fn editor_ui_system(
                     ui.separator();
 
                     ui.label(
-                        egui::RichText::new("Camera")
+                        egui::RichText::new("Player")
                             .strong()
                             .color(egui::Color32::from_rgb(150, 255, 150))
                     );
-                    let pos = editor_state.camera_position;
-                    ui.label(format!("X:{:.1} Y:{:.1} Z:{:.1}", pos.x, pos.y, pos.z));
+                    let pos = editor_state.player_position;
+                    ui.label(format!(
+                        "X:{:.1} Y:{:.1} Z:{:.1}",
+                        pos.x, pos.y, pos.z
+                    ));
                     let cardinal = yaw_to_cardinal(editor_state.camera_yaw);
                     ui.label(format!("Facing: {} ({:.0}°)", cardinal, editor_state.camera_yaw));
 
                     ui.separator();
 
                     ui.label(
-                        egui::RichText::new("Player")
+                        egui::RichText::new("Mode")
                             .strong()
                             .color(egui::Color32::from_rgb(255, 150, 200))
                     );
