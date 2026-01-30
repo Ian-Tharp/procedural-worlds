@@ -175,6 +175,12 @@ impl InputMap {
         }
     }
     
+    /// Clear all bindings (used by config system to rebuild from scratch)
+    pub fn clear(&mut self) {
+        self.bindings.clear();
+        self.reverse_map.clear();
+    }
+
     /// Unbind a specific input
     #[allow(dead_code)]
     pub fn unbind(&mut self, binding: impl Into<InputBinding>) {

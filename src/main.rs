@@ -7,6 +7,7 @@ use bevy::prelude::*;
 use bevy_egui::EguiPlugin;
 
 mod actors;
+mod config;
 mod editor;
 mod engine;
 mod generation;
@@ -14,19 +15,31 @@ mod physics;
 mod world;
 
 fn main() {
+    // Load engine configuration (creates default config.json if none exists)
+    let engine_config = config::EngineConfig::load_or_default();
+
+    // Select present mode from config
+    let present_mode = if engine_config.window.vsync {
+        bevy::window::PresentMode::AutoVsync
+    } else {
+        bevy::window::PresentMode::AutoNoVsync
+    };
+
     App::new()
-        // Configure default plugins with our window settings
+        // Configure default plugins with config-driven window settings
         .add_plugins(DefaultPlugins.set(WindowPlugin {
             primary_window: Some(Window {
-                title: "Procedural Worlds Engine".into(),
-                resolution: (1280., 720.).into(),
-                present_mode: bevy::window::PresentMode::AutoVsync,
+                title: engine_config.window.title.clone(),
+                resolution: (engine_config.window.width, engine_config.window.height).into(),
+                present_mode,
                 ..default()
             }),
             ..default()
         }))
         // Editor UI plugin
         .add_plugins(EguiPlugin)
+        // Insert engine config as a resource (before plugins that read it)
+        .insert_resource(engine_config)
         // Our custom plugins
         .add_plugins(editor::EditorPlugin)
         .add_plugins(editor::DebugOverlayPlugin)
@@ -34,6 +47,8 @@ fn main() {
         .add_plugins(world::WorldPlugin)
         .add_plugins(physics::PhysicsPlugin)
         .add_plugins(actors::ActorPlugin)
+        // Config plugin applies settings to resources/entities in PostStartup
+        .add_plugins(config::ConfigPlugin)
         // Startup systems
         .add_systems(Startup, setup_scene)
         .run();
