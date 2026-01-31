@@ -11,10 +11,12 @@
 use std::collections::HashMap;
 
 use bevy::prelude::*;
+use serde::{Deserialize, Serialize};
 
 use crate::generation::{generate_caves, generate_chunk_terrain, TerrainConfig};
 
 pub mod meshing;
+pub mod persistence;
 
 /// Size of a chunk in blocks (16x16x16)
 pub const CHUNK_SIZE: usize = 16;
@@ -23,7 +25,8 @@ pub const CHUNK_SIZE: usize = 16;
 pub const CHUNK_VOLUME: usize = CHUNK_SIZE * CHUNK_SIZE * CHUNK_SIZE;
 
 /// Block type identifier
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Default, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Default, Debug, Serialize, Deserialize)]
+#[serde(into = "u16", from = "u16")]
 #[repr(u16)]
 #[allow(dead_code)] // Future block types
 pub enum BlockType {
@@ -36,6 +39,28 @@ pub enum BlockType {
     Water = 5,
     Wood = 6,
     Leaves = 7,
+}
+
+impl From<BlockType> for u16 {
+    fn from(block: BlockType) -> u16 {
+        block as u16
+    }
+}
+
+impl From<u16> for BlockType {
+    fn from(val: u16) -> BlockType {
+        match val {
+            0 => BlockType::Air,
+            1 => BlockType::Stone,
+            2 => BlockType::Dirt,
+            3 => BlockType::Grass,
+            4 => BlockType::Sand,
+            5 => BlockType::Water,
+            6 => BlockType::Wood,
+            7 => BlockType::Leaves,
+            _ => BlockType::Air, // Unknown block types default to Air
+        }
+    }
 }
 
 impl BlockType {
@@ -51,7 +76,7 @@ impl BlockType {
 }
 
 /// A chunk of voxel data
-#[derive(Component)]
+#[derive(Component, Debug)]
 pub struct Chunk {
     /// Block data stored in a flat array [x + y * SIZE + z * SIZE * SIZE]
     blocks: [BlockType; CHUNK_VOLUME],
@@ -69,6 +94,23 @@ impl Chunk {
             position,
             dirty: true,
         }
+    }
+
+    /// Create a chunk with pre-populated block data
+    ///
+    /// Used by the persistence system to reconstruct chunks from saved data.
+    /// The chunk is marked dirty so its mesh will be rebuilt.
+    pub fn from_blocks(position: IVec3, blocks: [BlockType; CHUNK_VOLUME]) -> Self {
+        Self {
+            blocks,
+            position,
+            dirty: true,
+        }
+    }
+
+    /// Get a reference to the raw block data array
+    pub fn blocks(&self) -> &[BlockType; CHUNK_VOLUME] {
+        &self.blocks
     }
 
     /// Convert local (x, y, z) coordinates to flat array index
