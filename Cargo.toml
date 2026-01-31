@@ -37,6 +37,14 @@ rand = "0.8"
 [dev-dependencies]
 criterion = "0.5"  # Benchmarking
 
+[[bench]]
+name = "generation"
+harness = false
+
+[[bench]]
+name = "meshing"
+harness = false
+
 # Faster compilation during development
 [profile.dev]
 opt-level = 1
