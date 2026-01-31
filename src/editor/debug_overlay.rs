@@ -13,6 +13,7 @@ use bevy_egui::{egui, EguiContexts};
 
 use crate::actors::Player;
 use crate::engine::input::{ActionState, ActionStates, InputAction};
+use crate::engine::lighting::DayNightCycle;
 use crate::world::{ChunkManager, CHUNK_SIZE, CHUNK_VOLUME};
 
 /// Number of frame time samples to keep for the graph
@@ -168,6 +169,7 @@ pub fn debug_overlay_ui(
     mut overlay_state: ResMut<DebugOverlayState>,
     player_query: Query<&GlobalTransform, With<Player>>,
     chunk_manager: Option<Res<ChunkManager>>,
+    day_night: Option<Res<DayNightCycle>>,
     action_states: Option<Res<ActionStates>>,
     keyboard: Res<ButtonInput<KeyCode>>,
 ) {
@@ -226,6 +228,52 @@ pub fn debug_overlay_ui(
             });
 
             ui.separator();
+
+            // Day/night cycle section
+            if let Some(ref cycle) = day_night {
+                ui.collapsing("🌅 Time of Day", |ui| {
+                    ui.horizontal(|ui| {
+                        ui.label("Clock:");
+                        ui.monospace(cycle.clock_display());
+                    });
+                    ui.horizontal(|ui| {
+                        ui.label("Phase:");
+                        ui.monospace(cycle.phase_name());
+                    });
+                    ui.horizontal(|ui| {
+                        ui.label("Raw:");
+                        ui.monospace(format!("{:.4}", cycle.time_of_day));
+                    });
+                    ui.horizontal(|ui| {
+                        ui.label("Cycle:");
+                        ui.monospace(format!("{:.0}s", cycle.cycle_duration));
+                        if cycle.paused {
+                            ui.colored_label(
+                                egui::Color32::from_rgb(255, 200, 100),
+                                " ⏸ PAUSED",
+                            );
+                        }
+                    });
+
+                    // Visual time-of-day bar
+                    let (rect, _) = ui.allocate_exact_size(
+                        egui::vec2(ui.available_width(), 12.0),
+                        egui::Sense::hover(),
+                    );
+                    // Background gradient hint (night-dawn-day-dusk-night)
+                    ui.painter().rect_filled(rect, 2.0, egui::Color32::from_rgb(20, 20, 40));
+                    // Sun position marker
+                    let marker_x = rect.min.x + rect.width() * cycle.time_of_day;
+                    let marker_center = egui::pos2(marker_x, rect.center().y);
+                    ui.painter().circle_filled(
+                        marker_center,
+                        5.0,
+                        egui::Color32::from_rgb(255, 220, 80),
+                    );
+                });
+
+                ui.separator();
+            }
 
             // Frame time graph
             ui.collapsing("📊 Frame Time", |ui| {

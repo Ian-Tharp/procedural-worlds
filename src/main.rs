@@ -44,6 +44,7 @@ fn main() {
         .add_plugins(editor::EditorPlugin)
         .add_plugins(editor::DebugOverlayPlugin)
         .add_plugins(engine::CameraPlugin)
+        .add_plugins(engine::lighting::DayNightPlugin)
         .add_plugins(world::WorldPlugin)
         .add_plugins(physics::PhysicsPlugin)
         .add_plugins(actors::ActorPlugin)
@@ -69,21 +70,8 @@ fn setup_scene(mut commands: Commands) {
     );
     info!("Spawned player entity: {:?}", player_id);
 
-    // Directional light (sun)
-    commands.spawn((
-        DirectionalLight {
-            illuminance: 15000.0,
-            shadows_enabled: true,
-            ..default()
-        },
-        Transform::from_rotation(Quat::from_euler(EulerRot::XYZ, -0.6, 0.4, 0.0)),
-    ));
-
-    // Ambient light for softer shadows
-    commands.insert_resource(AmbientLight {
-        color: Color::srgb(0.4, 0.4, 0.5),
-        brightness: 200.0,
-    });
+    // NOTE: DirectionalLight (sun) and AmbientLight are now managed by
+    // DayNightPlugin — see engine::lighting
 
     info!("Scene setup complete! Player spawned, terrain will generate around you.");
     info!("Controls: WASD move, Mouse look, F toggle fly, N toggle noclip");
