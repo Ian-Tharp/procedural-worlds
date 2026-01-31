@@ -69,6 +69,7 @@ fn add_face(
     positions: &mut Vec<[f32; 3]>,
     normals: &mut Vec<[f32; 3]>,
     colors: &mut Vec<[f32; 4]>,
+    uvs: &mut Vec<[f32; 2]>,
     indices: &mut Vec<u32>,
     x: f32,
     y: f32,
@@ -119,11 +120,20 @@ fn add_face(
         ],
     };
 
+    // Standard 1×1 UVs matching vertex winding
+    let face_uvs: [[f32; 2]; 4] = [
+        [0.0, 0.0],
+        [1.0, 0.0],
+        [1.0, 1.0],
+        [0.0, 1.0],
+    ];
+
     // Add 4 vertices
-    for vert in verts {
-        positions.push(vert);
+    for (i, vert) in verts.iter().enumerate() {
+        positions.push(*vert);
         normals.push(normal);
         colors.push(color);
+        uvs.push(face_uvs[i]);
     }
 
     // Add 2 triangles (6 indices) - counter-clockwise winding for front-facing
@@ -149,6 +159,7 @@ fn add_greedy_face(
     positions: &mut Vec<[f32; 3]>,
     normals: &mut Vec<[f32; 3]>,
     colors: &mut Vec<[f32; 4]>,
+    uvs: &mut Vec<[f32; 2]>,
     indices: &mut Vec<u32>,
     x: f32,
     y: f32,
@@ -200,10 +211,19 @@ fn add_greedy_face(
         ],
     };
 
-    for vert in verts {
-        positions.push(vert);
+    // UVs scale with quad dimensions for tiling textures across merged faces
+    let face_uvs: [[f32; 2]; 4] = [
+        [0.0, 0.0],
+        [quad_w, 0.0],
+        [quad_w, quad_h],
+        [0.0, quad_h],
+    ];
+
+    for (i, vert) in verts.iter().enumerate() {
+        positions.push(*vert);
         normals.push(normal);
         colors.push(color);
+        uvs.push(face_uvs[i]);
     }
 
     indices.extend_from_slice(&[
@@ -245,6 +265,7 @@ pub fn build_chunk_mesh(chunk: &Chunk) -> Mesh {
     let mut positions: Vec<[f32; 3]> = Vec::new();
     let mut normals: Vec<[f32; 3]> = Vec::new();
     let mut colors: Vec<[f32; 4]> = Vec::new();
+    let mut uvs: Vec<[f32; 2]> = Vec::new();
     let mut indices: Vec<u32> = Vec::new();
 
     let faces = [
@@ -344,6 +365,7 @@ pub fn build_chunk_mesh(chunk: &Chunk) -> Mesh {
                         &mut positions,
                         &mut normals,
                         &mut colors,
+                        &mut uvs,
                         &mut indices,
                         x as f32,
                         y as f32,
@@ -364,6 +386,7 @@ pub fn build_chunk_mesh(chunk: &Chunk) -> Mesh {
     mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
     mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, normals);
     mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, colors);
+    mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, uvs);
     mesh.insert_indices(Indices::U32(indices));
 
     mesh
@@ -377,6 +400,7 @@ pub fn build_chunk_mesh_naive(chunk: &Chunk) -> Mesh {
     let mut positions: Vec<[f32; 3]> = Vec::new();
     let mut normals: Vec<[f32; 3]> = Vec::new();
     let mut colors: Vec<[f32; 4]> = Vec::new();
+    let mut uvs: Vec<[f32; 2]> = Vec::new();
     let mut indices: Vec<u32> = Vec::new();
 
     let faces = [
@@ -416,6 +440,7 @@ pub fn build_chunk_mesh_naive(chunk: &Chunk) -> Mesh {
                             &mut positions,
                             &mut normals,
                             &mut colors,
+                            &mut uvs,
                             &mut indices,
                             fx,
                             fy,
@@ -435,6 +460,7 @@ pub fn build_chunk_mesh_naive(chunk: &Chunk) -> Mesh {
     mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
     mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, normals);
     mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, colors);
+    mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, uvs);
     mesh.insert_indices(Indices::U32(indices));
 
     mesh
@@ -696,5 +722,147 @@ mod tests {
         // Greedy: Top 1 quad + Bottom 1 quad + North 1 quad + South 1 quad
         //         + East 1 quad + West 1 quad = 6 quads → 24 verts
         assert_eq!(gv, 24);
+    }
+
+    // ------------------------------------------------------------------
+    // UV coordinates: naive mesh has UVs with correct count
+    // ------------------------------------------------------------------
+    #[test]
+    fn test_naive_mesh_has_uvs() {
+        let mut chunk = Chunk::new(IVec3::ZERO);
+        chunk.set_block(0, 0, 0, BlockType::Stone);
+        chunk.set_block(5, 5, 5, BlockType::Dirt);
+
+        let mesh = build_chunk_mesh_naive(&chunk);
+        let vert_count = mesh_vertex_count(&mesh);
+
+        // UV attribute must exist
+        let uv_attr = mesh
+            .attribute(Mesh::ATTRIBUTE_UV_0)
+            .expect("naive mesh should have UV_0 attribute");
+        assert_eq!(
+            uv_attr.len(),
+            vert_count,
+            "UV count must equal vertex count"
+        );
+    }
+
+    // ------------------------------------------------------------------
+    // UV coordinates: greedy mesh has UVs with correct count
+    // ------------------------------------------------------------------
+    #[test]
+    fn test_greedy_mesh_has_uvs() {
+        let mut chunk = Chunk::new(IVec3::ZERO);
+        chunk.set_block(0, 0, 0, BlockType::Stone);
+        chunk.set_block(5, 5, 5, BlockType::Dirt);
+
+        let mesh = build_chunk_mesh(&chunk);
+        let vert_count = mesh_vertex_count(&mesh);
+
+        // UV attribute must exist
+        let uv_attr = mesh
+            .attribute(Mesh::ATTRIBUTE_UV_0)
+            .expect("greedy mesh should have UV_0 attribute");
+        assert_eq!(
+            uv_attr.len(),
+            vert_count,
+            "UV count must equal vertex count"
+        );
+    }
+
+    // ------------------------------------------------------------------
+    // UV coordinates: greedy UVs scale with quad dimensions
+    // ------------------------------------------------------------------
+    #[test]
+    fn test_greedy_uvs_scale_with_quad() {
+        let mut chunk = Chunk::new(IVec3::ZERO);
+        chunk.fill(BlockType::Stone);
+
+        let mesh = build_chunk_mesh(&chunk);
+
+        // A filled chunk produces 6 faces, each merged into a single 16×16 quad.
+        // The greedy UVs should scale: max UV component should be 16.0.
+        if let Some(bevy::render::mesh::VertexAttributeValues::Float32x2(uv_data)) =
+            mesh.attribute(Mesh::ATTRIBUTE_UV_0)
+        {
+            let max_u = uv_data
+                .iter()
+                .map(|uv| uv[0])
+                .fold(0.0_f32, f32::max);
+            let max_v = uv_data
+                .iter()
+                .map(|uv| uv[1])
+                .fold(0.0_f32, f32::max);
+
+            assert_eq!(
+                max_u, 16.0,
+                "max U should be 16.0 for a full-chunk greedy quad"
+            );
+            assert_eq!(
+                max_v, 16.0,
+                "max V should be 16.0 for a full-chunk greedy quad"
+            );
+        } else {
+            panic!("UV_0 attribute missing or wrong type");
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // UV coordinates: single block has standard 0-1 UVs for both methods
+    // ------------------------------------------------------------------
+    #[test]
+    fn test_single_block_uvs() {
+        let mut chunk = Chunk::new(IVec3::ZERO);
+        chunk.set_block(7, 7, 7, BlockType::Stone);
+
+        for (label, mesh) in [
+            ("naive", build_chunk_mesh_naive(&chunk)),
+            ("greedy", build_chunk_mesh(&chunk)),
+        ] {
+            if let Some(bevy::render::mesh::VertexAttributeValues::Float32x2(uv_data)) =
+                mesh.attribute(Mesh::ATTRIBUTE_UV_0)
+            {
+                // Single block → 6 faces × 4 verts = 24 UVs
+                assert_eq!(uv_data.len(), 24, "{label}: expected 24 UVs");
+
+                // Every UV component should be in [0.0, 1.0]
+                for uv in uv_data {
+                    assert!(
+                        uv[0] >= 0.0 && uv[0] <= 1.0,
+                        "{label}: U out of range: {}",
+                        uv[0]
+                    );
+                    assert!(
+                        uv[1] >= 0.0 && uv[1] <= 1.0,
+                        "{label}: V out of range: {}",
+                        uv[1]
+                    );
+                }
+
+                // Check that each face has the expected UV corners {0,0}, {1,0}, {1,1}, {0,1}
+                for face_idx in 0..6 {
+                    let base = face_idx * 4;
+                    let face_uvs: Vec<[f32; 2]> = uv_data[base..base + 4].to_vec();
+                    assert!(
+                        face_uvs.contains(&[0.0, 0.0]),
+                        "{label} face {face_idx}: missing [0,0]"
+                    );
+                    assert!(
+                        face_uvs.contains(&[1.0, 0.0]),
+                        "{label} face {face_idx}: missing [1,0]"
+                    );
+                    assert!(
+                        face_uvs.contains(&[1.0, 1.0]),
+                        "{label} face {face_idx}: missing [1,1]"
+                    );
+                    assert!(
+                        face_uvs.contains(&[0.0, 1.0]),
+                        "{label} face {face_idx}: missing [0,1]"
+                    );
+                }
+            } else {
+                panic!("{label}: UV_0 attribute missing or wrong type");
+            }
+        }
     }
 }
