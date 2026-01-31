@@ -44,6 +44,7 @@ fn main() {
         .add_plugins(editor::EditorPlugin)
         .add_plugins(editor::DebugOverlayPlugin)
         .add_plugins(engine::CameraPlugin)
+        .add_plugins(engine::RaycastPlugin)
         .add_plugins(world::WorldPlugin)
         .add_plugins(physics::PhysicsPlugin)
         .add_plugins(actors::ActorPlugin)

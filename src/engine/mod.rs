@@ -31,6 +31,7 @@ use bevy::prelude::*;
 // Submodules
 pub mod controller;
 pub mod input;
+pub mod raycast;
 
 // Re-export commonly used items for backward compatibility
 // These re-exports maintain the public API even if not used internally
@@ -49,6 +50,13 @@ pub use input::{
     InputAction,
     InputBinding,
     InputMap,
+};
+
+#[allow(unused_imports)]
+pub use raycast::{
+    CurrentTarget,
+    RaycastPlugin,
+    RaycastResult,
 };
 
 // ============================================================================
