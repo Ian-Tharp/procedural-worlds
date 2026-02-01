@@ -6,13 +6,12 @@
 use bevy::prelude::*;
 use bevy_egui::EguiPlugin;
 
-mod actors;
-mod config;
-mod editor;
-mod engine;
-mod generation;
-mod physics;
-mod world;
+use procedural_worlds::actors;
+use procedural_worlds::config;
+use procedural_worlds::editor;
+use procedural_worlds::engine;
+use procedural_worlds::physics;
+use procedural_worlds::world;
 
 fn main() {
     // Load engine configuration (creates default config.json if none exists)

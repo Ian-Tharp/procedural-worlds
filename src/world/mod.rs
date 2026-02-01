@@ -76,7 +76,7 @@ impl BlockType {
 }
 
 /// A chunk of voxel data
-#[derive(Component, Debug)]
+#[derive(Component, Debug, Clone)]
 pub struct Chunk {
     /// Block data stored in a flat array [x + y * SIZE + z * SIZE * SIZE]
     blocks: [BlockType; CHUNK_VOLUME],
