@@ -68,6 +68,8 @@ pub struct EngineConfig {
     pub controls: ControlsConfig,
     /// Debug overlay settings
     pub debug: DebugConfig,
+    /// Duration of a full day/night cycle in seconds (default: 600 = 10 min)
+    pub cycle_duration_seconds: f32,
 }
 
 /// Window configuration
@@ -185,6 +187,7 @@ impl Default for EngineConfig {
             player: PlayerConfig::default(),
             controls: ControlsConfig::default(),
             debug: DebugConfig::default(),
+            cycle_duration_seconds: 600.0,
         }
     }
 }

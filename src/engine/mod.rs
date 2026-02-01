@@ -32,6 +32,7 @@ use bevy::prelude::*;
 pub mod controller;
 pub mod input;
 pub mod raycast;
+pub mod lighting;
 
 // Re-export commonly used items for backward compatibility
 // These re-exports maintain the public API even if not used internally
