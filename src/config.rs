@@ -172,6 +172,8 @@ pub struct DebugConfig {
     pub show_memory: bool,
     /// Show input state panel
     pub show_input: bool,
+    /// Show chunk statistics panel
+    pub show_chunks: bool,
 }
 
 // ============================================================================
@@ -259,6 +261,7 @@ impl Default for DebugConfig {
             overlay_visible: true,
             show_memory: true,
             show_input: false,
+            show_chunks: true,
         }
     }
 }
@@ -501,6 +504,7 @@ fn apply_config_to_resources(
     debug_state.visible = config.debug.overlay_visible;
     debug_state.show_memory = config.debug.show_memory;
     debug_state.show_input_state = config.debug.show_input;
+    debug_state.show_chunks = config.debug.show_chunks;
 
     // --- Input bindings ---
     // Clear default bindings and apply from config
