@@ -29,6 +29,8 @@ pub struct TerrainConfig {
     pub octaves: usize,
     /// Tree density — probability (0.0–1.0) that a valid surface position gets a tree
     pub tree_density: f64,
+    /// Sea level — air blocks at or below this Y coordinate become water
+    pub sea_level: i32,
 }
 
 impl Default for TerrainConfig {
@@ -40,6 +42,7 @@ impl Default for TerrainConfig {
             frequency: 0.02,
             octaves: 4,
             tree_density: 0.02,
+            sea_level: 28,
         }
     }
 }
@@ -83,6 +86,13 @@ pub fn generate_chunk_terrain(chunk: &mut Chunk, config: &TerrainConfig) {
                     BlockType::Dirt
                 } else {
                     BlockType::Stone
+                };
+
+                // Fill air at or below sea level with water
+                let block = if block == BlockType::Air && world_y <= config.sea_level {
+                    BlockType::Water
+                } else {
+                    block
                 };
 
                 chunk.set_block(local_x, local_y, local_z, block);
@@ -477,6 +487,102 @@ mod tests {
             differences > 0,
             "Different seeds should produce different terrain"
         );
+    }
+
+    #[test]
+    fn test_sea_level_config() {
+        let config = TerrainConfig::default();
+        assert_eq!(config.sea_level, 28, "Default sea_level should be 28");
+
+        let custom = TerrainConfig {
+            sea_level: 50,
+            ..Default::default()
+        };
+        assert_eq!(custom.sea_level, 50, "Custom sea_level should be respected");
+    }
+
+    #[test]
+    fn test_water_fills_below_sea_level() {
+        // Use a high sea_level so air blocks at the surface become water
+        let config = TerrainConfig {
+            sea_level: 60,
+            ..Default::default()
+        };
+        // Chunk at y=2 covers world_y 32..47, which is below sea_level=60
+        let mut chunk = Chunk::new(IVec3::new(0, 2, 0));
+        generate_chunk_terrain(&mut chunk, &config);
+
+        let mut has_water = false;
+        for x in 0..CHUNK_SIZE {
+            for y in 0..CHUNK_SIZE {
+                for z in 0..CHUNK_SIZE {
+                    let block = chunk.get_block(x, y, z);
+                    if block == BlockType::Water {
+                        has_water = true;
+                        // Water should only appear where terrain is absent
+                        let world_y = chunk.world_position().y + y as i32;
+                        assert!(
+                            world_y <= config.sea_level,
+                            "Water found above sea_level at world_y={}",
+                            world_y
+                        );
+                    }
+                }
+            }
+        }
+
+        assert!(has_water, "Should have water blocks where air is below sea_level");
+    }
+
+    #[test]
+    fn test_no_water_above_sea_level() {
+        let config = TerrainConfig {
+            sea_level: 28,
+            ..Default::default()
+        };
+        // Chunk at y=5 covers world_y 80..95, well above sea_level=28
+        let mut chunk = Chunk::new(IVec3::new(0, 5, 0));
+        generate_chunk_terrain(&mut chunk, &config);
+
+        for x in 0..CHUNK_SIZE {
+            for y in 0..CHUNK_SIZE {
+                for z in 0..CHUNK_SIZE {
+                    assert_ne!(
+                        chunk.get_block(x, y, z),
+                        BlockType::Water,
+                        "No water should exist above sea_level at local ({}, {}, {})",
+                        x, y, z
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_water_does_not_replace_solid() {
+        // Set sea_level very high so everything below it could become water
+        let config = TerrainConfig {
+            sea_level: 200,
+            ..Default::default()
+        };
+        // Underground chunk: world_y 0..15, should be all solid (stone)
+        let mut chunk = Chunk::new(IVec3::new(0, 0, 0));
+        generate_chunk_terrain(&mut chunk, &config);
+
+        for x in 0..CHUNK_SIZE {
+            for y in 0..CHUNK_SIZE {
+                for z in 0..CHUNK_SIZE {
+                    let block = chunk.get_block(x, y, z);
+                    // Underground blocks should remain solid — water only replaces air
+                    assert_ne!(
+                        block,
+                        BlockType::Water,
+                        "Water should not replace solid blocks at ({}, {}, {}), found {:?}",
+                        x, y, z, block
+                    );
+                }
+            }
+        }
     }
 
     #[test]
