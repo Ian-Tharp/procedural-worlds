@@ -13,6 +13,7 @@ use bevy_egui::{egui, EguiContexts};
 
 use crate::actors::Player;
 use crate::engine::input::{ActionState, ActionStates, InputAction};
+use crate::engine::raycast::CurrentTarget;
 use crate::world::{ChunkManager, CHUNK_SIZE, CHUNK_VOLUME};
 
 /// Number of frame time samples to keep for the graph
@@ -170,6 +171,7 @@ pub fn debug_overlay_ui(
     chunk_manager: Option<Res<ChunkManager>>,
     action_states: Option<Res<ActionStates>>,
     keyboard: Res<ButtonInput<KeyCode>>,
+    current_target: Option<Res<CurrentTarget>>,
 ) {
     // Toggle overlay with F3
     if keyboard.just_pressed(KeyCode::F3) {
@@ -223,6 +225,58 @@ pub fn debug_overlay_ui(
                         ((player_pos.z % CHUNK_SIZE as f32) + CHUNK_SIZE as f32) % CHUNK_SIZE as f32;
                     ui.monospace(format!("({:.1}, {:.1}, {:.1})", local_x, local_y, local_z));
                 });
+            });
+
+            ui.separator();
+
+            // Target block section
+            ui.collapsing("🎯 Target Block", |ui| {
+                if let Some(ref target_res) = current_target {
+                    if let Some(ref result) = target_res.0 {
+                        ui.horizontal(|ui| {
+                            ui.label("Block:");
+                            ui.monospace(format!(
+                                "({}, {}, {})",
+                                result.block_pos.x, result.block_pos.y, result.block_pos.z
+                            ));
+                        });
+                        ui.horizontal(|ui| {
+                            ui.label("Type:");
+                            ui.monospace(format!("{:?}", result.block_type));
+                        });
+                        ui.horizontal(|ui| {
+                            ui.label("Face:");
+                            let face_name = match (result.face_normal.x, result.face_normal.y, result.face_normal.z) {
+                                (1, 0, 0) => "+X (East)",
+                                (-1, 0, 0) => "-X (West)",
+                                (0, 1, 0) => "+Y (Top)",
+                                (0, -1, 0) => "-Y (Bottom)",
+                                (0, 0, 1) => "+Z (South)",
+                                (0, 0, -1) => "-Z (North)",
+                                _ => "Unknown",
+                            };
+                            ui.monospace(face_name);
+                        });
+                        ui.horizontal(|ui| {
+                            ui.label("Distance:");
+                            ui.monospace(format!("{:.2} blocks", result.distance));
+                        });
+                        ui.horizontal(|ui| {
+                            ui.label("Place at:");
+                            ui.monospace(format!(
+                                "({}, {}, {})",
+                                result.adjacent_pos.x, result.adjacent_pos.y, result.adjacent_pos.z
+                            ));
+                        });
+                    } else {
+                        ui.colored_label(
+                            egui::Color32::from_rgb(150, 150, 150),
+                            "No block in range",
+                        );
+                    }
+                } else {
+                    ui.label("Raycast not available");
+                }
             });
 
             ui.separator();

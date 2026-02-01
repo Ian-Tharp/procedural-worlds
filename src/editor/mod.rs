@@ -9,6 +9,7 @@ use bevy::diagnostic::{DiagnosticsStore, FrameTimeDiagnosticsPlugin};
 use bevy_egui::{egui, EguiContexts};
 
 use crate::actors::{Movement, Player};
+use crate::engine::raycast::CurrentTarget;
 
 /// System set for editor UI (runs in Update).
 ///
@@ -154,6 +155,7 @@ fn editor_ui_system(
     physics: Option<Res<crate::physics::PlayerPhysics>>,
     player_transform_query: Query<&GlobalTransform, With<Player>>,
     mut player_query: Query<&mut Movement, With<Player>>,
+    current_target: Option<Res<CurrentTarget>>,
 ) {
     // Update player position for display (world-space, robust to parenting)
     if let Ok(player_global) = player_transform_query.get_single() {
@@ -433,6 +435,29 @@ fn editor_ui_system(
                         }
                     } else {
                         ui.label(format!("Chunks: {}", editor_state.chunk_count));
+                    }
+
+                    ui.separator();
+
+                    ui.label(
+                        egui::RichText::new("Target")
+                            .strong()
+                            .color(egui::Color32::from_rgb(255, 150, 150))
+                    );
+                    if let Some(ref target_res) = current_target {
+                        if let Some(ref result) = target_res.0 {
+                            ui.label(format!(
+                                "{:?} ({},{},{}) {:.1}m",
+                                result.block_type,
+                                result.block_pos.x, result.block_pos.y, result.block_pos.z,
+                                result.distance
+                            ));
+                        } else {
+                            ui.colored_label(
+                                egui::Color32::from_rgb(100, 100, 100),
+                                "None",
+                            );
+                        }
                     }
 
                     ui.separator();
