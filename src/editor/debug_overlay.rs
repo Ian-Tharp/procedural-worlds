@@ -44,6 +44,8 @@ pub struct DebugOverlayState {
     pub show_input_state: bool,
     /// Show memory panel
     pub show_memory: bool,
+    /// Show chunk statistics panel
+    pub show_chunks: bool,
 }
 
 impl Default for DebugOverlayState {
@@ -56,6 +58,7 @@ impl Default for DebugOverlayState {
             wireframe_enabled: false,
             show_input_state: false,
             show_memory: true,
+            show_chunks: true,
         }
     }
 }
@@ -322,6 +325,60 @@ pub fn debug_overlay_ui(
 
             ui.separator();
 
+            // Chunk statistics
+            if overlay_state.show_chunks {
+                ui.collapsing("📦 Chunk Statistics", |ui| {
+                    let render_distance = chunk_manager
+                        .as_ref()
+                        .map(|cm| cm.render_distance)
+                        .unwrap_or(0);
+
+                    // Vertical range matches chunk_streaming_system: y in -2..=4 (7 levels)
+                    let vertical_levels = 7;
+                    let side = (2 * render_distance + 1) as usize;
+                    let expected_chunks = side * side * vertical_levels;
+
+                    let loaded_pct = if expected_chunks > 0 {
+                        (chunk_count as f64 / expected_chunks as f64 * 100.0).min(100.0)
+                    } else {
+                        0.0
+                    };
+
+                    let pending = expected_chunks.saturating_sub(chunk_count);
+
+                    // Memory estimate: block data only (CHUNK_VOLUME × size_of BlockType per chunk)
+                    let block_bytes = chunk_count * CHUNK_VOLUME * std::mem::size_of::<crate::world::BlockType>();
+                    let block_mb = block_bytes as f64 / (1024.0 * 1024.0);
+
+                    ui.horizontal(|ui| {
+                        ui.label("Loaded:");
+                        ui.monospace(format!("{}", chunk_count));
+                    });
+                    ui.horizontal(|ui| {
+                        ui.label("Expected:");
+                        ui.monospace(format!("{}", expected_chunks));
+                    });
+                    ui.horizontal(|ui| {
+                        ui.label("Pending:");
+                        ui.monospace(format!("{}", pending));
+                    });
+                    ui.horizontal(|ui| {
+                        ui.label("Loaded %:");
+                        ui.monospace(format!("{:.1}%", loaded_pct));
+                    });
+                    ui.horizontal(|ui| {
+                        ui.label("Render dist:");
+                        ui.monospace(format!("{}", render_distance));
+                    });
+                    ui.horizontal(|ui| {
+                        ui.label("Block memory:");
+                        ui.monospace(format!("{:.1} MB", block_mb));
+                    });
+                });
+            }
+
+            ui.separator();
+
             // Render settings
             ui.collapsing("🎨 Render", |ui| {
                 ui.checkbox(&mut overlay_state.wireframe_enabled, "Wireframe mode");
@@ -373,6 +430,7 @@ pub fn debug_overlay_ui(
             ui.horizontal(|ui| {
                 ui.checkbox(&mut overlay_state.show_memory, "Memory");
                 ui.checkbox(&mut overlay_state.show_input_state, "Input");
+                ui.checkbox(&mut overlay_state.show_chunks, "Chunks");
             });
             
             ui.small("Press F3 to toggle overlay");
