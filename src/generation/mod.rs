@@ -15,7 +15,7 @@ use noise::{NoiseFn, Perlin, Simplex};
 use crate::world::{BlockType, Chunk, CHUNK_SIZE};
 
 /// Configuration for terrain generation
-#[derive(Resource)]
+#[derive(Resource, Clone)]
 pub struct TerrainConfig {
     /// World seed
     pub seed: u32,
