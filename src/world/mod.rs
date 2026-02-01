@@ -13,7 +13,7 @@ use std::collections::HashMap;
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 
-use crate::generation::{generate_caves, generate_chunk_terrain, TerrainConfig};
+use crate::generation::{generate_caves, generate_chunk_terrain, generate_trees, TerrainConfig};
 
 pub mod meshing;
 pub mod persistence;
@@ -324,6 +324,7 @@ fn chunk_streaming_system(
                     let mut chunk = Chunk::new(chunk_pos);
                     generate_chunk_terrain(&mut chunk, &terrain_config);
                     generate_caves(&mut chunk, &terrain_config);
+                    generate_trees(&mut chunk, &terrain_config);
 
                     // Spawn chunk entity (mesh will be built by meshing system)
                     let entity = commands.spawn(chunk).id();
