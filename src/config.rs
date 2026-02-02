@@ -104,6 +104,16 @@ pub struct RenderConfig {
     pub camera_far: f32,
     /// Camera field of view in degrees (default: 75.0)
     pub camera_fov: f32,
+    /// Shadow map resolution (default: 2048)
+    pub shadow_map_resolution: u32,
+    /// Shadow depth bias to reduce acne (default: 0.02)
+    pub shadow_depth_bias: f32,
+    /// Shadow normal bias to reduce peter-panning (default: 0.6)
+    pub shadow_normal_bias: f32,
+    /// Number of shadow cascades (default: 4)
+    pub shadow_cascade_count: u32,
+    /// Maximum shadow distance in blocks (default: 0 = auto from render_distance)
+    pub shadow_max_distance: f32,
 }
 
 /// Terrain generation settings
@@ -247,6 +257,11 @@ impl Default for RenderConfig {
             camera_near: 0.1,
             camera_far: 0.0,
             camera_fov: 75.0,
+            shadow_map_resolution: 2048,
+            shadow_depth_bias: 0.02,
+            shadow_normal_bias: 0.6,
+            shadow_cascade_count: 4,
+            shadow_max_distance: 0.0,
         }
     }
 }

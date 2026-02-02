@@ -21,6 +21,8 @@
 //! apply_lighting (rotates sun, interpolates color/intensity, adjusts ambient)
 //! ```
 
+use bevy::pbr::CascadeShadowConfigBuilder;
+use bevy::pbr::DirectionalLightShadowMap;
 use bevy::prelude::*;
 use std::f32::consts::TAU;
 
@@ -113,17 +115,37 @@ impl Plugin for DayNightPlugin {
 // ============================================================================
 
 /// Spawn the sun directional light and set initial ambient light.
-fn spawn_sun(mut commands: Commands) {
-    // Directional light (sun) — transform/color/illuminance are set by apply_lighting
+fn spawn_sun(mut commands: Commands, config: Res<EngineConfig>) {
+    // Compute maximum shadow distance
+    let shadow_max = if config.render.shadow_max_distance == 0.0 {
+        16.0 * (config.render.render_distance as f32 + 2.0)
+    } else {
+        config.render.shadow_max_distance
+    };
+
+    // Directional light (sun) with shadow cascade configuration
     commands.spawn((
         DirectionalLight {
             illuminance: 15_000.0,
             shadows_enabled: true,
+            shadow_depth_bias: config.render.shadow_depth_bias,
+            shadow_normal_bias: config.render.shadow_normal_bias,
             ..default()
         },
+        CascadeShadowConfigBuilder {
+            num_cascades: config.render.shadow_cascade_count as usize,
+            maximum_distance: shadow_max,
+            ..default()
+        }
+        .build(),
         Transform::from_rotation(Quat::from_euler(EulerRot::XYZ, -0.6, 0.4, 0.0)),
         Sun,
     ));
+
+    // Shadow map resolution resource
+    commands.insert_resource(DirectionalLightShadowMap {
+        size: config.render.shadow_map_resolution as usize,
+    });
 
     // Ambient light — will be overwritten each frame by apply_lighting
     commands.insert_resource(AmbientLight {
@@ -131,7 +153,11 @@ fn spawn_sun(mut commands: Commands) {
         brightness: 200.0,
     });
 
-    info!("Day/night cycle: sun and ambient light spawned");
+    info!("Day/night cycle: sun and ambient light spawned (shadow map {}px, {} cascades, max dist {:.0})",
+        config.render.shadow_map_resolution,
+        config.render.shadow_cascade_count,
+        shadow_max,
+    );
 }
 
 /// Read cycle duration from engine config (runs after all plugins init).
