@@ -8,11 +8,12 @@
 //! - Input state visualization
 
 use bevy::prelude::*;
-use bevy::diagnostic::{DiagnosticsStore, FrameTimeDiagnosticsPlugin};
+use bevy::diagnostic::{DiagnosticsStore, EntityCountDiagnosticsPlugin, FrameTimeDiagnosticsPlugin};
 use bevy_egui::{egui, EguiContexts};
 
 use crate::actors::Player;
 use crate::engine::input::{ActionState, ActionStates, InputAction};
+use crate::engine::memory;
 use crate::engine::raycast::CurrentTarget;
 use crate::engine::lighting::DayNightCycle;
 use crate::world::{ChunkManager, CHUNK_SIZE, CHUNK_VOLUME};
@@ -48,6 +49,16 @@ pub struct DebugOverlayState {
     pub show_memory: bool,
     /// Show chunk statistics panel
     pub show_chunks: bool,
+    /// Cached FPS value (smoothed for stable display)
+    cached_fps: f64,
+    /// Cached frame time in ms
+    cached_frame_time_ms: f64,
+    /// Cached process memory snapshot
+    cached_process_memory: Option<memory::ProcessMemory>,
+    /// Cached entity count
+    cached_entity_count: f64,
+    /// Timer for periodic metric refresh (avoids per-frame OS queries)
+    metrics_refresh_timer: f32,
 }
 
 impl Default for DebugOverlayState {
@@ -61,6 +72,11 @@ impl Default for DebugOverlayState {
             show_input_state: false,
             show_memory: true,
             show_chunks: true,
+            cached_fps: 0.0,
+            cached_frame_time_ms: 0.0,
+            cached_process_memory: None,
+            cached_entity_count: 0.0,
+            metrics_refresh_timer: 0.0,
         }
     }
 }
@@ -128,26 +144,50 @@ fn estimate_memory_usage(chunk_count: usize) -> (f64, f64, f64) {
     (block_mb, mesh_mb, total_mb)
 }
 
-/// System to update frame time history
+/// System to update frame time history and cached performance metrics
 pub fn update_frame_time_history(
     diagnostics: Res<DiagnosticsStore>,
     mut overlay_state: ResMut<DebugOverlayState>,
     time: Res<Time>,
 ) {
-    overlay_state.update_timer += time.delta_secs();
-    
+    let dt = time.delta_secs();
+    overlay_state.update_timer += dt;
+    overlay_state.metrics_refresh_timer += dt;
+
     // Update history every frame for smooth graphing
     if overlay_state.update_timer >= 1.0 / 60.0 {
         overlay_state.update_timer = 0.0;
-        
+
         if let Some(fps_diagnostic) = diagnostics.get(&FrameTimeDiagnosticsPlugin::FPS) {
-            if let Some(fps) = fps_diagnostic.value() {
-                if fps > 0.0 {
-                    let frame_time_ms = 1000.0 / fps;
-                    overlay_state.record_frame_time(frame_time_ms as f32);
+            if let Some(fps) = fps_diagnostic.value()
+                && fps > 0.0
+            {
+                let frame_time_ms = 1000.0 / fps;
+                overlay_state.record_frame_time(frame_time_ms as f32);
+            }
+
+            // Cache smoothed FPS for the performance panel
+            if let Some(fps_smoothed) = fps_diagnostic.smoothed() {
+                overlay_state.cached_fps = fps_smoothed;
+                if fps_smoothed > 0.0 {
+                    overlay_state.cached_frame_time_ms = 1000.0 / fps_smoothed;
                 }
             }
         }
+
+        // Cache entity count from diagnostics
+        if let Some(entity_diag) =
+            diagnostics.get(&EntityCountDiagnosticsPlugin::ENTITY_COUNT)
+            && let Some(count) = entity_diag.value()
+        {
+            overlay_state.cached_entity_count = count;
+        }
+    }
+
+    // Refresh OS memory query at a lower frequency (every 0.5s) to avoid overhead
+    if overlay_state.metrics_refresh_timer >= 0.5 {
+        overlay_state.metrics_refresh_timer = 0.0;
+        overlay_state.cached_process_memory = memory::get_process_memory();
     }
 }
 
@@ -204,6 +244,61 @@ pub fn debug_overlay_ui(
         .collapsible(true)
         .resizable(true)
         .show(contexts.ctx_mut(), |ui| {
+            // ── Performance summary (always visible at top) ─────────
+            {
+                let fps = overlay_state.cached_fps;
+                let frame_ms = overlay_state.cached_frame_time_ms;
+
+                // FPS color: green ≥60, yellow ≥30, red <30
+                let fps_color = if fps >= 60.0 {
+                    egui::Color32::from_rgb(100, 255, 100)
+                } else if fps >= 30.0 {
+                    egui::Color32::from_rgb(255, 255, 100)
+                } else {
+                    egui::Color32::from_rgb(255, 100, 100)
+                };
+
+                ui.horizontal(|ui| {
+                    ui.label("⚡");
+                    ui.colored_label(
+                        fps_color,
+                        egui::RichText::new(format!("{:.0} FPS", fps))
+                            .strong()
+                            .size(16.0),
+                    );
+                    ui.monospace(format!("({:.2} ms)", frame_ms));
+                });
+
+                ui.horizontal(|ui| {
+                    // Process memory
+                    if let Some(ref mem) = overlay_state.cached_process_memory {
+                        ui.label("💾");
+                        ui.monospace(memory::format_bytes(mem.rss_bytes));
+                        if let Some(peak) = mem.peak_rss_bytes {
+                            ui.colored_label(
+                                egui::Color32::from_rgb(150, 150, 150),
+                                format!("(peak {})", memory::format_bytes(peak)),
+                            );
+                        }
+                    } else {
+                        ui.label("💾");
+                        ui.colored_label(
+                            egui::Color32::from_rgb(150, 150, 150),
+                            "N/A",
+                        );
+                    }
+                });
+
+                ui.horizontal(|ui| {
+                    ui.label("📦");
+                    ui.monospace(format!("{} chunks", chunk_count));
+                    ui.label("  🧩");
+                    ui.monospace(format!("{} entities", overlay_state.cached_entity_count as u64));
+                });
+            }
+
+            ui.separator();
+
             // Coordinates section
             ui.collapsing("📍 Position", |ui| {
                 ui.horizontal(|ui| {
@@ -544,7 +639,8 @@ pub struct DebugOverlayPlugin;
 
 impl Plugin for DebugOverlayPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<DebugOverlayState>()
+        app.add_plugins(EntityCountDiagnosticsPlugin)
+            .init_resource::<DebugOverlayState>()
             .init_resource::<WireframeConfig>()
             .add_systems(
                 Update,

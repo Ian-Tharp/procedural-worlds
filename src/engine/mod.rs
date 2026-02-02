@@ -31,6 +31,7 @@ use bevy::prelude::*;
 // Submodules
 pub mod controller;
 pub mod input;
+pub mod memory;
 pub mod raycast;
 pub mod lighting;
 
