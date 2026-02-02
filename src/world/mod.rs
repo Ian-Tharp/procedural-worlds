@@ -14,7 +14,7 @@ use bevy::prelude::*;
 use bevy::tasks::{block_on, futures_lite::future, AsyncComputeTaskPool, Task};
 use serde::{Deserialize, Serialize};
 
-use crate::generation::{generate_caves, generate_chunk_terrain, generate_trees, TerrainConfig};
+use crate::generation::{generate_cacti, generate_caves, generate_chunk_terrain, generate_trees, TerrainConfig};
 
 pub mod meshing;
 pub mod persistence;
@@ -43,6 +43,10 @@ pub enum BlockType {
     Sandstone = 8,
     Snow = 9,
     Ice = 10,
+    Obsidian = 11,
+    VolcanicRock = 12,
+    Cactus = 13,
+    SandDunes = 14,
 }
 
 impl From<BlockType> for u16 {
@@ -65,6 +69,10 @@ impl From<u16> for BlockType {
             8 => BlockType::Sandstone,
             9 => BlockType::Snow,
             10 => BlockType::Ice,
+            11 => BlockType::Obsidian,
+            12 => BlockType::VolcanicRock,
+            13 => BlockType::Cactus,
+            14 => BlockType::SandDunes,
             _ => BlockType::Air, // Unknown block types default to Air
         }
     }
@@ -95,6 +103,10 @@ impl BlockType {
             BlockType::Sandstone => "Sandstone",
             BlockType::Snow => "Snow",
             BlockType::Ice => "Ice",
+            BlockType::Obsidian => "Obsidian",
+            BlockType::VolcanicRock => "Volcanic Rock",
+            BlockType::Cactus => "Cactus",
+            BlockType::SandDunes => "Sand Dunes",
         }
     }
 }
@@ -394,6 +406,7 @@ fn chunk_streaming_system(
                         generate_chunk_terrain(&mut chunk, &config);
                         generate_caves(&mut chunk, &config);
                         generate_trees(&mut chunk, &config);
+                        generate_cacti(&mut chunk, &config);
                         chunk
                     });
 
@@ -929,6 +942,7 @@ mod tests {
         generate_chunk_terrain(&mut reference, &config);
         generate_caves(&mut reference, &config);
         generate_trees(&mut reference, &config);
+        generate_cacti(&mut reference, &config);
 
         // Task-pool generation (simulates what chunk_streaming_system does)
         let task_pool = AsyncComputeTaskPool::get();
@@ -938,6 +952,7 @@ mod tests {
             generate_chunk_terrain(&mut chunk, &config_clone);
             generate_caves(&mut chunk, &config_clone);
             generate_trees(&mut chunk, &config_clone);
+            generate_cacti(&mut chunk, &config_clone);
             chunk
         });
 
@@ -1020,6 +1035,7 @@ mod tests {
                     generate_chunk_terrain(&mut chunk, &cfg);
                     generate_caves(&mut chunk, &cfg);
                     generate_trees(&mut chunk, &cfg);
+                    generate_cacti(&mut chunk, &cfg);
                     chunk
                 })
             })
