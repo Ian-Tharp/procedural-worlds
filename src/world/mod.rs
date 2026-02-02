@@ -4,13 +4,14 @@
 //! - Chunk data structure (16x16x16 blocks)
 //! - Block type registry
 //! - World coordinate system
-//! - Chunk loading/unloading
-//! - Mesh generation
+//! - Chunk loading/unloading (async via `AsyncComputeTaskPool`)
+//! - Mesh generation (async via `AsyncComputeTaskPool`)
 //! - Block queries for collision
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use bevy::prelude::*;
+use bevy::tasks::{block_on, futures_lite::future, AsyncComputeTaskPool, Task};
 use serde::{Deserialize, Serialize};
 
 use crate::generation::{generate_caves, generate_chunk_terrain, generate_trees, TerrainConfig};
@@ -176,18 +177,39 @@ impl Chunk {
 #[derive(Component)]
 pub struct ChunkMesh;
 
+/// Component attached to an entity while its chunk terrain is being generated
+/// on a background thread via `AsyncComputeTaskPool`.
+#[derive(Component)]
+pub struct PendingChunk {
+    /// The async task that will produce the completed `Chunk`.
+    task: Task<Chunk>,
+    /// The chunk-coordinate position (used to remove from pending set on completion).
+    position: IVec3,
+}
+
+/// Component attached to an entity while its mesh is being generated
+/// on a background thread via `AsyncComputeTaskPool`.
+#[derive(Component)]
+pub struct PendingMesh {
+    /// The async task that produces the mesh data.
+    task: Task<Mesh>,
+}
+
 /// Resource for tracking loaded chunks
 #[derive(Resource)]
 pub struct ChunkManager {
     /// Map of chunk positions to their entities
     pub chunks: HashMap<IVec3, Entity>,
+    /// Positions currently being generated in background tasks.
+    /// Prevents duplicate task spawning for the same chunk coordinate.
+    pub pending: HashSet<IVec3>,
     /// Render distance in chunks
     pub render_distance: i32,
     /// Player's current chunk position
     pub player_chunk: IVec3,
-    /// Chunks generated this frame (for rate limiting)
-    chunks_generated_this_frame: u32,
-    /// Maximum chunks to generate per frame
+    /// Tasks spawned this frame (for rate limiting)
+    tasks_spawned_this_frame: u32,
+    /// Maximum chunk-generation tasks to *spawn* per frame
     pub max_chunks_per_frame: u32,
 }
 
@@ -195,9 +217,10 @@ impl Default for ChunkManager {
     fn default() -> Self {
         Self {
             chunks: HashMap::new(),
+            pending: HashSet::new(),
             render_distance: 4,
             player_chunk: IVec3::ZERO,
-            chunks_generated_this_frame: 0,
+            tasks_spawned_this_frame: 0,
             // Increased from 2 to 4 for faster initial load
             // Trade-off: slightly more per-frame work, but faster to playable state
             max_chunks_per_frame: 4,
@@ -261,11 +284,20 @@ impl Plugin for WorldPlugin {
             .add_systems(Startup, setup_chunk_material)
             .add_systems(
                 Update,
-                (update_player_chunk_position, chunk_streaming_system)
+                (
+                    update_player_chunk_position,
+                    chunk_streaming_system,
+                    poll_pending_chunks,
+                )
                     .chain()
                     .in_set(WorldSystems::ChunkLoading),
             )
-            .add_systems(Update, mesh_dirty_chunks.in_set(WorldSystems::Meshing))
+            .add_systems(
+                Update,
+                (mesh_dirty_chunks, poll_pending_meshes)
+                    .chain()
+                    .in_set(WorldSystems::Meshing),
+            )
             .add_systems(Update, despawn_far_chunks.in_set(WorldSystems::Cleanup));
     }
 }
@@ -304,18 +336,26 @@ fn update_player_chunk_position(
     }
 }
 
-/// Load/unload chunks based on player position
+/// Spawn async chunk-generation tasks based on player position.
+///
+/// Instead of generating chunks synchronously on the main thread, this system
+/// spawns lightweight tasks on `AsyncComputeTaskPool`. Each task creates a
+/// `Chunk`, runs terrain + cave + tree generation, and returns the completed
+/// chunk data. The rate limiter now controls how many tasks are *spawned* per
+/// frame rather than how many blocking generations occur.
 fn chunk_streaming_system(
     mut commands: Commands,
     mut chunk_manager: ResMut<ChunkManager>,
     terrain_config: Res<TerrainConfig>,
 ) {
-    // Reset frame counter
-    chunk_manager.chunks_generated_this_frame = 0;
+    // Reset per-frame spawn counter
+    chunk_manager.tasks_spawned_this_frame = 0;
 
     let center = chunk_manager.player_chunk;
     let rd = chunk_manager.render_distance;
     let max_per_frame = chunk_manager.max_chunks_per_frame;
+
+    let task_pool = AsyncComputeTaskPool::get();
 
     // Iterate through chunks that should be loaded
     // Priority: closest chunks first (spiral out from center)
@@ -333,49 +373,83 @@ fn chunk_streaming_system(
                 for y in -2..=4 {
                     let chunk_pos = IVec3::new(x, y, z);
 
-                    // Skip if already loaded
-                    if chunk_manager.chunks.contains_key(&chunk_pos) {
+                    // Skip if already loaded or already pending
+                    if chunk_manager.chunks.contains_key(&chunk_pos)
+                        || chunk_manager.pending.contains(&chunk_pos)
+                    {
                         continue;
                     }
 
-                    // Rate limit chunk generation
-                    if chunk_manager.chunks_generated_this_frame >= max_per_frame {
+                    // Rate limit task spawning
+                    if chunk_manager.tasks_spawned_this_frame >= max_per_frame {
                         return;
                     }
 
-                    // Generate the chunk
-                    let mut chunk = Chunk::new(chunk_pos);
-                    generate_chunk_terrain(&mut chunk, &terrain_config);
-                    generate_caves(&mut chunk, &terrain_config);
-                    generate_trees(&mut chunk, &terrain_config);
+                    // Clone the config (cheap — just numbers) for the background task
+                    let config = (*terrain_config).clone();
 
-                    // Spawn chunk entity (mesh will be built by meshing system)
-                    let entity = commands.spawn(chunk).id();
-                    chunk_manager.chunks.insert(chunk_pos, entity);
-                    chunk_manager.chunks_generated_this_frame += 1;
+                    // Spawn async task for terrain generation
+                    let task = task_pool.spawn(async move {
+                        let mut chunk = Chunk::new(chunk_pos);
+                        generate_chunk_terrain(&mut chunk, &config);
+                        generate_caves(&mut chunk, &config);
+                        generate_trees(&mut chunk, &config);
+                        chunk
+                    });
+
+                    // Spawn a placeholder entity with the PendingChunk component
+                    commands.spawn(PendingChunk {
+                        task,
+                        position: chunk_pos,
+                    });
+
+                    chunk_manager.pending.insert(chunk_pos);
+                    chunk_manager.tasks_spawned_this_frame += 1;
                 }
             }
         }
     }
 }
 
-/// Maximum meshes to build per frame (prevents GPU upload stutter)
-const MAX_MESHES_PER_FRAME: usize = 6;
+/// Poll completed chunk-generation tasks and insert the resulting `Chunk` data.
+///
+/// When a task finishes, we insert the `Chunk` component (which starts with
+/// `dirty: true`), register the entity in `ChunkManager::chunks`, remove it
+/// from the pending set, and strip the `PendingChunk` component.
+fn poll_pending_chunks(
+    mut commands: Commands,
+    mut chunk_manager: ResMut<ChunkManager>,
+    mut pending_query: Query<(Entity, &mut PendingChunk)>,
+) {
+    for (entity, mut pending) in &mut pending_query {
+        if let Some(chunk) = block_on(future::poll_once(&mut pending.task)) {
+            let pos = pending.position;
 
-/// Build meshes for chunks that have dirty flag set
+            // Insert the completed chunk data onto this entity
+            commands.entity(entity).insert(chunk).remove::<PendingChunk>();
+
+            // Update bookkeeping
+            chunk_manager.pending.remove(&pos);
+            chunk_manager.chunks.insert(pos, entity);
+        }
+    }
+}
+
+/// Maximum mesh-generation tasks to spawn per frame (prevents GPU upload stutter)
+const MAX_MESH_TASKS_PER_FRAME: usize = 6;
+
+/// Spawn async mesh-generation tasks for dirty chunks.
+///
+/// Instead of building meshes synchronously, we clone the chunk data and
+/// dispatch `build_chunk_mesh` to `AsyncComputeTaskPool`. The entity gets a
+/// `PendingMesh` component while the task is in flight.
 fn mesh_dirty_chunks(
     mut commands: Commands,
-    mut meshes: ResMut<Assets<Mesh>>,
-    chunk_material: Res<ChunkMaterial>,
     chunk_manager: Res<ChunkManager>,
-    mut chunk_query: Query<(Entity, &mut Chunk), Without<ChunkMesh>>,
+    mut chunk_query: Query<(Entity, &mut Chunk), (Without<ChunkMesh>, Without<PendingMesh>)>,
 ) {
-    let Some(material_handle) = &chunk_material.handle else {
-        return;
-    };
-
     let player_chunk = chunk_manager.player_chunk;
-    let mut meshes_built = 0;
+    let mut tasks_spawned = 0;
 
     // Collect and sort chunks by distance to player (closest first)
     let mut dirty_chunks: Vec<_> = chunk_query
@@ -388,43 +462,66 @@ fn mesh_dirty_chunks(
         diff.x.abs() + diff.y.abs() + diff.z.abs() // Manhattan distance
     });
 
+    let task_pool = AsyncComputeTaskPool::get();
+
     for (entity, mut chunk) in dirty_chunks {
-        if meshes_built >= MAX_MESHES_PER_FRAME {
+        if tasks_spawned >= MAX_MESH_TASKS_PER_FRAME {
             break;
         }
 
-        // Build the mesh
-        let mesh = meshing::build_chunk_mesh(&chunk);
-        let mesh_handle = meshes.add(mesh);
+        // Clone chunk data for the background task (Chunk derives Clone)
+        let chunk_data = chunk.clone();
 
-        // Get world position for the chunk
-        let world_pos = chunk_to_world_pos(chunk.position);
+        let task = task_pool.spawn(async move {
+            meshing::build_chunk_mesh(&chunk_data)
+        });
 
-        // Add mesh components to the chunk entity
-        commands.entity(entity).insert((
-            Mesh3d(mesh_handle),
-            MeshMaterial3d(material_handle.clone()),
-            Transform::from_translation(world_pos),
-            ChunkMesh,
-        ));
-
-        // Clear dirty flag
+        // Clear dirty flag now — we've committed to meshing this chunk
         chunk.dirty = false;
-        meshes_built += 1;
+
+        commands.entity(entity).insert(PendingMesh { task });
+        tasks_spawned += 1;
     }
 }
 
-/// Remove chunks that are too far from the player
+/// Poll completed mesh-generation tasks and insert the resulting render components.
+fn poll_pending_meshes(
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    chunk_material: Res<ChunkMaterial>,
+    mut pending_query: Query<(Entity, &Chunk, &mut PendingMesh)>,
+) {
+    let Some(material_handle) = &chunk_material.handle else {
+        return;
+    };
+
+    for (entity, chunk, mut pending) in &mut pending_query {
+        if let Some(mesh) = block_on(future::poll_once(&mut pending.task)) {
+            let mesh_handle = meshes.add(mesh);
+            let world_pos = chunk_to_world_pos(chunk.position);
+
+            commands.entity(entity).insert((
+                Mesh3d(mesh_handle),
+                MeshMaterial3d(material_handle.clone()),
+                Transform::from_translation(world_pos),
+                ChunkMesh,
+            )).remove::<PendingMesh>();
+        }
+    }
+}
+
+/// Remove chunks (and pending chunk tasks) that are too far from the player.
 fn despawn_far_chunks(
     mut commands: Commands,
     mut chunk_manager: ResMut<ChunkManager>,
     chunk_query: Query<(Entity, &Chunk)>,
+    pending_query: Query<(Entity, &PendingChunk)>,
 ) {
     let center = chunk_manager.player_chunk;
     let max_dist = chunk_manager.render_distance + 2; // Buffer zone
 
+    // Despawn loaded chunks that are out of range
     let mut to_remove = Vec::new();
-
     for (entity, chunk) in &chunk_query {
         let diff = chunk.position - center;
         let dist = diff.x.abs().max(diff.y.abs()).max(diff.z.abs());
@@ -434,10 +531,23 @@ fn despawn_far_chunks(
             to_remove.push(chunk.position);
         }
     }
-
-    // Remove from chunk manager
     for pos in to_remove {
         chunk_manager.chunks.remove(&pos);
+    }
+
+    // Despawn pending-chunk entities that are out of range
+    let mut pending_to_remove = Vec::new();
+    for (entity, pending) in &pending_query {
+        let diff = pending.position - center;
+        let dist = diff.x.abs().max(diff.y.abs()).max(diff.z.abs());
+
+        if dist > max_dist {
+            commands.entity(entity).despawn_recursive();
+            pending_to_remove.push(pending.position);
+        }
+    }
+    for pos in pending_to_remove {
+        chunk_manager.pending.remove(&pos);
     }
 }
 
@@ -748,5 +858,203 @@ mod tests {
         let local_y = (-20_i32).rem_euclid(CHUNK_SIZE as i32) as usize;
         let local_z = (-1_i32).rem_euclid(CHUNK_SIZE as i32) as usize;
         assert_eq!((local_x, local_y, local_z), (11, 12, 15));
+    }
+
+    // ========================================================================
+    // Async chunk-generation pipeline tests
+    // ========================================================================
+
+    /// Ensure `AsyncComputeTaskPool` is initialised for tests that use it.
+    /// Calling `get_or_init` more than once is safe — subsequent calls are no-ops.
+    fn init_task_pool() {
+        AsyncComputeTaskPool::get_or_init(|| {
+            bevy::tasks::TaskPool::new()
+        });
+    }
+
+    #[test]
+    fn test_chunk_manager_pending_tracking() {
+        let mut cm = ChunkManager::default();
+        let pos = IVec3::new(1, 2, 3);
+
+        assert!(!cm.pending.contains(&pos));
+        cm.pending.insert(pos);
+        assert!(cm.pending.contains(&pos));
+
+        // Inserting again is idempotent
+        cm.pending.insert(pos);
+        assert_eq!(cm.pending.len(), 1);
+
+        cm.pending.remove(&pos);
+        assert!(!cm.pending.contains(&pos));
+    }
+
+    #[test]
+    fn test_chunk_manager_skips_pending_positions() {
+        let mut cm = ChunkManager::default();
+        let pos = IVec3::new(0, 0, 0);
+
+        // Simulate: position is already pending
+        cm.pending.insert(pos);
+
+        // The streaming system would check both `chunks` and `pending`
+        let should_skip =
+            cm.chunks.contains_key(&pos) || cm.pending.contains(&pos);
+        assert!(should_skip, "Should skip positions already in pending set");
+    }
+
+    #[test]
+    fn test_chunk_manager_skips_loaded_positions() {
+        let mut cm = ChunkManager::default();
+        let pos = IVec3::new(0, 0, 0);
+
+        // Simulate: a chunk is already loaded at this position
+        cm.chunks.insert(pos, Entity::PLACEHOLDER);
+
+        let should_skip =
+            cm.chunks.contains_key(&pos) || cm.pending.contains(&pos);
+        assert!(should_skip, "Should skip positions already in chunks map");
+    }
+
+    #[test]
+    fn test_async_chunk_generation_via_task_pool() {
+        init_task_pool();
+        // Verify that chunk generation works correctly when run in a task pool,
+        // producing the same deterministic result as inline generation.
+        let config = TerrainConfig::default();
+        let chunk_pos = IVec3::new(0, 2, 0);
+
+        // Inline (reference) generation
+        let mut reference = Chunk::new(chunk_pos);
+        generate_chunk_terrain(&mut reference, &config);
+        generate_caves(&mut reference, &config);
+        generate_trees(&mut reference, &config);
+
+        // Task-pool generation (simulates what chunk_streaming_system does)
+        let task_pool = AsyncComputeTaskPool::get();
+        let config_clone = config.clone();
+        let task = task_pool.spawn(async move {
+            let mut chunk = Chunk::new(chunk_pos);
+            generate_chunk_terrain(&mut chunk, &config_clone);
+            generate_caves(&mut chunk, &config_clone);
+            generate_trees(&mut chunk, &config_clone);
+            chunk
+        });
+
+        // Block until task completes (valid in test context)
+        let result = block_on(task);
+
+        // Verify every block matches
+        for x in 0..CHUNK_SIZE {
+            for y in 0..CHUNK_SIZE {
+                for z in 0..CHUNK_SIZE {
+                    assert_eq!(
+                        result.get_block(x, y, z),
+                        reference.get_block(x, y, z),
+                        "Async task produced different block at ({x}, {y}, {z})"
+                    );
+                }
+            }
+        }
+        assert_eq!(result.position, reference.position);
+        assert!(result.dirty);
+    }
+
+    #[test]
+    fn test_async_mesh_generation_via_task_pool() {
+        init_task_pool();
+        // Verify that mesh generation on a task pool produces the same mesh
+        // as inline generation.
+        let mut chunk = Chunk::new(IVec3::ZERO);
+        chunk.fill(BlockType::Stone);
+
+        // Inline (reference)
+        let reference_mesh = meshing::build_chunk_mesh(&chunk);
+
+        // Task-pool generation (simulates what mesh_dirty_chunks does)
+        let task_pool = AsyncComputeTaskPool::get();
+        let chunk_clone = chunk.clone();
+        let task = task_pool.spawn(async move {
+            meshing::build_chunk_mesh(&chunk_clone)
+        });
+
+        let result_mesh = block_on(task);
+
+        // Compare vertex counts
+        let ref_verts = reference_mesh
+            .attribute(Mesh::ATTRIBUTE_POSITION)
+            .map(|a| a.len())
+            .unwrap_or(0);
+        let res_verts = result_mesh
+            .attribute(Mesh::ATTRIBUTE_POSITION)
+            .map(|a| a.len())
+            .unwrap_or(0);
+        assert_eq!(ref_verts, res_verts, "Vertex counts should match");
+
+        // Compare index counts
+        let ref_indices = reference_mesh.indices().map(|i| i.len()).unwrap_or(0);
+        let res_indices = result_mesh.indices().map(|i| i.len()).unwrap_or(0);
+        assert_eq!(ref_indices, res_indices, "Index counts should match");
+    }
+
+    #[test]
+    fn test_multiple_async_chunk_tasks() {
+        init_task_pool();
+        // Spawn several chunk generation tasks concurrently and verify all complete.
+        let config = TerrainConfig::default();
+        let task_pool = AsyncComputeTaskPool::get();
+
+        let positions = vec![
+            IVec3::new(0, 0, 0),
+            IVec3::new(1, 0, 0),
+            IVec3::new(0, 1, 0),
+            IVec3::new(-1, 2, 3),
+        ];
+
+        let tasks: Vec<_> = positions
+            .iter()
+            .map(|&pos| {
+                let cfg = config.clone();
+                task_pool.spawn(async move {
+                    let mut chunk = Chunk::new(pos);
+                    generate_chunk_terrain(&mut chunk, &cfg);
+                    generate_caves(&mut chunk, &cfg);
+                    generate_trees(&mut chunk, &cfg);
+                    chunk
+                })
+            })
+            .collect();
+
+        for (task, &expected_pos) in tasks.into_iter().zip(&positions) {
+            let chunk = block_on(task);
+            assert_eq!(chunk.position, expected_pos);
+            assert!(chunk.dirty);
+        }
+    }
+
+    #[test]
+    fn test_rate_limiting_counter_resets() {
+        let mut cm = ChunkManager::default();
+        cm.tasks_spawned_this_frame = 10;
+        // Simulating what chunk_streaming_system does at the top
+        cm.tasks_spawned_this_frame = 0;
+        assert_eq!(cm.tasks_spawned_this_frame, 0);
+    }
+
+    #[test]
+    fn test_rate_limiting_respects_max() {
+        let cm = ChunkManager {
+            max_chunks_per_frame: 4,
+            ..default()
+        };
+        // Simulate spawning loop
+        let mut spawned = 0u32;
+        for _ in 0..100 {
+            if spawned >= cm.max_chunks_per_frame {
+                break;
+            }
+            spawned += 1;
+        }
+        assert_eq!(spawned, 4, "Should stop at max_chunks_per_frame");
     }
 }

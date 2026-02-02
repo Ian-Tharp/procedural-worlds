@@ -18,7 +18,7 @@ use crate::world::{BlockType, Chunk, CHUNK_SIZE};
 use biome::{biome_at, BiomeType};
 
 /// Configuration for terrain generation
-#[derive(Resource)]
+#[derive(Resource, Clone)]
 pub struct TerrainConfig {
     /// World seed
     pub seed: u32,
