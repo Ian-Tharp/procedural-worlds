@@ -227,6 +227,8 @@ pub struct DebugConfig {
     pub show_input: bool,
     /// Show chunk statistics panel
     pub show_chunks: bool,
+    /// Show rendering settings in debug overlay
+    pub show_render: bool,
 }
 
 // ============================================================================
@@ -342,6 +344,7 @@ impl Default for DebugConfig {
             show_memory: true,
             show_input: false,
             show_chunks: true,
+            show_render: true,
         }
     }
 }
@@ -587,6 +590,7 @@ fn apply_config_to_resources(
     debug_state.show_memory = config.debug.show_memory;
     debug_state.show_input_state = config.debug.show_input;
     debug_state.show_chunks = config.debug.show_chunks;
+    debug_state.show_render = config.debug.show_render;
 
     // --- Unload settings ---
     unload_config.unload_distance = config.unload.unload_distance;
