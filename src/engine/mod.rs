@@ -32,6 +32,7 @@ use bevy::prelude::*;
 pub mod controller;
 pub mod input;
 pub mod memory;
+pub mod post_processing;
 pub mod raycast;
 pub mod lighting;
 

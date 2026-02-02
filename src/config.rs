@@ -114,6 +114,16 @@ pub struct RenderConfig {
     pub shadow_cascade_count: u32,
     /// Maximum shadow distance in blocks (default: 0 = auto from render_distance)
     pub shadow_max_distance: f32,
+    /// Enable bloom effect (default: true)
+    pub bloom_enabled: bool,
+    /// Bloom intensity (default: 0.15)
+    pub bloom_intensity: f32,
+    /// Enable distance fog (default: true)
+    pub fog_enabled: bool,
+    /// Fog start distance in blocks (default: 100.0)
+    pub fog_start: f32,
+    /// Fog end distance in blocks (default: 250.0)
+    pub fog_end: f32,
 }
 
 /// Terrain generation settings
@@ -262,6 +272,11 @@ impl Default for RenderConfig {
             shadow_normal_bias: 0.6,
             shadow_cascade_count: 4,
             shadow_max_distance: 0.0,
+            bloom_enabled: true,
+            bloom_intensity: 0.15,
+            fog_enabled: true,
+            fog_start: 100.0,
+            fog_end: 250.0,
         }
     }
 }
