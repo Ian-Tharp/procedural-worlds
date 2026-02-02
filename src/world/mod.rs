@@ -18,6 +18,7 @@ use crate::generation::{generate_cacti, generate_caves, generate_chunk_terrain, 
 
 pub mod meshing;
 pub mod persistence;
+pub mod texture_atlas;
 pub mod unloading;
 
 use persistence::ChunkStorage;
@@ -309,7 +310,10 @@ impl Plugin for WorldPlugin {
                 )
                     .chain(),
             )
-            .add_systems(Startup, setup_chunk_material)
+            .add_systems(
+                Startup,
+                (texture_atlas::setup_block_texture_atlas, setup_chunk_material).chain(),
+            )
             .add_systems(
                 Update,
                 (
@@ -344,19 +348,35 @@ pub struct ChunkMaterial {
     pub handle: Option<Handle<StandardMaterial>>,
 }
 
-/// Setup the shared material for all chunk meshes
+/// Setup the shared material for all chunk meshes.
+///
+/// When `use_textures` is enabled and the `BlockTextureAtlas` resource exists,
+/// the material uses the atlas image as `base_color_texture`. Otherwise it falls
+/// back to a plain white material (vertex colors provide the block color).
 fn setup_chunk_material(
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut chunk_material: ResMut<ChunkMaterial>,
+    config: Res<crate::config::EngineConfig>,
+    atlas: Option<Res<texture_atlas::BlockTextureAtlas>>,
 ) {
+    let base_color_texture = if config.render.use_textures {
+        atlas.as_ref().map(|a| a.texture.clone())
+    } else {
+        None
+    };
+
     let material = materials.add(StandardMaterial {
-        base_color: Color::WHITE, // Vertex colors will modulate this
+        base_color: Color::WHITE, // Vertex colors (AO) will modulate this
+        base_color_texture,
         perceptual_roughness: 0.9,
         metallic: 0.0,
         ..default()
     });
     chunk_material.handle = Some(material);
-    info!("Chunk material initialized");
+    info!(
+        "Chunk material initialized (textures: {})",
+        config.render.use_textures && atlas.is_some()
+    );
 }
 
 /// Update the player's current chunk position based on camera
@@ -494,9 +514,21 @@ fn mesh_dirty_chunks(
     mut commands: Commands,
     chunk_manager: Res<ChunkManager>,
     mut chunk_query: Query<(Entity, &mut Chunk), (Without<ChunkMesh>, Without<PendingMesh>)>,
+    config: Res<crate::config::EngineConfig>,
 ) {
     let player_chunk = chunk_manager.player_chunk;
     let mut tasks_spawned = 0;
+
+    // Build atlas config for meshing (or None for legacy vertex colors)
+    let atlas_cfg = if config.render.use_textures {
+        Some(meshing::AtlasConfig {
+            tiles_per_row: config.render.atlas_grid_size,
+            tile_size: config.render.atlas_tile_size,
+            atlas_size: config.render.atlas_tile_size * config.render.atlas_grid_size,
+        })
+    } else {
+        None
+    };
 
     // Collect and sort chunks by distance to player (closest first)
     let mut dirty_chunks: Vec<_> = chunk_query
@@ -520,7 +552,7 @@ fn mesh_dirty_chunks(
         let chunk_data = chunk.clone();
 
         let task = task_pool.spawn(async move {
-            meshing::build_chunk_mesh(&chunk_data)
+            meshing::build_chunk_mesh_with_atlas(&chunk_data, atlas_cfg)
         });
 
         // Clear dirty flag now — we've committed to meshing this chunk

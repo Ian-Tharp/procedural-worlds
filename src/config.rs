@@ -124,6 +124,12 @@ pub struct RenderConfig {
     pub fog_start: f32,
     /// Fog end distance in blocks (default: 250.0)
     pub fog_end: f32,
+    /// Texture atlas tile size in pixels (default: 16)
+    pub atlas_tile_size: u32,
+    /// Texture atlas grid size — tiles per row (default: 16, giving 256 tiles max)
+    pub atlas_grid_size: u32,
+    /// Use textures (false = flat vertex colors like before). Default: true
+    pub use_textures: bool,
 }
 
 /// Terrain generation settings
@@ -279,6 +285,9 @@ impl Default for RenderConfig {
             fog_enabled: true,
             fog_start: 100.0,
             fog_end: 250.0,
+            atlas_tile_size: 16,
+            atlas_grid_size: 16,
+            use_textures: true,
         }
     }
 }
