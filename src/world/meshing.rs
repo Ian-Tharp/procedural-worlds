@@ -60,6 +60,9 @@ pub fn block_color(block: BlockType) -> [f32; 4] {
         BlockType::Water => [0.2, 0.4, 0.8, 1.0],
         BlockType::Wood => [0.5, 0.35, 0.2, 1.0],
         BlockType::Leaves => [0.2, 0.5, 0.15, 1.0],
+        BlockType::Sandstone => [0.82, 0.73, 0.53, 1.0],
+        BlockType::Snow => [0.95, 0.95, 0.97, 1.0],
+        BlockType::Ice => [0.7, 0.85, 0.95, 1.0],
     }
 }
 

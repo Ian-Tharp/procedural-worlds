@@ -1,10 +1,12 @@
 //! Procedural generation systems - terrain, vegetation, structures
 //!
-//! This module will contain:
+//! This module contains:
 //! - Terrain generation using noise functions
-//! - Biome distribution
+//! - Biome distribution (see [`biome`] submodule)
 //! - Vegetation placement
 //! - Structure generation
+
+pub mod biome;
 
 use std::hash::{Hash, Hasher};
 use std::collections::hash_map::DefaultHasher;
@@ -13,6 +15,7 @@ use bevy::prelude::*;
 use noise::{NoiseFn, Perlin, Simplex};
 
 use crate::world::{BlockType, Chunk, CHUNK_SIZE};
+use biome::{biome_at, BiomeType};
 
 /// Configuration for terrain generation
 #[derive(Resource)]
@@ -21,17 +24,31 @@ pub struct TerrainConfig {
     pub seed: u32,
     /// Base terrain height
     pub base_height: f64,
-    /// Terrain height variation
+    /// Terrain height variation (used as fallback when biomes are disabled)
     pub height_scale: f64,
-    /// Noise frequency (lower = smoother terrain)
+    /// Noise frequency (used as fallback when biomes are disabled)
     pub frequency: f64,
     /// Number of noise octaves
     pub octaves: usize,
-    /// Tree density — probability (0.0–1.0) that a valid surface position gets a tree
+    /// Tree density — probability (0.0–1.0) that a valid surface position gets a tree.
+    ///
+    /// With biomes enabled this acts as a scaling factor relative to the
+    /// default value (0.02).  For example, setting this to 0.04 doubles
+    /// biome tree densities, and 0.0 disables trees entirely.
     pub tree_density: f64,
     /// Sea level — air blocks at or below this Y coordinate become water
     pub sea_level: i32,
+    /// Noise frequency for biome selection (lower = larger biomes).
+    ///
+    /// A value of 0.005 produces biomes roughly 200 blocks across.
+    pub biome_scale: f64,
+    /// Seed offset added to `seed` for the biome noise instance,
+    /// ensuring biome boundaries are independent of terrain shape.
+    pub biome_seed_offset: u32,
 }
+
+/// Default tree density value used as the scaling reference.
+const BASE_TREE_DENSITY: f64 = 0.02;
 
 impl Default for TerrainConfig {
     fn default() -> Self {
@@ -41,15 +58,49 @@ impl Default for TerrainConfig {
             height_scale: 16.0,
             frequency: 0.02,
             octaves: 4,
-            tree_density: 0.02,
+            tree_density: BASE_TREE_DENSITY,
             sea_level: 28,
+            biome_scale: 0.005,
+            biome_seed_offset: 999,
         }
     }
 }
 
-/// Generates terrain for a chunk using simplex noise
+/// Calculate the terrain height and biome at a world (x, z) column.
+///
+/// Shared by terrain generation and cave generation so both agree on
+/// where the surface is.
+fn terrain_column(
+    world_x: i32,
+    world_z: i32,
+    terrain_noise: &Simplex,
+    biome_noise: &Simplex,
+    config: &TerrainConfig,
+) -> (i32, BiomeType) {
+    let biome = biome_at(world_x, world_z, biome_noise, config.biome_scale);
+    let params = biome.params();
+
+    let mut height = 0.0;
+    let mut amplitude = 1.0;
+    let mut frequency = params.terrain_frequency;
+
+    for _ in 0..config.octaves {
+        height += terrain_noise.get([
+            world_x as f64 * frequency,
+            world_z as f64 * frequency,
+        ]) * amplitude;
+        amplitude *= 0.5;
+        frequency *= 2.0;
+    }
+
+    let terrain_height = (config.base_height + height * params.terrain_amplitude) as i32;
+    (terrain_height, biome)
+}
+
+/// Generates terrain for a chunk using simplex noise and biome parameters.
 pub fn generate_chunk_terrain(chunk: &mut Chunk, config: &TerrainConfig) {
-    let noise = Simplex::new(config.seed);
+    let terrain_noise = Simplex::new(config.seed);
+    let biome_noise = Simplex::new(config.seed.wrapping_add(config.biome_seed_offset));
     let world_pos = chunk.world_position();
 
     for local_x in 0..CHUNK_SIZE {
@@ -57,39 +108,36 @@ pub fn generate_chunk_terrain(chunk: &mut Chunk, config: &TerrainConfig) {
             let world_x = world_pos.x + local_x as i32;
             let world_z = world_pos.z + local_z as i32;
 
-            // Generate height using fractal noise (multiple octaves)
-            let mut height = 0.0;
-            let mut amplitude = 1.0;
-            let mut frequency = config.frequency;
+            let (terrain_height, biome) =
+                terrain_column(world_x, world_z, &terrain_noise, &biome_noise, config);
+            let params = biome.params();
+            let effective_sea_level = config.sea_level + params.sea_level_offset;
 
-            for _ in 0..config.octaves {
-                height += noise.get([
-                    world_x as f64 * frequency,
-                    world_z as f64 * frequency,
-                ]) * amplitude;
-                amplitude *= 0.5;
-                frequency *= 2.0;
-            }
-
-            // Convert to block height
-            let terrain_height = (config.base_height + height * config.height_scale) as i32;
-
-            // Fill column with appropriate blocks
+            // Fill column with biome-appropriate blocks
             for local_y in 0..CHUNK_SIZE {
                 let world_y = world_pos.y + local_y as i32;
 
                 let block = if world_y > terrain_height {
                     BlockType::Air
                 } else if world_y == terrain_height {
-                    BlockType::Grass
+                    // Snow cap override for mountains
+                    if let Some(cap) = params.snow_cap_height {
+                        if world_y >= cap {
+                            BlockType::Snow
+                        } else {
+                            params.surface_block
+                        }
+                    } else {
+                        params.surface_block
+                    }
                 } else if world_y > terrain_height - 4 {
-                    BlockType::Dirt
+                    params.subsurface_block
                 } else {
-                    BlockType::Stone
+                    params.deep_block
                 };
 
                 // Fill air at or below sea level with water
-                let block = if block == BlockType::Air && world_y <= config.sea_level {
+                let block = if block == BlockType::Air && world_y <= effective_sea_level {
                     BlockType::Water
                 } else {
                     block
@@ -106,6 +154,7 @@ pub fn generate_chunk_terrain(chunk: &mut Chunk, config: &TerrainConfig) {
 pub fn generate_caves(chunk: &mut Chunk, config: &TerrainConfig) {
     let noise = Perlin::new(config.seed.wrapping_add(1000));
     let terrain_noise = Simplex::new(config.seed);
+    let biome_noise = Simplex::new(config.seed.wrapping_add(config.biome_seed_offset));
     let world_pos = chunk.world_position();
 
     // Higher threshold = fewer caves (0.7 means only top 15% of noise creates caves)
@@ -118,19 +167,9 @@ pub fn generate_caves(chunk: &mut Chunk, config: &TerrainConfig) {
             let world_x = world_pos.x + x as i32;
             let world_z = world_pos.z + z as i32;
 
-            // Calculate terrain height at this column (same as terrain generation)
-            let mut height = 0.0;
-            let mut amplitude = 1.0;
-            let mut frequency = config.frequency;
-            for _ in 0..config.octaves {
-                height += terrain_noise.get([
-                    world_x as f64 * frequency,
-                    world_z as f64 * frequency,
-                ]) * amplitude;
-                amplitude *= 0.5;
-                frequency *= 2.0;
-            }
-            let terrain_height = (config.base_height + height * config.height_scale) as i32;
+            // Calculate terrain height at this column (biome-aware, same as terrain generation)
+            let (terrain_height, _biome) =
+                terrain_column(world_x, world_z, &terrain_noise, &biome_noise, config);
 
             for y in 0..CHUNK_SIZE {
                 let world_y = world_pos.y + y as i32;
@@ -193,10 +232,22 @@ fn trunk_height_hash(world_x: i32, world_z: i32, seed: u32) -> usize {
 /// then probabilistically places a tree: a Wood trunk 4-6 blocks tall
 /// topped with a diamond-shaped Leaves canopy (radius 2).
 ///
-/// Trees are only placed when the entire structure fits within the chunk.
+/// Tree density is determined per-column by the biome at that position,
+/// scaled by `config.tree_density` relative to the default density.
+/// Trees are only placed on Grass blocks and when the entire structure
+/// fits within the chunk.
 pub fn generate_trees(chunk: &mut Chunk, config: &TerrainConfig) {
+    let biome_noise = Simplex::new(config.seed.wrapping_add(config.biome_seed_offset));
     let world_pos = chunk.world_position();
     let canopy_radius: i32 = 2;
+
+    // Global scaling factor: config.tree_density / default allows tests
+    // and config to control density while biomes provide the base rate.
+    let density_scale = if BASE_TREE_DENSITY > 0.0 {
+        config.tree_density / BASE_TREE_DENSITY
+    } else {
+        0.0
+    };
 
     for local_x in 0..CHUNK_SIZE {
         for local_z in 0..CHUNK_SIZE {
@@ -218,6 +269,8 @@ pub fn generate_trees(chunk: &mut Chunk, config: &TerrainConfig) {
             }
 
             // --- Find highest Grass block (scan top-down) ---
+            // Trees only grow on Grass; biomes without Grass surfaces
+            // (Desert, Tundra, Mountains) naturally produce no trees.
             let mut surface_y: Option<usize> = None;
             for local_y in (0..CHUNK_SIZE).rev() {
                 if chunk.get_block(local_x, local_y, local_z) == BlockType::Grass {
@@ -231,9 +284,13 @@ pub fn generate_trees(chunk: &mut Chunk, config: &TerrainConfig) {
                 None => continue, // No grass in this column
             };
 
+            // --- Biome-aware tree density ---
+            let biome = biome_at(world_x, world_z, &biome_noise, config.biome_scale);
+            let effective_density = biome.params().tree_density * density_scale;
+
             // --- Deterministic spawn decision ---
             let hash_val = tree_hash(world_x, world_z, config.seed);
-            if hash_val >= config.tree_density {
+            if hash_val >= effective_density {
                 continue;
             }
 

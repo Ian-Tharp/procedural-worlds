@@ -112,6 +112,8 @@ pub struct TerrainSettings {
     pub frequency: f64,
     /// Number of noise octaves (more = more detail)
     pub octaves: usize,
+    /// Biome noise frequency — lower values produce larger biomes (default: 0.005)
+    pub biome_scale: f64,
 }
 
 /// Player movement and camera settings
@@ -222,6 +224,7 @@ impl Default for TerrainSettings {
             height_scale: 16.0,
             frequency: 0.02,
             octaves: 4,
+            biome_scale: 0.005,
         }
     }
 }
@@ -498,7 +501,8 @@ fn apply_config_to_resources(
     terrain_config.height_scale = config.terrain.height_scale;
     terrain_config.frequency = config.terrain.frequency;
     terrain_config.octaves = config.terrain.octaves;
-    info!("Terrain seed: {}", config.terrain.seed);
+    terrain_config.biome_scale = config.terrain.biome_scale;
+    info!("Terrain seed: {}, biome_scale: {}", config.terrain.seed, config.terrain.biome_scale);
 
     // --- Debug overlay settings ---
     debug_state.visible = config.debug.overlay_visible;
