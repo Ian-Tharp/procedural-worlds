@@ -1088,6 +1088,55 @@ mod tests {
         }
     }
 
+    #[test]
+    fn test_atlas_uvs_stay_within_tile_bounds_for_greedy_quads() {
+        // Arrange: a fully filled chunk produces very large greedy quads.
+        // If atlas UVs scale with quad size, they will walk across neighboring tiles
+        // and sample "random" textures (often including magenta debug tiles).
+        let mut chunk = Chunk::new(IVec3::ZERO);
+        chunk.fill(BlockType::Stone);
+
+        // Use a plausible atlas config (16x16 tiles, 16px per tile => 256px atlas).
+        let ac = AtlasConfig {
+            tiles_per_row: 16,
+            tile_size: 16,
+            atlas_size: 256,
+        };
+
+        // Act
+        let mesh = build_chunk_mesh_with_atlas(&chunk, Some(ac));
+
+        // Assert
+        let tile = texture_atlas::block_face_texture(BlockType::Stone, Face::Top);
+        let (u_min, v_min, u_size, v_size) =
+            texture_atlas::atlas_uv(tile, ac.tiles_per_row, ac.tile_size, ac.atlas_size);
+        let u_max = u_min + u_size;
+        let v_max = v_min + v_size;
+
+        let Some(bevy::render::mesh::VertexAttributeValues::Float32x2(uvs)) =
+            mesh.attribute(Mesh::ATTRIBUTE_UV_0)
+        else {
+            panic!("UV_0 attribute missing or wrong type");
+        };
+
+        for uv in uvs {
+            assert!(
+                (0.0..=1.0).contains(&uv[0]) && (0.0..=1.0).contains(&uv[1]),
+                "atlas UVs must be normalized: {:?}",
+                uv
+            );
+            assert!(
+                uv[0] >= u_min && uv[0] <= u_max && uv[1] >= v_min && uv[1] <= v_max,
+                "atlas UV {:?} escaped tile bounds [{},{}]×[{},{}]",
+                uv,
+                u_min,
+                u_max,
+                v_min,
+                v_max
+            );
+        }
+    }
+
     // ==================================================================
     //  AO + greedy interaction tests
     // ==================================================================
@@ -1194,8 +1243,10 @@ mod tests {
 
     #[test]
     fn test_atlas_greedy_uvs_tile_correctly() {
-        // A greedy face spanning multiple blocks should have UVs that exceed
-        // the single-tile UV region (for texture repeat/tiling).
+        // For a packed atlas using StandardMaterial, greedy-merged quads must NOT
+        // scale UVs beyond the tile rectangle (that would sample neighboring tiles
+        // and cause stripes/magenta artifacts). Instead we keep UVs within the tile
+        // bounds (the texture is stretched across the merged quad).
         let mut chunk = Chunk::new(IVec3::ZERO);
         chunk.fill(BlockType::Stone);
 
@@ -1212,12 +1263,17 @@ mod tests {
             let tile_uv = 1.0 / 16.0_f32;
             let max_u = uv_data.iter().map(|uv| uv[0]).fold(0.0_f32, f32::max);
             let max_v = uv_data.iter().map(|uv| uv[1]).fold(0.0_f32, f32::max);
+            let min_u = uv_data.iter().map(|uv| uv[0]).fold(1.0_f32, f32::min);
+            let min_v = uv_data.iter().map(|uv| uv[1]).fold(1.0_f32, f32::min);
 
-            // A full chunk face is 16 blocks wide → UVs should reach tile_uv * 16 = 1.0
-            // Some faces with AO may merge into smaller quads, but there should be
-            // interior quads that merge larger.
-            assert!(max_u > tile_uv, "max U ({max_u}) should exceed single tile UV ({tile_uv})");
-            assert!(max_v > tile_uv, "max V ({max_v}) should exceed single tile UV ({tile_uv})");
+            assert!(
+                min_u >= -1e-6 && min_v >= -1e-6,
+                "atlas UV mins should be non-negative: min_u={min_u}, min_v={min_v}"
+            );
+            assert!(
+                max_u <= tile_uv + 1e-6 && max_v <= tile_uv + 1e-6,
+                "atlas UVs must stay within single-tile region: max_u={max_u}, max_v={max_v}, tile_uv={tile_uv}"
+            );
         } else {
             panic!("UV_0 attribute missing");
         }

@@ -107,8 +107,16 @@ pub const MAX_TILE_INDEX: u32 = 16;
 /// Returns `(u_min, v_min, u_size, v_size)` where a single 1×1 block face maps
 /// to `[u_min .. u_min + u_size, v_min .. v_min + v_size]`.
 ///
-/// For greedy-merged quads, multiply `u_size`/`v_size` by the quad extent so
-/// that the texture tiles via `Repeat` address mode.
+/// Note on greedy meshing + atlases:
+/// - With a classic packed atlas and Bevy's `StandardMaterial`, you **cannot**
+///   "repeat within a single tile" just by scaling UVs — scaling makes the UVs
+///   walk into neighboring tiles.
+/// - To truly tile per-block while still greedy-merging geometry, you'd need a
+///   custom shader (or texture arrays) that applies `fract()` *within the tile*
+///   region.
+/// - This engine therefore keeps atlas UVs **inside the tile bounds** and
+///   stretches the tile across greedy-merged quads (still visually coherent,
+///   and avoids sampling unrelated tiles).
 #[inline]
 pub fn atlas_uv(tile_index: u32, tiles_per_row: u32, tile_size: u32, atlas_size: u32) -> (f32, f32, f32, f32) {
     let tile_x = tile_index % tiles_per_row;
@@ -122,8 +130,9 @@ pub fn atlas_uv(tile_index: u32, tiles_per_row: u32, tile_size: u32, atlas_size:
 
 /// Build the 4-vertex UV array for a face quad.
 ///
-/// `quad_w` and `quad_h` are the extent of the greedy-merged face (1.0 for a
-/// single block). The UVs tile the texture across the merged region.
+/// `quad_w` and `quad_h` are currently **not used** for atlas UVs (see note in
+/// [`atlas_uv`]). We keep them in the signature for forward compatibility if
+/// we later add a custom material/shader that supports per-tile repeating.
 pub fn face_uvs_atlas(
     tile_index: u32,
     tiles_per_row: u32,
@@ -132,12 +141,29 @@ pub fn face_uvs_atlas(
     quad_w: f32,
     quad_h: f32,
 ) -> [[f32; 2]; 4] {
-    let (u_min, v_min, u_size, v_size) = atlas_uv(tile_index, tiles_per_row, tile_size, atlas_size);
+    let _ = (quad_w, quad_h);
+
+    let (u_min, v_min, u_size, v_size) =
+        atlas_uv(tile_index, tiles_per_row, tile_size, atlas_size);
+
+    // Guard against sampling outside the tile due to float precision.
+    // With nearest filtering, sampling exactly on tile borders can still pick
+    // a neighboring texel; insetting by half a texel avoids seams/bleed.
+    let texel = 1.0 / atlas_size.max(1) as f32;
+    let mut inset = 0.5 * texel;
+    // Ensure inset can't invert the UV rectangle even for tiny tiles/configs.
+    inset = inset.min(u_size * 0.25).min(v_size * 0.25);
+
+    let u0 = u_min + inset;
+    let v0 = v_min + inset;
+    let u1 = (u_min + u_size) - inset;
+    let v1 = (v_min + v_size) - inset;
+
     [
-        [u_min, v_min],
-        [u_min + u_size * quad_w, v_min],
-        [u_min + u_size * quad_w, v_min + v_size * quad_h],
-        [u_min, v_min + v_size * quad_h],
+        [u0, v0],
+        [u1, v0],
+        [u1, v1],
+        [u0, v1],
     ]
 }
 
@@ -203,14 +229,18 @@ pub fn build_atlas_image(tile_size: u32, grid_size: u32) -> Image {
         RenderAssetUsages::default(),
     );
 
-    // Nearest filtering for crisp pixel-art look; Repeat for greedy-mesh UV tiling
+    // Nearest filtering for crisp pixel-art look.
+    //
+    // NOTE: We use ClampToEdge because we keep atlas UVs within each tile's
+    // rectangle; Repeat would wrap across the *entire atlas*, which is not
+    // what we want for a packed tile atlas.
     image.sampler = ImageSampler::Descriptor(ImageSamplerDescriptor {
         mag_filter: ImageFilterMode::Nearest,
         min_filter: ImageFilterMode::Nearest,
         mipmap_filter: ImageFilterMode::Nearest,
-        address_mode_u: ImageAddressMode::Repeat,
-        address_mode_v: ImageAddressMode::Repeat,
-        address_mode_w: ImageAddressMode::Repeat,
+        address_mode_u: ImageAddressMode::ClampToEdge,
+        address_mode_v: ImageAddressMode::ClampToEdge,
+        address_mode_w: ImageAddressMode::ClampToEdge,
         ..default()
     });
 
@@ -227,6 +257,19 @@ pub fn setup_block_texture_atlas(
     let tile_size = config.render.atlas_tile_size;
     let grid_size = config.render.atlas_grid_size;
     let atlas_size = tile_size * grid_size;
+
+    let total_tiles = grid_size * grid_size;
+    // MAX_TILE_INDEX is inclusive, so we need at least MAX_TILE_INDEX + 1 tiles.
+    if total_tiles <= MAX_TILE_INDEX {
+        warn!(
+            "Texture atlas grid too small: {}×{} = {} tiles, but code uses tile indices up to {}. \
+             Increase render.atlas_grid_size or reduce MAX_TILE_INDEX/texture mappings.",
+            grid_size,
+            grid_size,
+            total_tiles,
+            MAX_TILE_INDEX
+        );
+    }
 
     let image = build_atlas_image(tile_size, grid_size);
     let handle = images.add(image);
@@ -726,23 +769,34 @@ mod tests {
 
     #[test]
     fn test_greedy_face_uv_tiling() {
-        // A 3×2 greedy face on tile 0 should produce UVs that span 3× and 2× the tile size
+        // Packed atlas UVs must stay within a tile rectangle. We deliberately do NOT
+        // scale UVs with greedy quad size here (StandardMaterial can't repeat within
+        // a tile). We also inset by half a texel to avoid edge sampling bleed.
         let uvs = face_uvs_atlas(0, 16, 16, 256, 3.0, 2.0);
         let u_tile = 1.0 / 16.0_f32;
         let v_tile = 1.0 / 16.0_f32;
 
+        let texel = 1.0 / 256.0_f32;
+        let mut inset = 0.5 * texel;
+        inset = inset.min(u_tile * 0.25).min(v_tile * 0.25);
+
+        let u0 = inset;
+        let v0 = inset;
+        let u1 = u_tile - inset;
+        let v1 = v_tile - inset;
+
         // Bottom-left
-        assert!((uvs[0][0] - 0.0).abs() < 1e-6);
-        assert!((uvs[0][1] - 0.0).abs() < 1e-6);
+        assert!((uvs[0][0] - u0).abs() < 1e-6);
+        assert!((uvs[0][1] - v0).abs() < 1e-6);
         // Bottom-right
-        assert!((uvs[1][0] - u_tile * 3.0).abs() < 1e-5);
-        assert!((uvs[1][1] - 0.0).abs() < 1e-6);
+        assert!((uvs[1][0] - u1).abs() < 1e-6);
+        assert!((uvs[1][1] - v0).abs() < 1e-6);
         // Top-right
-        assert!((uvs[2][0] - u_tile * 3.0).abs() < 1e-5);
-        assert!((uvs[2][1] - v_tile * 2.0).abs() < 1e-5);
+        assert!((uvs[2][0] - u1).abs() < 1e-6);
+        assert!((uvs[2][1] - v1).abs() < 1e-6);
         // Top-left
-        assert!((uvs[3][0] - 0.0).abs() < 1e-6);
-        assert!((uvs[3][1] - v_tile * 2.0).abs() < 1e-5);
+        assert!((uvs[3][0] - u0).abs() < 1e-6);
+        assert!((uvs[3][1] - v1).abs() < 1e-6);
     }
 
     #[test]
