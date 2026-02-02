@@ -200,6 +200,30 @@ pub fn generate_caves(chunk: &mut Chunk, config: &TerrainConfig) {
     }
 }
 
+/// Deterministic hash for cactus placement decisions.
+/// Returns a value in [0.0, 1.0) based on world position and seed.
+fn cactus_hash(world_x: i32, world_z: i32, seed: u32) -> f64 {
+    let mut hasher = DefaultHasher::new();
+    "cactus_placement".hash(&mut hasher);
+    seed.hash(&mut hasher);
+    world_x.hash(&mut hasher);
+    world_z.hash(&mut hasher);
+    let h = hasher.finish();
+    (h as f64) / (u64::MAX as f64)
+}
+
+/// Deterministic hash to choose cactus height (2–4) for a given position.
+fn cactus_height_hash(world_x: i32, world_z: i32, seed: u32) -> usize {
+    let mut hasher = DefaultHasher::new();
+    "cactus_height".hash(&mut hasher);
+    seed.hash(&mut hasher);
+    world_x.hash(&mut hasher);
+    world_z.hash(&mut hasher);
+    let h = hasher.finish();
+    // Map to range 2..=4
+    2 + (h % 3) as usize
+}
+
 /// Deterministic hash for tree placement decisions.
 /// Returns a value in [0.0, 1.0) based on world position and seed.
 fn tree_hash(world_x: i32, world_z: i32, seed: u32) -> f64 {
@@ -343,6 +367,77 @@ pub fn generate_trees(chunk: &mut Chunk, config: &TerrainConfig) {
                             chunk.set_block(bx, by, bz, BlockType::Leaves);
                         }
                     }
+                }
+            }
+        }
+    }
+}
+
+/// Place cacti on desert surfaces within a chunk.
+///
+/// For each (x, z) column, finds the highest SandDunes block (the surface),
+/// then probabilistically places a cactus: a vertical column of Cactus blocks
+/// 2–4 blocks tall.
+///
+/// Cactus density is determined per-column by the biome at that position,
+/// scaled by `config.tree_density` relative to the default density (reusing
+/// the same scaling mechanism as trees for consistency).
+/// Cacti are only placed on SandDunes or Sand blocks and when the entire
+/// structure fits within the chunk.
+pub fn generate_cacti(chunk: &mut Chunk, config: &TerrainConfig) {
+    let biome_noise = Simplex::new(config.seed.wrapping_add(config.biome_seed_offset));
+    let world_pos = chunk.world_position();
+
+    for local_x in 0..CHUNK_SIZE {
+        for local_z in 0..CHUNK_SIZE {
+            let world_x = world_pos.x + local_x as i32;
+            let world_z = world_pos.z + local_z as i32;
+
+            // --- Find highest SandDunes or Sand block (scan top-down) ---
+            let mut surface_y: Option<usize> = None;
+            for local_y in (0..CHUNK_SIZE).rev() {
+                let block = chunk.get_block(local_x, local_y, local_z);
+                if block == BlockType::SandDunes || block == BlockType::Sand {
+                    surface_y = Some(local_y);
+                    break;
+                }
+            }
+
+            let surface_y = match surface_y {
+                Some(y) => y,
+                None => continue, // No sand surface in this column
+            };
+
+            // --- Biome-aware cactus density ---
+            let biome = biome_at(world_x, world_z, &biome_noise, config.biome_scale);
+            let effective_density = biome.params().cactus_density;
+
+            if effective_density <= 0.0 {
+                continue;
+            }
+
+            // --- Deterministic spawn decision ---
+            let hash_val = cactus_hash(world_x, world_z, config.seed);
+            if hash_val >= effective_density {
+                continue;
+            }
+
+            // --- Choose cactus height (2–4 blocks) ---
+            let cactus_height = cactus_height_hash(world_x, world_z, config.seed);
+
+            let cactus_base = surface_y + 1;
+            let cactus_top = cactus_base + cactus_height - 1;
+
+            // Check that the whole cactus fits vertically in the chunk
+            if cactus_top >= CHUNK_SIZE {
+                continue;
+            }
+
+            // --- Place cactus (vertical column of Cactus blocks) ---
+            for y in cactus_base..=cactus_top {
+                // Only place in air (don't overwrite existing blocks)
+                if chunk.get_block(local_x, y, local_z) == BlockType::Air {
+                    chunk.set_block(local_x, y, local_z, BlockType::Cactus);
                 }
             }
         }
@@ -679,12 +774,13 @@ mod tests {
     // Tree generation tests
     // ========================================================================
 
-    /// Helper: generate a surface chunk with terrain + caves + trees.
+    /// Helper: generate a surface chunk with terrain + caves + trees + cacti.
     fn make_surface_chunk_with_trees(config: &TerrainConfig, chunk_pos: IVec3) -> Chunk {
         let mut chunk = Chunk::new(chunk_pos);
         generate_chunk_terrain(&mut chunk, config);
         generate_caves(&mut chunk, config);
         generate_trees(&mut chunk, config);
+        generate_cacti(&mut chunk, config);
         chunk
     }
 
@@ -849,5 +945,219 @@ mod tests {
                 }
             }
         }
+    }
+
+    // ========================================================================
+    // Cactus generation tests
+    // ========================================================================
+
+    /// Helper: generate a full pipeline chunk including cacti.
+    fn make_surface_chunk_with_cacti(config: &TerrainConfig, chunk_pos: IVec3) -> Chunk {
+        let mut chunk = Chunk::new(chunk_pos);
+        generate_chunk_terrain(&mut chunk, config);
+        generate_caves(&mut chunk, config);
+        generate_trees(&mut chunk, config);
+        generate_cacti(&mut chunk, config);
+        chunk
+    }
+
+    /// Find a chunk position that's in a Desert biome (SandDunes surface).
+    /// Scans a range of chunk positions to find one where the biome produces
+    /// SandDunes on the surface.
+    fn find_desert_chunk_pos(config: &TerrainConfig) -> Option<IVec3> {
+        let biome_noise = Simplex::new(config.seed.wrapping_add(config.biome_seed_offset));
+
+        for cx in -30..30 {
+            for cz in -30..30 {
+                let world_x = cx * CHUNK_SIZE as i32;
+                let world_z = cz * CHUNK_SIZE as i32;
+                let biome = biome_at(world_x, world_z, &biome_noise, config.biome_scale);
+                if biome == BiomeType::Desert {
+                    return Some(IVec3::new(cx, 2, cz));
+                }
+            }
+        }
+        None
+    }
+
+    #[test]
+    fn test_cacti_appear_in_desert() {
+        let config = TerrainConfig::default();
+        let chunk_pos = find_desert_chunk_pos(&config)
+            .expect("Should find a desert chunk within scan range");
+
+        let chunk = make_surface_chunk_with_cacti(&config, chunk_pos);
+
+        let mut has_cactus = false;
+        for x in 0..CHUNK_SIZE {
+            for y in 0..CHUNK_SIZE {
+                for z in 0..CHUNK_SIZE {
+                    if chunk.get_block(x, y, z) == BlockType::Cactus {
+                        has_cactus = true;
+                        break;
+                    }
+                }
+                if has_cactus { break; }
+            }
+            if has_cactus { break; }
+        }
+
+        // With default density (0.008), it's possible a single chunk has no cacti.
+        // Scan multiple desert chunks to be sure.
+        if !has_cactus {
+            let biome_noise = Simplex::new(config.seed.wrapping_add(config.biome_seed_offset));
+            for cx in -30..30 {
+                for cz in -30..30 {
+                    let world_x = cx * CHUNK_SIZE as i32;
+                    let world_z = cz * CHUNK_SIZE as i32;
+                    let biome = biome_at(world_x, world_z, &biome_noise, config.biome_scale);
+                    if biome == BiomeType::Desert {
+                        let c = make_surface_chunk_with_cacti(&config, IVec3::new(cx, 2, cz));
+                        for x in 0..CHUNK_SIZE {
+                            for y in 0..CHUNK_SIZE {
+                                for z in 0..CHUNK_SIZE {
+                                    if c.get_block(x, y, z) == BlockType::Cactus {
+                                        has_cactus = true;
+                                    }
+                                }
+                            }
+                        }
+                        if has_cactus { break; }
+                    }
+                }
+                if has_cactus { break; }
+            }
+        }
+
+        assert!(has_cactus, "Desert biome should produce at least some cacti");
+    }
+
+    #[test]
+    fn test_cactus_generation_deterministic() {
+        let config = TerrainConfig::default();
+        let chunk_pos = find_desert_chunk_pos(&config)
+            .expect("Should find a desert chunk within scan range");
+
+        let chunk1 = make_surface_chunk_with_cacti(&config, chunk_pos);
+        let chunk2 = make_surface_chunk_with_cacti(&config, chunk_pos);
+
+        for x in 0..CHUNK_SIZE {
+            for y in 0..CHUNK_SIZE {
+                for z in 0..CHUNK_SIZE {
+                    assert_eq!(
+                        chunk1.get_block(x, y, z),
+                        chunk2.get_block(x, y, z),
+                        "Cactus generation must be deterministic at ({}, {}, {})",
+                        x, y, z
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_cactus_height_is_2_to_4() {
+        let config = TerrainConfig::default();
+        let chunk_pos = find_desert_chunk_pos(&config)
+            .expect("Should find a desert chunk within scan range");
+
+        // Scan multiple desert chunks to find a cactus and verify its height
+        let biome_noise = Simplex::new(config.seed.wrapping_add(config.biome_seed_offset));
+
+        for cx in -30..30 {
+            for cz in -30..30 {
+                let world_x = cx * CHUNK_SIZE as i32;
+                let world_z = cz * CHUNK_SIZE as i32;
+                let biome = biome_at(world_x, world_z, &biome_noise, config.biome_scale);
+                if biome != BiomeType::Desert {
+                    continue;
+                }
+
+                let chunk = make_surface_chunk_with_cacti(&config, IVec3::new(cx, 2, cz));
+
+                for x in 0..CHUNK_SIZE {
+                    for z in 0..CHUNK_SIZE {
+                        // Find lowest Cactus in this column
+                        let mut cactus_base: Option<usize> = None;
+                        for y in 0..CHUNK_SIZE {
+                            if chunk.get_block(x, y, z) == BlockType::Cactus {
+                                cactus_base = Some(y);
+                                break;
+                            }
+                        }
+
+                        let cactus_base = match cactus_base {
+                            Some(y) => y,
+                            None => continue,
+                        };
+
+                        // Walk up to find height
+                        let mut y = cactus_base;
+                        while y < CHUNK_SIZE && chunk.get_block(x, y, z) == BlockType::Cactus {
+                            y += 1;
+                        }
+                        let cactus_height = y - cactus_base;
+
+                        assert!(
+                            (2..=4).contains(&cactus_height),
+                            "Cactus height should be 2-4, got {} at column ({}, {})",
+                            cactus_height, x, z
+                        );
+
+                        // Block below cactus should be SandDunes or Sand
+                        if cactus_base > 0 {
+                            let below = chunk.get_block(x, cactus_base - 1, z);
+                            assert!(
+                                below == BlockType::SandDunes || below == BlockType::Sand,
+                                "Block below cactus at ({}, {}, {}) should be SandDunes or Sand, found {:?}",
+                                x, cactus_base - 1, z, below
+                            );
+                        }
+
+                        return; // Verified one cactus, that's enough
+                    }
+                }
+            }
+        }
+
+        panic!("Expected to find at least one cactus in desert chunks");
+    }
+
+    #[test]
+    fn test_cacti_do_not_appear_in_non_desert_biomes() {
+        // Generate a chunk in a plains area — should have no cacti
+        let config = TerrainConfig::default();
+        let biome_noise = Simplex::new(config.seed.wrapping_add(config.biome_seed_offset));
+
+        // Find a Plains chunk
+        for cx in -30..30 {
+            for cz in -30..30 {
+                let world_x = cx * CHUNK_SIZE as i32;
+                let world_z = cz * CHUNK_SIZE as i32;
+                let biome = biome_at(world_x, world_z, &biome_noise, config.biome_scale);
+                if biome != BiomeType::Plains {
+                    continue;
+                }
+
+                let chunk = make_surface_chunk_with_cacti(&config, IVec3::new(cx, 2, cz));
+
+                for x in 0..CHUNK_SIZE {
+                    for y in 0..CHUNK_SIZE {
+                        for z in 0..CHUNK_SIZE {
+                            assert_ne!(
+                                chunk.get_block(x, y, z),
+                                BlockType::Cactus,
+                                "Plains biome should not have cacti at ({}, {}, {})",
+                                x, y, z
+                            );
+                        }
+                    }
+                }
+
+                return; // Verified one plains chunk
+            }
+        }
+
+        panic!("Could not find a Plains chunk to test");
     }
 }

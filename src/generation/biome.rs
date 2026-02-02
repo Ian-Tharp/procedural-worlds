@@ -10,14 +10,16 @@
 //! world (x, z) position.  The combination determines the biome:
 //!
 //! ```text
-//!              dry ← moisture → wet
-//!   cold  ┌──────────┬──────────┐
-//!         │  Tundra  │  Tundra  │
-//!         ├──────────┼──────────┤
-//!   mild  │Mountains │  Forest  │
-//!         ├──────────┼──────────┤
-//!   hot   │  Desert  │  Plains  │
-//!         └──────────┴──────────┘
+//!                dry ← moisture → wet
+//!   cold    ┌──────────┬──────────┐
+//!           │  Tundra  │  Tundra  │
+//!           ├──────────┼──────────┤
+//!   mild    │Mountains │  Forest  │
+//!           ├──────────┼──────────┤
+//!   hot     │  Desert  │  Plains  │
+//!           ├──────────┤          │
+//!   v.hot+  │ Volcanic │          │
+//!   v.dry   └──────────┴──────────┘
 //! ```
 
 use noise::{NoiseFn, Simplex};
@@ -28,7 +30,7 @@ use crate::world::BlockType;
 // BIOME TYPE
 // ============================================================================
 
-/// The five foundation biome types.
+/// The six foundation biome types.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum BiomeType {
     Plains,
@@ -36,6 +38,7 @@ pub enum BiomeType {
     Forest,
     Mountains,
     Tundra,
+    Volcanic,
 }
 
 impl BiomeType {
@@ -47,6 +50,7 @@ impl BiomeType {
             BiomeType::Forest,
             BiomeType::Mountains,
             BiomeType::Tundra,
+            BiomeType::Volcanic,
         ]
     }
 }
@@ -64,6 +68,8 @@ pub struct BiomeParams {
     pub terrain_frequency: f64,
     /// Probability (0.0–1.0) that an eligible surface position gets a tree.
     pub tree_density: f64,
+    /// Probability (0.0–1.0) that an eligible surface position gets a cactus.
+    pub cactus_density: f64,
     /// Offset added to the global sea level for this biome.
     pub sea_level_offset: i32,
     /// Block placed at the terrain surface.
@@ -88,6 +94,7 @@ impl BiomeType {
                 terrain_amplitude: 8.0,
                 terrain_frequency: 0.02,
                 tree_density: 0.02,
+                cactus_density: 0.0,
                 sea_level_offset: 0,
                 surface_block: BlockType::Grass,
                 subsurface_block: BlockType::Dirt,
@@ -95,16 +102,17 @@ impl BiomeType {
                 snow_cap_height: None,
             },
             // ----------------------------------------------------------
-            // Desert — medium dune-like terrain, sand palette, no trees
+            // Desert — rolling sand dunes with scattered cacti
             // ----------------------------------------------------------
             BiomeType::Desert => BiomeParams {
                 terrain_amplitude: 12.0,
                 terrain_frequency: 0.015,
                 tree_density: 0.0,
+                cactus_density: 0.008,
                 sea_level_offset: -2,
-                surface_block: BlockType::Sand,
-                subsurface_block: BlockType::Sandstone,
-                deep_block: BlockType::Stone,
+                surface_block: BlockType::SandDunes,
+                subsurface_block: BlockType::Sand,
+                deep_block: BlockType::Sandstone,
                 snow_cap_height: None,
             },
             // ----------------------------------------------------------
@@ -114,6 +122,7 @@ impl BiomeType {
                 terrain_amplitude: 10.0,
                 terrain_frequency: 0.02,
                 tree_density: 0.08,
+                cactus_density: 0.0,
                 sea_level_offset: 0,
                 surface_block: BlockType::Grass,
                 subsurface_block: BlockType::Dirt,
@@ -127,6 +136,7 @@ impl BiomeType {
                 terrain_amplitude: 32.0,
                 terrain_frequency: 0.025,
                 tree_density: 0.005,
+                cactus_density: 0.0,
                 sea_level_offset: 4,
                 surface_block: BlockType::Stone,
                 subsurface_block: BlockType::Stone,
@@ -140,9 +150,24 @@ impl BiomeType {
                 terrain_amplitude: 6.0,
                 terrain_frequency: 0.018,
                 tree_density: 0.0,
+                cactus_density: 0.0,
                 sea_level_offset: -1,
                 surface_block: BlockType::Snow,
                 subsurface_block: BlockType::Ice,
+                deep_block: BlockType::Stone,
+                snow_cap_height: None,
+            },
+            // ----------------------------------------------------------
+            // Volcanic — dramatic terrain with obsidian and volcanic rock
+            // ----------------------------------------------------------
+            BiomeType::Volcanic => BiomeParams {
+                terrain_amplitude: 24.0,
+                terrain_frequency: 0.03,
+                tree_density: 0.0,
+                cactus_density: 0.0,
+                sea_level_offset: 2,
+                surface_block: BlockType::VolcanicRock,
+                subsurface_block: BlockType::Obsidian,
                 deep_block: BlockType::Stone,
                 snow_cap_height: None,
             },
@@ -176,10 +201,12 @@ pub fn biome_at(x: i32, z: i32, noise: &Simplex, biome_scale: f64) -> BiomeType 
     ]);
 
     // Map (temp, moisture) → biome
-    //   temp:     cold (< -0.3)  ·  mild  ·  hot (> 0.4)
+    //   temp:     cold (< -0.3)  ·  mild  ·  hot (> 0.4)  ·  v.hot (> 0.5)
     //   moisture: dry  (< -0.3)  ·  mid   ·  wet (> 0.2)
     if temp < -0.3 {
         BiomeType::Tundra
+    } else if temp > 0.5 && moisture < -0.2 {
+        BiomeType::Volcanic
     } else if temp > 0.4 {
         if moisture < 0.0 {
             BiomeType::Desert
@@ -294,9 +321,9 @@ mod tests {
     #[test]
     fn test_desert_params() {
         let p = BiomeType::Desert.params();
-        assert_eq!(p.surface_block, BlockType::Sand);
-        assert_eq!(p.subsurface_block, BlockType::Sandstone);
-        assert_eq!(p.deep_block, BlockType::Stone);
+        assert_eq!(p.surface_block, BlockType::SandDunes);
+        assert_eq!(p.subsurface_block, BlockType::Sand);
+        assert_eq!(p.deep_block, BlockType::Sandstone);
         assert!(
             p.terrain_amplitude > BiomeType::Plains.params().terrain_amplitude,
             "Desert dunes should have more amplitude than plains"
@@ -304,6 +331,10 @@ mod tests {
         assert!(
             (p.tree_density - 0.0).abs() < f64::EPSILON,
             "Desert should have no trees"
+        );
+        assert!(
+            p.cactus_density > 0.0,
+            "Desert should have some cacti"
         );
         assert!(p.snow_cap_height.is_none());
     }
@@ -354,6 +385,27 @@ mod tests {
     }
 
     #[test]
+    fn test_volcanic_params() {
+        let p = BiomeType::Volcanic.params();
+        assert_eq!(p.surface_block, BlockType::VolcanicRock);
+        assert_eq!(p.subsurface_block, BlockType::Obsidian);
+        assert_eq!(p.deep_block, BlockType::Stone);
+        assert!(
+            p.terrain_amplitude > BiomeType::Plains.params().terrain_amplitude,
+            "Volcanic terrain should have more amplitude than plains"
+        );
+        assert!(
+            (p.tree_density - 0.0).abs() < f64::EPSILON,
+            "Volcanic should have no trees"
+        );
+        assert!(
+            (p.cactus_density - 0.0).abs() < f64::EPSILON,
+            "Volcanic should have no cacti"
+        );
+        assert!(p.snow_cap_height.is_none());
+    }
+
+    #[test]
     fn test_all_biomes_have_positive_amplitude_and_frequency() {
         for biome in BiomeType::all() {
             let p = biome.params();
@@ -371,19 +423,28 @@ mod tests {
     }
 
     #[test]
-    fn test_all_biomes_deep_block_is_stone() {
+    fn test_most_biomes_deep_block_is_stone() {
+        // Most biomes use Stone as their deep block; Desert uses Sandstone
         for biome in BiomeType::all() {
-            assert_eq!(
-                biome.params().deep_block,
-                BlockType::Stone,
-                "{:?} deep_block should be Stone",
-                biome,
-            );
+            let deep = biome.params().deep_block;
+            match biome {
+                BiomeType::Desert => assert_eq!(
+                    deep,
+                    BlockType::Sandstone,
+                    "Desert deep_block should be Sandstone",
+                ),
+                _ => assert_eq!(
+                    deep,
+                    BlockType::Stone,
+                    "{:?} deep_block should be Stone",
+                    biome,
+                ),
+            }
         }
     }
 
     #[test]
-    fn test_biome_type_all_returns_five() {
-        assert_eq!(BiomeType::all().len(), 5);
+    fn test_biome_type_all_returns_six() {
+        assert_eq!(BiomeType::all().len(), 6);
     }
 }
