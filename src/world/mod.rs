@@ -79,6 +79,20 @@ impl BlockType {
     pub fn is_solid(&self) -> bool {
         !matches!(self, BlockType::Air | BlockType::Water)
     }
+
+    /// Returns a human-readable display name for this block type
+    pub fn display_name(&self) -> &'static str {
+        match self {
+            BlockType::Air => "Air",
+            BlockType::Stone => "Stone",
+            BlockType::Dirt => "Dirt",
+            BlockType::Grass => "Grass",
+            BlockType::Sand => "Sand",
+            BlockType::Water => "Water",
+            BlockType::Wood => "Wood",
+            BlockType::Leaves => "Leaves",
+        }
+    }
 }
 
 /// A chunk of voxel data

@@ -27,7 +27,6 @@
 //! ```
 
 use bevy::prelude::*;
-use bevy_egui::{egui, EguiContexts};
 
 use crate::engine::controller::CameraController;
 use crate::world::{BlockType, Chunk, ChunkManager};
@@ -268,72 +267,6 @@ fn update_raycast_target(
     current_target.0 = if result.hit { Some(result) } else { None };
 }
 
-/// System to render a crosshair at the center of the screen
-///
-/// Draws a simple `+` shape using egui, sized for comfortable aiming.
-fn crosshair_ui(mut contexts: EguiContexts) {
-    let ctx = contexts.ctx_mut();
-
-    // Get screen center
-    let screen_rect = ctx.screen_rect();
-    let center = screen_rect.center();
-
-    // Crosshair dimensions
-    let half_size = 10.0;
-    let thickness = 2.0;
-    let color = egui::Color32::from_rgba_premultiplied(255, 255, 255, 200);
-    let gap = 3.0; // Small gap in the center for precision
-
-    // Draw using an overlay Area (no background, no interaction)
-    egui::Area::new(egui::Id::new("crosshair"))
-        .fixed_pos(egui::pos2(0.0, 0.0))
-        .order(egui::Order::Foreground)
-        .interactable(false)
-        .show(ctx, |ui| {
-            let painter = ui.painter();
-
-            // Horizontal line (left segment)
-            painter.rect_filled(
-                egui::Rect::from_min_size(
-                    egui::pos2(center.x - half_size, center.y - thickness / 2.0),
-                    egui::vec2(half_size - gap, thickness),
-                ),
-                0.0,
-                color,
-            );
-
-            // Horizontal line (right segment)
-            painter.rect_filled(
-                egui::Rect::from_min_size(
-                    egui::pos2(center.x + gap, center.y - thickness / 2.0),
-                    egui::vec2(half_size - gap, thickness),
-                ),
-                0.0,
-                color,
-            );
-
-            // Vertical line (top segment)
-            painter.rect_filled(
-                egui::Rect::from_min_size(
-                    egui::pos2(center.x - thickness / 2.0, center.y - half_size),
-                    egui::vec2(thickness, half_size - gap),
-                ),
-                0.0,
-                color,
-            );
-
-            // Vertical line (bottom segment)
-            painter.rect_filled(
-                egui::Rect::from_min_size(
-                    egui::pos2(center.x - thickness / 2.0, center.y + gap),
-                    egui::vec2(thickness, half_size - gap),
-                ),
-                0.0,
-                color,
-            );
-        });
-}
-
 // ============================================================================
 // PLUGIN
 // ============================================================================
@@ -343,20 +276,20 @@ fn crosshair_ui(mut contexts: EguiContexts) {
 /// Registers:
 /// - [`CurrentTarget`] resource (updated every frame)
 /// - Raycast system that casts from the camera each frame
-/// - Crosshair UI rendered at screen center
 ///
 /// # Dependencies
 /// Requires [`CameraController`] on the camera entity and
 /// [`ChunkManager`] / [`Chunk`] for block lookups.
+///
+/// # Note
+/// Crosshair rendering has been moved to [`crate::editor::hud::HudPlugin`],
+/// which also handles cursor-state-aware visibility and block info display.
 pub struct RaycastPlugin;
 
 impl Plugin for RaycastPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<CurrentTarget>()
-            .add_systems(
-                Update,
-                (update_raycast_target, crosshair_ui),
-            );
+            .add_systems(Update, update_raycast_target);
     }
 }
 
