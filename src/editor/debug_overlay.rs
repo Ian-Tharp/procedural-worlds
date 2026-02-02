@@ -7,16 +7,18 @@
 //! - Wireframe toggle
 //! - Input state visualization
 
+use bevy::pbr::{DirectionalLightShadowMap, NotShadowCaster};
 use bevy::prelude::*;
 use bevy::diagnostic::{DiagnosticsStore, EntityCountDiagnosticsPlugin, FrameTimeDiagnosticsPlugin};
 use bevy_egui::{egui, EguiContexts};
 
 use crate::actors::Player;
+use crate::config::EngineConfig;
 use crate::engine::input::{ActionState, ActionStates, InputAction};
+use crate::engine::lighting::{DayNightCycle, Sun};
 use crate::engine::memory;
 use crate::engine::raycast::CurrentTarget;
-use crate::engine::lighting::DayNightCycle;
-use crate::world::{ChunkManager, CHUNK_SIZE, CHUNK_VOLUME};
+use crate::world::{ChunkManager, ChunkMesh, CHUNK_SIZE, CHUNK_VOLUME};
 
 /// Number of frame time samples to keep for the graph
 const FRAME_TIME_HISTORY_SIZE: usize = 120;
@@ -49,6 +51,8 @@ pub struct DebugOverlayState {
     pub show_memory: bool,
     /// Show chunk statistics panel
     pub show_chunks: bool,
+    /// Show rendering settings panel
+    pub show_render: bool,
     /// Cached FPS value (smoothed for stable display)
     cached_fps: f64,
     /// Cached frame time in ms
@@ -72,6 +76,7 @@ impl Default for DebugOverlayState {
             show_input_state: false,
             show_memory: true,
             show_chunks: true,
+            show_render: true,
             cached_fps: 0.0,
             cached_frame_time_ms: 0.0,
             cached_process_memory: None,
@@ -217,12 +222,25 @@ pub fn debug_overlay_ui(
     action_states: Option<Res<ActionStates>>,
     keyboard: Res<ButtonInput<KeyCode>>,
     current_target: Option<Res<CurrentTarget>>,
+    config: Res<EngineConfig>,
+    shadow_map: Option<Res<DirectionalLightShadowMap>>,
+    mut sun_query: Query<&mut DirectionalLight, With<Sun>>,
+    not_shadow_caster_query: Query<(), (With<ChunkMesh>, With<NotShadowCaster>)>,
+    shadow_caster_query: Query<(), (With<ChunkMesh>, Without<NotShadowCaster>)>,
 ) {
     // Toggle overlay with F3
     if keyboard.just_pressed(KeyCode::F3) {
         overlay_state.visible = !overlay_state.visible;
     }
-    
+
+    // Toggle shadows with F7
+    if keyboard.just_pressed(KeyCode::F7) {
+        for mut light in &mut sun_query {
+            light.shadows_enabled = !light.shadows_enabled;
+            info!("Shadows toggled: {}", light.shadows_enabled);
+        }
+    }
+
     if !overlay_state.visible {
         return;
     }
@@ -576,6 +594,98 @@ pub fn debug_overlay_ui(
 
             ui.separator();
 
+            // Rendering debug panel
+            if overlay_state.show_render {
+                ui.collapsing("🌟 Rendering", |ui| {
+                    // Shadow map
+                    let shadow_size = shadow_map
+                        .as_ref()
+                        .map(|sm| sm.size)
+                        .unwrap_or(0);
+                    ui.horizontal(|ui| {
+                        ui.label("Shadow map:");
+                        ui.monospace(format!("{}px", shadow_size));
+                    });
+                    ui.horizontal(|ui| {
+                        ui.label("Cascades:");
+                        ui.monospace(format!("{}", config.render.shadow_cascade_count));
+                    });
+
+                    // Shadow state from sun
+                    for light in sun_query.iter() {
+                        ui.horizontal(|ui| {
+                            ui.label("Shadows:");
+                            if light.shadows_enabled {
+                                ui.colored_label(
+                                    egui::Color32::from_rgb(100, 255, 100),
+                                    "ON",
+                                );
+                            } else {
+                                ui.colored_label(
+                                    egui::Color32::from_rgb(255, 100, 100),
+                                    "OFF",
+                                );
+                            }
+                            ui.small("(F7 toggle)");
+                        });
+                    }
+
+                    // Shadow caster counts
+                    let casters = shadow_caster_query.iter().count();
+                    let culled = not_shadow_caster_query.iter().count();
+                    ui.horizontal(|ui| {
+                        ui.label("Shadow casters:");
+                        ui.monospace(format!("{}", casters));
+                    });
+                    ui.horizontal(|ui| {
+                        ui.label("Shadow culled:");
+                        ui.monospace(format!("{}", culled));
+                    });
+
+                    ui.separator();
+
+                    // Bloom
+                    ui.horizontal(|ui| {
+                        ui.label("Bloom:");
+                        if config.render.bloom_enabled {
+                            ui.colored_label(
+                                egui::Color32::from_rgb(100, 255, 100),
+                                format!("ON ({:.2})", config.render.bloom_intensity),
+                            );
+                        } else {
+                            ui.colored_label(
+                                egui::Color32::from_rgb(150, 150, 150),
+                                "OFF",
+                            );
+                        }
+                    });
+
+                    // Fog
+                    ui.horizontal(|ui| {
+                        ui.label("Fog:");
+                        if config.render.fog_enabled {
+                            ui.colored_label(
+                                egui::Color32::from_rgb(100, 255, 100),
+                                format!("ON ({:.0}..{:.0})", config.render.fog_start, config.render.fog_end),
+                            );
+                        } else {
+                            ui.colored_label(
+                                egui::Color32::from_rgb(150, 150, 150),
+                                "OFF",
+                            );
+                        }
+                    });
+
+                    // Tonemapping
+                    ui.horizontal(|ui| {
+                        ui.label("Tonemapping:");
+                        ui.monospace("ACES Fitted");
+                    });
+                });
+
+                ui.separator();
+            }
+
             // Render settings
             ui.collapsing("🎨 Render", |ui| {
                 ui.checkbox(&mut overlay_state.wireframe_enabled, "Wireframe mode");
@@ -628,9 +738,10 @@ pub fn debug_overlay_ui(
                 ui.checkbox(&mut overlay_state.show_memory, "Memory");
                 ui.checkbox(&mut overlay_state.show_input_state, "Input");
                 ui.checkbox(&mut overlay_state.show_chunks, "Chunks");
+                ui.checkbox(&mut overlay_state.show_render, "Render");
             });
             
-            ui.small("Press F3 to toggle overlay");
+            ui.small("F3 overlay | F7 shadows");
         });
 }
 

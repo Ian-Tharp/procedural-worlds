@@ -8,6 +8,7 @@
 use bevy::prelude::*;
 
 use super::{Actor, CapsuleCollider, Grounded, Movement, Player, Velocity};
+use crate::config::EngineConfig;
 use crate::engine::CameraController;
 
 /// Bundle for spawning a player entity
@@ -118,6 +119,23 @@ pub fn spawn_player(commands: &mut Commands, position: Vec3) -> Entity {
             parent.spawn(PlayerCameraBundle::default());
         })
         .id()
+}
+
+/// Compute `Projection` from engine config render settings.
+pub fn projection_from_config(config: &EngineConfig) -> Projection {
+    let chunk_size = 16.0_f32;
+    let far = if config.render.camera_far == 0.0 {
+        chunk_size * (config.render.render_distance as f32 + 2.0) * 2.0
+    } else {
+        config.render.camera_far
+    };
+
+    Projection::Perspective(PerspectiveProjection {
+        fov: config.render.camera_fov.to_radians(),
+        near: config.render.camera_near,
+        far,
+        ..default()
+    })
 }
 
 /// Spawn a player in flying mode (for creative/editor use)

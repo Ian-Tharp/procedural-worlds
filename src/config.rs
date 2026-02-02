@@ -32,6 +32,7 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 
 use crate::actors::{Movement, Player};
+use crate::actors::player::projection_from_config;
 use crate::editor::debug_overlay::DebugOverlayState;
 use crate::engine::controller::CameraController;
 use crate::engine::input::{InputAction, InputMap};
@@ -97,6 +98,32 @@ pub struct RenderConfig {
     pub render_distance: i32,
     /// Maximum chunks to generate per frame (default: 4)
     pub max_chunks_per_frame: u32,
+    /// Camera near plane (default: 0.1)
+    pub camera_near: f32,
+    /// Camera far plane. 0.0 = auto-calculate from render distance (default: 0.0)
+    pub camera_far: f32,
+    /// Camera field of view in degrees (default: 75.0)
+    pub camera_fov: f32,
+    /// Shadow map resolution (default: 2048)
+    pub shadow_map_resolution: u32,
+    /// Shadow depth bias to reduce acne (default: 0.02)
+    pub shadow_depth_bias: f32,
+    /// Shadow normal bias to reduce peter-panning (default: 0.6)
+    pub shadow_normal_bias: f32,
+    /// Number of shadow cascades (default: 4)
+    pub shadow_cascade_count: u32,
+    /// Maximum shadow distance in blocks (default: 0 = auto from render_distance)
+    pub shadow_max_distance: f32,
+    /// Enable bloom effect (default: true)
+    pub bloom_enabled: bool,
+    /// Bloom intensity (default: 0.15)
+    pub bloom_intensity: f32,
+    /// Enable distance fog (default: true)
+    pub fog_enabled: bool,
+    /// Fog start distance in blocks (default: 100.0)
+    pub fog_start: f32,
+    /// Fog end distance in blocks (default: 250.0)
+    pub fog_end: f32,
 }
 
 /// Terrain generation settings
@@ -200,6 +227,8 @@ pub struct DebugConfig {
     pub show_input: bool,
     /// Show chunk statistics panel
     pub show_chunks: bool,
+    /// Show rendering settings in debug overlay
+    pub show_render: bool,
 }
 
 // ============================================================================
@@ -237,6 +266,19 @@ impl Default for RenderConfig {
         Self {
             render_distance: 4,
             max_chunks_per_frame: 4,
+            camera_near: 0.1,
+            camera_far: 0.0,
+            camera_fov: 75.0,
+            shadow_map_resolution: 2048,
+            shadow_depth_bias: 0.02,
+            shadow_normal_bias: 0.6,
+            shadow_cascade_count: 4,
+            shadow_max_distance: 0.0,
+            bloom_enabled: true,
+            bloom_intensity: 0.15,
+            fog_enabled: true,
+            fog_start: 100.0,
+            fog_end: 250.0,
         }
     }
 }
@@ -302,6 +344,7 @@ impl Default for DebugConfig {
             show_memory: true,
             show_input: false,
             show_chunks: true,
+            show_render: true,
         }
     }
 }
@@ -547,6 +590,7 @@ fn apply_config_to_resources(
     debug_state.show_memory = config.debug.show_memory;
     debug_state.show_input_state = config.debug.show_input;
     debug_state.show_chunks = config.debug.show_chunks;
+    debug_state.show_render = config.debug.show_render;
 
     // --- Unload settings ---
     unload_config.unload_distance = config.unload.unload_distance;
@@ -585,12 +629,14 @@ fn apply_config_to_resources(
 /// Requires player and camera entities to have been spawned during `Startup`.
 fn apply_config_to_entities(
     config: Res<EngineConfig>,
-    mut camera_query: Query<&mut CameraController, With<Camera3d>>,
+    mut camera_query: Query<(&mut CameraController, &mut Projection), With<Camera3d>>,
     mut player_query: Query<&mut Movement, With<Player>>,
 ) {
-    // --- Camera sensitivity ---
-    for mut controller in &mut camera_query {
+    // --- Camera sensitivity and projection ---
+    let proj = projection_from_config(&config);
+    for (mut controller, mut camera_proj) in &mut camera_query {
         controller.sensitivity = config.player.mouse_sensitivity;
+        *camera_proj = proj.clone();
     }
 
     // --- Player movement settings ---

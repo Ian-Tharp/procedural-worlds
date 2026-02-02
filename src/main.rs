@@ -46,6 +46,7 @@ fn main() {
         .add_plugins(engine::CameraPlugin)
         .add_plugins(engine::RaycastPlugin)
         .add_plugins(engine::lighting::DayNightPlugin)
+        .add_plugins(engine::post_processing::PostProcessingPlugin)
         .add_plugins(world::WorldPlugin)
         .add_plugins(physics::PhysicsPlugin)
         .add_plugins(actors::ActorPlugin)

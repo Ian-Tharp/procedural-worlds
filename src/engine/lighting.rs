@@ -21,10 +21,14 @@
 //! apply_lighting (rotates sun, interpolates color/intensity, adjusts ambient)
 //! ```
 
+use bevy::pbr::CascadeShadowConfigBuilder;
+use bevy::pbr::DirectionalLightShadowMap;
+use bevy::pbr::NotShadowCaster;
 use bevy::prelude::*;
 use std::f32::consts::TAU;
 
 use crate::config::EngineConfig;
+use crate::world::{Chunk, ChunkMesh};
 
 // ============================================================================
 // RESOURCE
@@ -103,7 +107,7 @@ impl Plugin for DayNightPlugin {
             .add_systems(PostStartup, init_cycle_from_config)
             .add_systems(
                 Update,
-                (update_day_night_cycle, apply_lighting).chain(),
+                (update_day_night_cycle, apply_lighting, update_shadow_casters).chain(),
             );
     }
 }
@@ -113,17 +117,37 @@ impl Plugin for DayNightPlugin {
 // ============================================================================
 
 /// Spawn the sun directional light and set initial ambient light.
-fn spawn_sun(mut commands: Commands) {
-    // Directional light (sun) — transform/color/illuminance are set by apply_lighting
+fn spawn_sun(mut commands: Commands, config: Res<EngineConfig>) {
+    // Compute maximum shadow distance
+    let shadow_max = if config.render.shadow_max_distance == 0.0 {
+        16.0 * (config.render.render_distance as f32 + 2.0)
+    } else {
+        config.render.shadow_max_distance
+    };
+
+    // Directional light (sun) with shadow cascade configuration
     commands.spawn((
         DirectionalLight {
             illuminance: 15_000.0,
             shadows_enabled: true,
+            shadow_depth_bias: config.render.shadow_depth_bias,
+            shadow_normal_bias: config.render.shadow_normal_bias,
             ..default()
         },
+        CascadeShadowConfigBuilder {
+            num_cascades: config.render.shadow_cascade_count as usize,
+            maximum_distance: shadow_max,
+            ..default()
+        }
+        .build(),
         Transform::from_rotation(Quat::from_euler(EulerRot::XYZ, -0.6, 0.4, 0.0)),
         Sun,
     ));
+
+    // Shadow map resolution resource
+    commands.insert_resource(DirectionalLightShadowMap {
+        size: config.render.shadow_map_resolution as usize,
+    });
 
     // Ambient light — will be overwritten each frame by apply_lighting
     commands.insert_resource(AmbientLight {
@@ -131,7 +155,11 @@ fn spawn_sun(mut commands: Commands) {
         brightness: 200.0,
     });
 
-    info!("Day/night cycle: sun and ambient light spawned");
+    info!("Day/night cycle: sun and ambient light spawned (shadow map {}px, {} cascades, max dist {:.0})",
+        config.render.shadow_map_resolution,
+        config.render.shadow_cascade_count,
+        shadow_max,
+    );
 }
 
 /// Read cycle duration from engine config (runs after all plugins init).
@@ -176,6 +204,10 @@ fn apply_lighting(
         let (color, illuminance) = sun_color_and_intensity(t);
         light.color = color;
         light.illuminance = illuminance;
+
+        // Disable shadows when sun is below the horizon
+        let elevation = sun_elevation(t);
+        light.shadows_enabled = elevation > -0.05;
     }
 
     // --- Ambient light ---
@@ -277,6 +309,45 @@ fn ambient_settings(time_of_day: f32) -> (Color, f32) {
 /// Linear interpolation between `a` and `b` by `t` (unclamped).
 fn lerp(a: f32, b: f32, t: f32) -> f32 {
     a + (b - a) * t
+}
+
+// ============================================================================
+// SHADOW CULLING
+// ============================================================================
+
+/// Chunks beyond shadow distance don't cast shadows (GPU optimization).
+///
+/// Inserts [`NotShadowCaster`] on distant chunk mesh entities and removes it
+/// from nearby ones so the shadow map only covers the area close to the camera.
+fn update_shadow_casters(
+    config: Res<EngineConfig>,
+    player_pos: Query<&GlobalTransform, With<Camera3d>>,
+    chunks: Query<(Entity, &Chunk), With<ChunkMesh>>,
+    mut commands: Commands,
+) {
+    let shadow_dist = if config.render.shadow_max_distance == 0.0 {
+        3 // default 3 chunks
+    } else {
+        (config.render.shadow_max_distance / 16.0) as i32
+    };
+
+    if let Ok(cam) = player_pos.get_single() {
+        let cam_pos = cam.translation();
+        let cam_chunk_x = (cam_pos.x / 16.0).floor() as i32;
+        let cam_chunk_z = (cam_pos.z / 16.0).floor() as i32;
+
+        for (entity, chunk) in &chunks {
+            let dx = (chunk.position.x - cam_chunk_x).abs();
+            let dz = (chunk.position.z - cam_chunk_z).abs();
+            let dist = dx.max(dz);
+
+            if dist > shadow_dist {
+                commands.entity(entity).insert(NotShadowCaster);
+            } else {
+                commands.entity(entity).remove::<NotShadowCaster>();
+            }
+        }
+    }
 }
 
 // ============================================================================
