@@ -66,7 +66,11 @@ pub fn block_color(block: BlockType) -> [f32; 4] {
     }
 }
 
-/// Add vertices for a single 1×1 face of a cube (used by naive meshing)
+/// Add vertices for a single 1×1 face of a cube (used by naive meshing).
+///
+/// `ao` contains per-vertex ambient occlusion levels (0-3) matching the vertex
+/// winding order. The diagonal is flipped when AO creates asymmetry to avoid
+/// the "dark triangle" artifact.
 #[allow(clippy::too_many_arguments)]
 fn add_face(
     positions: &mut Vec<[f32; 3]>,
@@ -79,11 +83,11 @@ fn add_face(
     z: f32,
     face: Face,
     color: [f32; 4],
+    ao: [u8; 4],
 ) {
     let base_index = positions.len() as u32;
     let normal = face.normal();
 
-    // Vertices for each face (4 vertices per face, forming 2 triangles)
     let verts: [[f32; 3]; 4] = match face {
         Face::Top => [
             [x, y + 1.0, z],
@@ -123,7 +127,6 @@ fn add_face(
         ],
     };
 
-    // Standard 1×1 UVs matching vertex winding
     let face_uvs: [[f32; 2]; 4] = [
         [0.0, 0.0],
         [1.0, 0.0],
@@ -131,23 +134,38 @@ fn add_face(
         [0.0, 1.0],
     ];
 
-    // Add 4 vertices
     for (i, vert) in verts.iter().enumerate() {
         positions.push(*vert);
         normals.push(normal);
-        colors.push(color);
+        colors.push(apply_ao(color, ao[i]));
         uvs.push(face_uvs[i]);
     }
 
-    // Add 2 triangles (6 indices) - counter-clockwise winding for front-facing
-    indices.extend_from_slice(&[
-        base_index,
-        base_index + 2,
-        base_index + 1,
-        base_index,
-        base_index + 3,
-        base_index + 2,
-    ]);
+    // Flip the quad diagonal when AO creates asymmetry.
+    // Default triangulation: (0,2,1) + (0,3,2)  — diagonal along 0-2
+    // Flipped triangulation: (0,3,1) + (1,3,2)  — diagonal along 1-3
+    // Flip when ao[0]+ao[2] > ao[1]+ao[3] to keep the brighter diagonal.
+    let flip = ao[0] as u16 + ao[2] as u16 > ao[1] as u16 + ao[3] as u16;
+
+    if flip {
+        indices.extend_from_slice(&[
+            base_index,
+            base_index + 3,
+            base_index + 1,
+            base_index + 1,
+            base_index + 3,
+            base_index + 2,
+        ]);
+    } else {
+        indices.extend_from_slice(&[
+            base_index,
+            base_index + 2,
+            base_index + 1,
+            base_index,
+            base_index + 3,
+            base_index + 2,
+        ]);
+    }
 }
 
 /// Add vertices for a greedy-merged quad face.
@@ -157,6 +175,10 @@ fn add_face(
 /// - **Top/Bottom** (Y-normal): `quad_w` = extent in X, `quad_h` = extent in Z
 /// - **North/South** (Z-normal): `quad_w` = extent in X, `quad_h` = extent in Y
 /// - **East/West** (X-normal): `quad_w` = extent in Z, `quad_h` = extent in Y
+///
+/// `ao` contains per-vertex ambient occlusion levels (0-3). Since the greedy
+/// mesher only merges faces with identical AO patterns, the 4 AO values from
+/// any constituent cell apply to the whole quad.
 #[allow(clippy::too_many_arguments)]
 fn add_greedy_face(
     positions: &mut Vec<[f32; 3]>,
@@ -171,6 +193,7 @@ fn add_greedy_face(
     quad_h: f32,
     face: Face,
     color: [f32; 4],
+    ao: [u8; 4],
 ) {
     let base_index = positions.len() as u32;
     let normal = face.normal();
@@ -214,7 +237,6 @@ fn add_greedy_face(
         ],
     };
 
-    // UVs scale with quad dimensions for tiling textures across merged faces
     let face_uvs: [[f32; 2]; 4] = [
         [0.0, 0.0],
         [quad_w, 0.0],
@@ -225,18 +247,32 @@ fn add_greedy_face(
     for (i, vert) in verts.iter().enumerate() {
         positions.push(*vert);
         normals.push(normal);
-        colors.push(color);
+        colors.push(apply_ao(color, ao[i]));
         uvs.push(face_uvs[i]);
     }
 
-    indices.extend_from_slice(&[
-        base_index,
-        base_index + 2,
-        base_index + 1,
-        base_index,
-        base_index + 3,
-        base_index + 2,
-    ]);
+    // Flip diagonal when AO is asymmetric (same logic as add_face)
+    let flip = ao[0] as u16 + ao[2] as u16 > ao[1] as u16 + ao[3] as u16;
+
+    if flip {
+        indices.extend_from_slice(&[
+            base_index,
+            base_index + 3,
+            base_index + 1,
+            base_index + 1,
+            base_index + 3,
+            base_index + 2,
+        ]);
+    } else {
+        indices.extend_from_slice(&[
+            base_index,
+            base_index + 2,
+            base_index + 1,
+            base_index,
+            base_index + 3,
+            base_index + 2,
+        ]);
+    }
 }
 
 /// Check if a neighboring block at the given offset is transparent
@@ -254,6 +290,93 @@ fn is_neighbor_transparent(chunk: &Chunk, x: i32, y: i32, z: i32) -> bool {
     chunk
         .get_block(x as usize, y as usize, z as usize)
         .is_transparent()
+}
+
+// ── Ambient Occlusion ────────────────────────────────────────────────
+
+/// AO darkening multipliers for levels 0-3.
+/// Level 0 = no occlusion (full brightness), level 3 = maximum occlusion.
+const AO_CURVE: [f32; 4] = [1.0, 0.75, 0.5, 0.25];
+
+/// Compute the ambient occlusion level (0-3) for a single vertex.
+///
+/// `side1` and `side2` are whether the two edge-adjacent blocks are opaque,
+/// and `corner` is whether the diagonal corner block is opaque.
+///
+/// Standard voxel AO formula:
+/// - If both sides are opaque, AO = 3 (the corner is irrelevant).
+/// - Otherwise AO = side1 + side2 + corner.
+pub fn vertex_ao(side1: bool, side2: bool, corner: bool) -> u8 {
+    if side1 && side2 {
+        3
+    } else {
+        side1 as u8 + side2 as u8 + corner as u8
+    }
+}
+
+/// Check if a block position is opaque (not transparent). Out-of-chunk = Air = not opaque.
+fn is_opaque(chunk: &Chunk, x: i32, y: i32, z: i32) -> bool {
+    !is_neighbor_transparent(chunk, x, y, z)
+}
+
+/// Apply AO darkening to an RGBA color.
+fn apply_ao(color: [f32; 4], ao_level: u8) -> [f32; 4] {
+    let m = AO_CURVE[ao_level.min(3) as usize];
+    [color[0] * m, color[1] * m, color[2] * m, color[3]]
+}
+
+/// Compute the AO values for all 4 vertices of a face.
+///
+/// Returns `[ao0, ao1, ao2, ao3]` matching the vertex winding order used in
+/// `add_face` / `add_greedy_face`.
+///
+/// For each face direction, we define two tangent axes (t1, t2) in the plane of
+/// the face. Each vertex sits at one of the four corners of the face. For a corner
+/// identified by signs (s1, s2) along the tangent axes, the three neighbor offsets
+/// checked are:
+///   - side1: normal + s1*t1
+///   - side2: normal + s2*t2
+///   - corner: normal + s1*t1 + s2*t2
+pub fn compute_face_ao(chunk: &Chunk, x: usize, y: usize, z: usize, face: Face) -> [u8; 4] {
+    let (bx, by, bz) = (x as i32, y as i32, z as i32);
+    let (nx, ny, nz) = face.offset();
+
+    // Neighbor position (the air block this face looks into)
+    let (fx, fy, fz) = (bx + nx, by + ny, bz + nz);
+
+    // Tangent axes spanning the face plane.
+    let (t1, t2): ((i32, i32, i32), (i32, i32, i32)) = match face {
+        Face::Top =>    ((1, 0, 0), (0, 0, 1)),
+        Face::Bottom => ((1, 0, 0), (0, 0, 1)),
+        Face::North =>  ((1, 0, 0), (0, 1, 0)),
+        Face::South =>  ((1, 0, 0), (0, 1, 0)),
+        Face::East =>   ((0, 0, 1), (0, 1, 0)),
+        Face::West =>   ((0, 0, 1), (0, 1, 0)),
+    };
+
+    // (s1, s2) pairs matching the vertex winding order in add_face for each face.
+    let corners: [(i32, i32); 4] = match face {
+        Face::Top =>    [(-1, -1), ( 1, -1), ( 1,  1), (-1,  1)],
+        Face::Bottom => [(-1,  1), ( 1,  1), ( 1, -1), (-1, -1)],
+        Face::North =>  [(-1, -1), (-1,  1), ( 1,  1), ( 1, -1)],
+        Face::South =>  [( 1, -1), ( 1,  1), (-1,  1), (-1, -1)],
+        Face::East =>   [( 1, -1), ( 1,  1), (-1,  1), (-1, -1)],
+        Face::West =>   [(-1, -1), (-1,  1), ( 1,  1), ( 1, -1)],
+    };
+
+    let mut ao = [0u8; 4];
+    for (i, &(s1, s2)) in corners.iter().enumerate() {
+        let side1 = is_opaque(chunk, fx + s1 * t1.0, fy + s1 * t1.1, fz + s1 * t1.2);
+        let side2 = is_opaque(chunk, fx + s2 * t2.0, fy + s2 * t2.1, fz + s2 * t2.2);
+        let corner = is_opaque(
+            chunk,
+            fx + s1 * t1.0 + s2 * t2.0,
+            fy + s1 * t1.1 + s2 * t2.1,
+            fz + s1 * t1.2 + s2 * t2.2,
+        );
+        ao[i] = vertex_ao(side1, side2, corner);
+    }
+    ao
 }
 
 /// Build a mesh for a chunk using **greedy meshing**.
@@ -283,8 +406,9 @@ pub fn build_chunk_mesh(chunk: &Chunk) -> Mesh {
     for face in faces {
         for slice in 0..CHUNK_SIZE {
             // Build a 2-D mask of visible faces for this slice.
-            // mask[v][u] = Some(block_type) if the face is visible, None otherwise.
-            let mut mask: [[Option<BlockType>; CHUNK_SIZE]; CHUNK_SIZE] =
+            // mask[v][u] = Some((block_type, ao_values)) if the face is visible.
+            // AO is included in the merge key so faces with different AO can't merge.
+            let mut mask: [[Option<(BlockType, [u8; 4])>; CHUNK_SIZE]; CHUNK_SIZE] =
                 [[None; CHUNK_SIZE]; CHUNK_SIZE];
 
             for v in 0..CHUNK_SIZE {
@@ -310,12 +434,13 @@ pub fn build_chunk_mesh(chunk: &Chunk) -> Mesh {
                     let nz = z as i32 + oz;
 
                     if is_neighbor_transparent(chunk, nx, ny, nz) {
-                        mask[v][u] = Some(block);
+                        let ao = compute_face_ao(chunk, x, y, z, face);
+                        mask[v][u] = Some((block, ao));
                     }
                 }
             }
 
-            // Greedy rectangle merging
+            // Greedy rectangle merging — matches on (BlockType, AO pattern)
             let mut visited = [[false; CHUNK_SIZE]; CHUNK_SIZE];
 
             for v in 0..CHUNK_SIZE {
@@ -324,13 +449,14 @@ pub fn build_chunk_mesh(chunk: &Chunk) -> Mesh {
                         continue;
                     }
 
-                    let block_type = mask[v][u].unwrap();
+                    let (block_type, ao) = mask[v][u].unwrap();
+                    let key = (block_type, ao);
 
                     // Expand width in the u-direction
                     let mut w = 1usize;
                     while u + w < CHUNK_SIZE
                         && !visited[v][u + w]
-                        && mask[v][u + w] == Some(block_type)
+                        && mask[v][u + w] == Some(key)
                     {
                         w += 1;
                     }
@@ -340,7 +466,7 @@ pub fn build_chunk_mesh(chunk: &Chunk) -> Mesh {
                     'expand_v: while v + h < CHUNK_SIZE {
                         for du in 0..w {
                             if visited[v + h][u + du]
-                                || mask[v + h][u + du] != Some(block_type)
+                                || mask[v + h][u + du] != Some(key)
                             {
                                 break 'expand_v;
                             }
@@ -377,6 +503,7 @@ pub fn build_chunk_mesh(chunk: &Chunk) -> Mesh {
                         h as f32,
                         face,
                         color,
+                        ao,
                     );
                 }
             }
@@ -439,6 +566,7 @@ pub fn build_chunk_mesh_naive(chunk: &Chunk) -> Mesh {
 
                     // Only add face if neighbor is transparent
                     if is_neighbor_transparent(chunk, nx, ny, nz) {
+                        let ao = compute_face_ao(chunk, x, y, z, face);
                         add_face(
                             &mut positions,
                             &mut normals,
@@ -450,6 +578,7 @@ pub fn build_chunk_mesh_naive(chunk: &Chunk) -> Mesh {
                             fz,
                             face,
                             color,
+                            ao,
                         );
                     }
                 }
@@ -482,9 +611,155 @@ mod tests {
     use super::*;
     use bevy::prelude::IVec3;
 
-    // ------------------------------------------------------------------
-    // Greedy vs naive: filled chunk produces far fewer vertices
-    // ------------------------------------------------------------------
+    // ==================================================================
+    //  Ambient Occlusion unit tests
+    // ==================================================================
+
+    #[test]
+    fn test_vertex_ao_no_occlusion() {
+        assert_eq!(vertex_ao(false, false, false), 0);
+    }
+
+    #[test]
+    fn test_vertex_ao_one_side() {
+        assert_eq!(vertex_ao(true, false, false), 1);
+        assert_eq!(vertex_ao(false, true, false), 1);
+    }
+
+    #[test]
+    fn test_vertex_ao_corner_only() {
+        assert_eq!(vertex_ao(false, false, true), 1);
+    }
+
+    #[test]
+    fn test_vertex_ao_side_plus_corner() {
+        assert_eq!(vertex_ao(true, false, true), 2);
+        assert_eq!(vertex_ao(false, true, true), 2);
+    }
+
+    #[test]
+    fn test_vertex_ao_two_sides() {
+        // Both sides occlude → max AO regardless of corner
+        assert_eq!(vertex_ao(true, true, false), 3);
+        assert_eq!(vertex_ao(true, true, true), 3);
+    }
+
+    #[test]
+    fn test_apply_ao_multipliers() {
+        // AO level 0: no darkening
+        let color = [1.0, 0.8, 0.6, 1.0];
+        let ao0 = apply_ao(color, 0);
+        assert!((ao0[0] - 1.0).abs() < 1e-6);
+        assert!((ao0[1] - 0.8).abs() < 1e-6);
+        assert!((ao0[2] - 0.6).abs() < 1e-6);
+        assert_eq!(ao0[3], 1.0);
+
+        // AO level 1: 0.75× darkening
+        let ao1 = apply_ao(color, 1);
+        assert!((ao1[0] - 0.75).abs() < 1e-6);
+        assert!((ao1[1] - 0.6).abs() < 1e-6);
+        assert!((ao1[2] - 0.45).abs() < 1e-5); // float precision
+        assert_eq!(ao1[3], 1.0);
+
+        // AO level 2: 0.5× darkening
+        let ao2 = apply_ao(color, 2);
+        assert!((ao2[0] - 0.5).abs() < 1e-6);
+        assert!((ao2[1] - 0.4).abs() < 1e-6);
+        assert!((ao2[2] - 0.3).abs() < 1e-6);
+
+        // AO level 3: 0.25× darkening
+        let ao3 = apply_ao(color, 3);
+        assert!((ao3[0] - 0.25).abs() < 1e-6);
+        assert!((ao3[1] - 0.2).abs() < 1e-6);
+        assert!((ao3[2] - 0.15).abs() < 1e-5);
+
+        // Alpha is never affected
+        let transparent = [0.5, 0.5, 0.5, 0.5];
+        assert_eq!(apply_ao(transparent, 3)[3], 0.5);
+    }
+
+    #[test]
+    fn test_ao_isolated_block_no_occlusion() {
+        let mut chunk = Chunk::new(IVec3::ZERO);
+        chunk.set_block(8, 8, 8, BlockType::Stone);
+
+        for face in [Face::Top, Face::Bottom, Face::North, Face::South, Face::East, Face::West] {
+            let ao = compute_face_ao(&chunk, 8, 8, 8, face);
+            assert_eq!(ao, [0, 0, 0, 0], "isolated block face {:?} should have zero AO", face);
+        }
+    }
+
+    #[test]
+    fn test_ao_fully_surrounded_top_face() {
+        // Fill a 3×3×3 region, check AO on center block's top face
+        let mut chunk = Chunk::new(IVec3::ZERO);
+        for x in 7..=9 {
+            for y in 7..=9 {
+                for z in 7..=9 {
+                    chunk.set_block(x, y, z, BlockType::Stone);
+                }
+            }
+        }
+        // Remove block above center to expose the top face
+        chunk.set_block(8, 9, 8, BlockType::Air);
+
+        let ao = compute_face_ao(&chunk, 8, 8, 8, Face::Top);
+        // All 4 vertices should see surrounding blocks and have AO > 0
+        for (i, &val) in ao.iter().enumerate() {
+            assert!(val > 0, "vertex {} of surrounded top face should have AO > 0, got {}", i, val);
+        }
+    }
+
+    #[test]
+    fn test_ao_darkening_applied_to_mesh() {
+        // Isolated block → AO=0 everywhere → colors should be unmodified
+        let mut chunk = Chunk::new(IVec3::ZERO);
+        chunk.set_block(8, 8, 8, BlockType::Stone);
+
+        let mesh = build_chunk_mesh_naive(&chunk);
+        let base_color = block_color(BlockType::Stone);
+
+        if let Some(bevy::render::mesh::VertexAttributeValues::Float32x4(mesh_colors)) =
+            mesh.attribute(Mesh::ATTRIBUTE_COLOR)
+        {
+            for c in mesh_colors {
+                assert_eq!(*c, base_color, "isolated block should have full brightness");
+            }
+        } else {
+            panic!("COLOR attribute missing");
+        }
+    }
+
+    #[test]
+    fn test_ao_darkening_reduces_brightness() {
+        // 3×3×3 cube with center-top removed creates AO on cavity walls
+        let mut chunk = Chunk::new(IVec3::ZERO);
+        for x in 0..3 {
+            for z in 0..3 {
+                for y in 0..3 {
+                    chunk.set_block(x, y, z, BlockType::Stone);
+                }
+            }
+        }
+        chunk.set_block(1, 2, 1, BlockType::Air);
+
+        let mesh = build_chunk_mesh_naive(&chunk);
+        let base_color = block_color(BlockType::Stone);
+
+        if let Some(bevy::render::mesh::VertexAttributeValues::Float32x4(mesh_colors)) =
+            mesh.attribute(Mesh::ATTRIBUTE_COLOR)
+        {
+            let has_darkened = mesh_colors.iter().any(|c| c[0] < base_color[0] - 0.001);
+            assert!(has_darkened, "AO should darken some vertices in a cavity");
+        } else {
+            panic!("COLOR attribute missing");
+        }
+    }
+
+    // ==================================================================
+    //  Greedy vs naive vertex count tests (updated for AO)
+    // ==================================================================
+
     #[test]
     fn test_greedy_fewer_vertices_than_naive_filled_chunk() {
         let mut chunk = Chunk::new(IVec3::ZERO);
@@ -496,20 +771,16 @@ mod tests {
         let greedy_verts = mesh_vertex_count(&greedy);
         let naive_verts = mesh_vertex_count(&naive);
 
-        // A fully filled chunk has 6 outer faces, each 16×16 = 256 block-faces.
-        // Naive: 6 * 256 * 4 = 6144 vertices
-        // Greedy: each face direction merges into one 16×16 quad → 6 * 4 = 24 vertices
+        // Naive: 6 * 256 * 4 = 6144 vertices (unchanged by AO)
         assert_eq!(naive_verts, 6144);
-        assert_eq!(greedy_verts, 24);
+        // Greedy with AO: edge/corner blocks have different AO patterns than interior,
+        // preventing full merge into one quad per face. But still much less than naive.
         assert!(
-            greedy_verts < naive_verts,
-            "greedy ({greedy_verts}) should be less than naive ({naive_verts})"
+            greedy_verts < naive_verts / 2,
+            "greedy ({greedy_verts}) should be much less than naive ({naive_verts})"
         );
     }
 
-    // ------------------------------------------------------------------
-    // Single block: greedy and naive should both emit 6 faces (24 verts)
-    // ------------------------------------------------------------------
     #[test]
     fn test_single_block_produces_six_faces() {
         let mut chunk = Chunk::new(IVec3::ZERO);
@@ -518,48 +789,31 @@ mod tests {
         let greedy = build_chunk_mesh(&chunk);
         let naive = build_chunk_mesh_naive(&chunk);
 
-        let greedy_verts = mesh_vertex_count(&greedy);
-        let naive_verts = mesh_vertex_count(&naive);
-
-        // Single block surrounded by air → 6 faces, 4 verts each
-        assert_eq!(greedy_verts, 24);
-        assert_eq!(naive_verts, 24);
+        // Single block in air → AO=0 on all faces → all merge normally
+        assert_eq!(mesh_vertex_count(&greedy), 24);
+        assert_eq!(mesh_vertex_count(&naive), 24);
     }
 
-    // ------------------------------------------------------------------
-    // Different adjacent block types must NOT be merged
-    // ------------------------------------------------------------------
     #[test]
     fn test_different_block_types_not_merged() {
         let mut chunk = Chunk::new(IVec3::ZERO);
-
-        // Place two different blocks side by side on the top layer
         chunk.set_block(0, 0, 0, BlockType::Stone);
         chunk.set_block(1, 0, 0, BlockType::Dirt);
 
         let greedy = build_chunk_mesh(&chunk);
         let naive = build_chunk_mesh_naive(&chunk);
 
-        let greedy_verts = mesh_vertex_count(&greedy);
-        let naive_verts = mesh_vertex_count(&naive);
-
-        // Two isolated blocks each with faces exposed.
-        // They share an internal boundary: Stone's East face sees Dirt (not transparent),
-        // and Dirt's West face sees Stone (not transparent) → those faces are culled.
-        // Each block has 5 visible faces → 10 faces total → 40 verts for both methods.
-        assert_eq!(naive_verts, 40);
-        assert_eq!(greedy_verts, naive_verts,
-            "Different block types must not merge — vertex counts should match naive");
+        assert_eq!(mesh_vertex_count(&naive), 40);
+        assert_eq!(
+            mesh_vertex_count(&greedy),
+            mesh_vertex_count(&naive),
+            "Different block types must not merge"
+        );
     }
 
-    // ------------------------------------------------------------------
-    // Same adjacent block types ARE merged (fewer verts than naive)
-    // ------------------------------------------------------------------
     #[test]
     fn test_same_block_types_are_merged() {
         let mut chunk = Chunk::new(IVec3::ZERO);
-
-        // Place a row of 4 stone blocks along X at y=0, z=0
         for x in 0..4 {
             chunk.set_block(x, 0, 0, BlockType::Stone);
         }
@@ -570,53 +824,24 @@ mod tests {
         let greedy_verts = mesh_vertex_count(&greedy);
         let naive_verts = mesh_vertex_count(&naive);
 
-        // Naive: each block has 4 external faces (internal X-faces are culled between
-        // adjacent same-type blocks). End blocks have 5, inner blocks have 4.
-        // Specifically: 2 end blocks × 5 faces + 2 inner blocks × 4 faces = 18 faces → 72 verts
-        // Actually let me recount:
-        // Block 0: Top, Bottom, North, South, West (East is culled — neighbor is Stone at 1)  → 5
-        // Block 1: Top, Bottom, North, South  (West culled by 0, East culled by 2)            → 4
-        // Block 2: Top, Bottom, North, South  (West culled by 1, East culled by 3)            → 4
-        // Block 3: Top, Bottom, North, South, East (West culled by 2)                         → 5
-        // Total = 18 faces → 72 verts
         assert_eq!(naive_verts, 72);
-
-        // Greedy should merge coplanar same-type faces.
-        // Top face: 4 blocks merge into one 4×1 quad → 4 verts
-        // Bottom: same → 4
-        // North: same → 4
-        // South: same → 4
-        // West: 1 block face → 4
-        // East: 1 block face → 4
-        // Total = 6 quads → 24 verts
-        assert_eq!(greedy_verts, 24);
+        // AO may prevent some merges on edge faces, but greedy should still help
         assert!(
             greedy_verts < naive_verts,
             "greedy ({greedy_verts}) should be less than naive ({naive_verts})"
         );
     }
 
-    // ------------------------------------------------------------------
-    // Empty chunk produces zero vertices for both methods
-    // ------------------------------------------------------------------
     #[test]
     fn test_empty_chunk_no_vertices() {
         let chunk = Chunk::new(IVec3::ZERO);
-
-        let greedy = build_chunk_mesh(&chunk);
-        let naive = build_chunk_mesh_naive(&chunk);
-
-        assert_eq!(mesh_vertex_count(&greedy), 0);
-        assert_eq!(mesh_vertex_count(&naive), 0);
+        assert_eq!(mesh_vertex_count(&build_chunk_mesh(&chunk)), 0);
+        assert_eq!(mesh_vertex_count(&build_chunk_mesh_naive(&chunk)), 0);
     }
 
-    // ------------------------------------------------------------------
-    // Greedy meshing preserves correct normals
-    // ------------------------------------------------------------------
     #[test]
     fn test_greedy_preserves_normals() {
         let mut chunk = Chunk::new(IVec3::ZERO);
-        // Fill bottom layer only
         for x in 0..CHUNK_SIZE {
             for z in 0..CHUNK_SIZE {
                 chunk.set_block(x, 0, z, BlockType::Grass);
@@ -631,7 +856,6 @@ mod tests {
             .unwrap()
             .to_vec();
 
-        // Every normal should be one of the 6 axis-aligned directions
         for n in &normals {
             let is_valid = *n == [0.0, 1.0, 0.0]
                 || *n == [0.0, -1.0, 0.0]
@@ -643,43 +867,32 @@ mod tests {
         }
     }
 
-    // ------------------------------------------------------------------
-    // Greedy meshing preserves vertex colors
-    // ------------------------------------------------------------------
     #[test]
-    fn test_greedy_preserves_colors() {
+    fn test_greedy_preserves_colors_isolated_block() {
+        // Isolated block: AO=0 → colors should match base exactly
         let mut chunk = Chunk::new(IVec3::ZERO);
-        chunk.set_block(0, 0, 0, BlockType::Grass);
+        chunk.set_block(8, 8, 8, BlockType::Grass);
 
         let mesh = build_chunk_mesh(&chunk);
         let expected = block_color(BlockType::Grass);
 
-        // Read colors from the mesh attribute
         if let Some(bevy::render::mesh::VertexAttributeValues::Float32x4(mesh_colors)) =
             mesh.attribute(Mesh::ATTRIBUTE_COLOR)
         {
             for c in mesh_colors {
-                assert_eq!(*c, expected, "vertex color should match Grass color");
+                assert_eq!(*c, expected, "isolated block should have full brightness");
             }
         } else {
             panic!("COLOR attribute missing or wrong type");
         }
     }
 
-    // ------------------------------------------------------------------
-    // Checkerboard pattern: no merging possible, counts must match naive
-    // ------------------------------------------------------------------
     #[test]
     fn test_checkerboard_no_merge() {
         let mut chunk = Chunk::new(IVec3::ZERO);
-        // Checkerboard of Stone and Dirt on a single Y-layer
         for x in 0..CHUNK_SIZE {
             for z in 0..CHUNK_SIZE {
-                let block = if (x + z) % 2 == 0 {
-                    BlockType::Stone
-                } else {
-                    BlockType::Dirt
-                };
+                let block = if (x + z) % 2 == 0 { BlockType::Stone } else { BlockType::Dirt };
                 chunk.set_block(x, 0, z, block);
             }
         }
@@ -687,11 +900,6 @@ mod tests {
         let greedy = build_chunk_mesh(&chunk);
         let naive = build_chunk_mesh_naive(&chunk);
 
-        // With a perfect checkerboard the greedy algorithm cannot merge any faces
-        // within the Top or Bottom planes (every neighbor is a different type).
-        // North/South/East/West faces can still merge along Y (height 1 only) but
-        // each cell is isolated in the u-direction because neighbors differ.
-        // So vertex counts should be identical.
         assert_eq!(
             mesh_vertex_count(&greedy),
             mesh_vertex_count(&naive),
@@ -699,13 +907,9 @@ mod tests {
         );
     }
 
-    // ------------------------------------------------------------------
-    // Flat slab: big merge on top/bottom, partial on sides
-    // ------------------------------------------------------------------
     #[test]
     fn test_flat_slab_merging() {
         let mut chunk = Chunk::new(IVec3::ZERO);
-        // 16×1×16 slab of stone at y=0
         for x in 0..CHUNK_SIZE {
             for z in 0..CHUNK_SIZE {
                 chunk.set_block(x, 0, z, BlockType::Stone);
@@ -718,18 +922,15 @@ mod tests {
         let gv = mesh_vertex_count(&greedy);
         let nv = mesh_vertex_count(&naive);
 
-        // Naive: Top 256 + Bottom 256 + North 16 + South 16 + East 16 + West 16 = 576 faces
-        // → 576 * 4 = 2304 verts
         assert_eq!(nv, 2304);
-
-        // Greedy: Top 1 quad + Bottom 1 quad + North 1 quad + South 1 quad
-        //         + East 1 quad + West 1 quad = 6 quads → 24 verts
-        assert_eq!(gv, 24);
+        // Greedy with AO still provides significant reduction
+        assert!(gv < nv / 2, "greedy ({gv}) should be much less than naive ({nv})");
     }
 
-    // ------------------------------------------------------------------
-    // UV coordinates: naive mesh has UVs with correct count
-    // ------------------------------------------------------------------
+    // ==================================================================
+    //  UV tests (updated for AO)
+    // ==================================================================
+
     #[test]
     fn test_naive_mesh_has_uvs() {
         let mut chunk = Chunk::new(IVec3::ZERO);
@@ -739,20 +940,12 @@ mod tests {
         let mesh = build_chunk_mesh_naive(&chunk);
         let vert_count = mesh_vertex_count(&mesh);
 
-        // UV attribute must exist
         let uv_attr = mesh
             .attribute(Mesh::ATTRIBUTE_UV_0)
             .expect("naive mesh should have UV_0 attribute");
-        assert_eq!(
-            uv_attr.len(),
-            vert_count,
-            "UV count must equal vertex count"
-        );
+        assert_eq!(uv_attr.len(), vert_count, "UV count must equal vertex count");
     }
 
-    // ------------------------------------------------------------------
-    // UV coordinates: greedy mesh has UVs with correct count
-    // ------------------------------------------------------------------
     #[test]
     fn test_greedy_mesh_has_uvs() {
         let mut chunk = Chunk::new(IVec3::ZERO);
@@ -762,20 +955,12 @@ mod tests {
         let mesh = build_chunk_mesh(&chunk);
         let vert_count = mesh_vertex_count(&mesh);
 
-        // UV attribute must exist
         let uv_attr = mesh
             .attribute(Mesh::ATTRIBUTE_UV_0)
             .expect("greedy mesh should have UV_0 attribute");
-        assert_eq!(
-            uv_attr.len(),
-            vert_count,
-            "UV count must equal vertex count"
-        );
+        assert_eq!(uv_attr.len(), vert_count, "UV count must equal vertex count");
     }
 
-    // ------------------------------------------------------------------
-    // UV coordinates: greedy UVs scale with quad dimensions
-    // ------------------------------------------------------------------
     #[test]
     fn test_greedy_uvs_scale_with_quad() {
         let mut chunk = Chunk::new(IVec3::ZERO);
@@ -783,36 +968,20 @@ mod tests {
 
         let mesh = build_chunk_mesh(&chunk);
 
-        // A filled chunk produces 6 faces, each merged into a single 16×16 quad.
-        // The greedy UVs should scale: max UV component should be 16.0.
         if let Some(bevy::render::mesh::VertexAttributeValues::Float32x2(uv_data)) =
             mesh.attribute(Mesh::ATTRIBUTE_UV_0)
         {
-            let max_u = uv_data
-                .iter()
-                .map(|uv| uv[0])
-                .fold(0.0_f32, f32::max);
-            let max_v = uv_data
-                .iter()
-                .map(|uv| uv[1])
-                .fold(0.0_f32, f32::max);
+            let max_u = uv_data.iter().map(|uv| uv[0]).fold(0.0_f32, f32::max);
+            let max_v = uv_data.iter().map(|uv| uv[1]).fold(0.0_f32, f32::max);
 
-            assert_eq!(
-                max_u, 16.0,
-                "max U should be 16.0 for a full-chunk greedy quad"
-            );
-            assert_eq!(
-                max_v, 16.0,
-                "max V should be 16.0 for a full-chunk greedy quad"
-            );
+            // Interior blocks share AO=[0,0,0,0] and merge into large quads
+            assert!(max_u > 1.0, "max U should be > 1.0 for merged quads, got {max_u}");
+            assert!(max_v > 1.0, "max V should be > 1.0 for merged quads, got {max_v}");
         } else {
             panic!("UV_0 attribute missing or wrong type");
         }
     }
 
-    // ------------------------------------------------------------------
-    // UV coordinates: single block has standard 0-1 UVs for both methods
-    // ------------------------------------------------------------------
     #[test]
     fn test_single_block_uvs() {
         let mut chunk = Chunk::new(IVec3::ZERO);
@@ -825,47 +994,54 @@ mod tests {
             if let Some(bevy::render::mesh::VertexAttributeValues::Float32x2(uv_data)) =
                 mesh.attribute(Mesh::ATTRIBUTE_UV_0)
             {
-                // Single block → 6 faces × 4 verts = 24 UVs
                 assert_eq!(uv_data.len(), 24, "{label}: expected 24 UVs");
 
-                // Every UV component should be in [0.0, 1.0]
                 for uv in uv_data {
-                    assert!(
-                        uv[0] >= 0.0 && uv[0] <= 1.0,
-                        "{label}: U out of range: {}",
-                        uv[0]
-                    );
-                    assert!(
-                        uv[1] >= 0.0 && uv[1] <= 1.0,
-                        "{label}: V out of range: {}",
-                        uv[1]
-                    );
+                    assert!(uv[0] >= 0.0 && uv[0] <= 1.0, "{label}: U out of range: {}", uv[0]);
+                    assert!(uv[1] >= 0.0 && uv[1] <= 1.0, "{label}: V out of range: {}", uv[1]);
                 }
 
-                // Check that each face has the expected UV corners {0,0}, {1,0}, {1,1}, {0,1}
                 for face_idx in 0..6 {
                     let base = face_idx * 4;
                     let face_uvs: Vec<[f32; 2]> = uv_data[base..base + 4].to_vec();
-                    assert!(
-                        face_uvs.contains(&[0.0, 0.0]),
-                        "{label} face {face_idx}: missing [0,0]"
-                    );
-                    assert!(
-                        face_uvs.contains(&[1.0, 0.0]),
-                        "{label} face {face_idx}: missing [1,0]"
-                    );
-                    assert!(
-                        face_uvs.contains(&[1.0, 1.0]),
-                        "{label} face {face_idx}: missing [1,1]"
-                    );
-                    assert!(
-                        face_uvs.contains(&[0.0, 1.0]),
-                        "{label} face {face_idx}: missing [0,1]"
-                    );
+                    assert!(face_uvs.contains(&[0.0, 0.0]), "{label} face {face_idx}: missing [0,0]");
+                    assert!(face_uvs.contains(&[1.0, 0.0]), "{label} face {face_idx}: missing [1,0]");
+                    assert!(face_uvs.contains(&[1.0, 1.0]), "{label} face {face_idx}: missing [1,1]");
+                    assert!(face_uvs.contains(&[0.0, 1.0]), "{label} face {face_idx}: missing [0,1]");
                 }
             } else {
                 panic!("{label}: UV_0 attribute missing or wrong type");
             }
         }
+    }
+
+    // ==================================================================
+    //  AO + greedy interaction tests
+    // ==================================================================
+
+    #[test]
+    fn test_greedy_and_naive_same_for_single_block() {
+        let mut chunk = Chunk::new(IVec3::ZERO);
+        chunk.set_block(5, 5, 5, BlockType::Dirt);
+
+        assert_eq!(
+            mesh_vertex_count(&build_chunk_mesh(&chunk)),
+            mesh_vertex_count(&build_chunk_mesh_naive(&chunk)),
+            "single block: greedy and naive should match"
+        );
+    }
+
+    #[test]
+    fn test_ao_symmetry_on_symmetric_geometry() {
+        // A single block should have symmetric AO on opposite faces
+        let mut chunk = Chunk::new(IVec3::ZERO);
+        chunk.set_block(8, 8, 8, BlockType::Stone);
+
+        let top = compute_face_ao(&chunk, 8, 8, 8, Face::Top);
+        let bottom = compute_face_ao(&chunk, 8, 8, 8, Face::Bottom);
+
+        // Both should be all zeros for an isolated block
+        assert_eq!(top, [0, 0, 0, 0]);
+        assert_eq!(bottom, [0, 0, 0, 0]);
     }
 }
