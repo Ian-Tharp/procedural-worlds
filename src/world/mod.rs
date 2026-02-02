@@ -91,6 +91,9 @@ impl BlockType {
             BlockType::Water => "Water",
             BlockType::Wood => "Wood",
             BlockType::Leaves => "Leaves",
+            BlockType::Sandstone => "Sandstone",
+            BlockType::Snow => "Snow",
+            BlockType::Ice => "Ice",
         }
     }
 }
