@@ -37,6 +37,7 @@ use crate::engine::controller::CameraController;
 use crate::engine::input::{InputAction, InputMap};
 use crate::generation::TerrainConfig;
 use crate::world::ChunkManager;
+use crate::world::unloading::UnloadConfig;
 
 // ============================================================================
 // CONFIG FILE PATH
@@ -68,6 +69,8 @@ pub struct EngineConfig {
     pub controls: ControlsConfig,
     /// Debug overlay settings
     pub debug: DebugConfig,
+    /// Chunk unloading and memory management settings
+    pub unload: UnloadSettings,
     /// Duration of a full day/night cycle in seconds (default: 600 = 10 min)
     pub cycle_duration_seconds: f32,
 }
@@ -164,6 +167,27 @@ pub struct ControlsConfig {
     pub release_cursor: String,
 }
 
+/// Chunk unloading settings
+///
+/// Controls when and how chunks are removed from memory as the player
+/// moves through the world. Modified chunks can be saved to disk first.
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(default)]
+pub struct UnloadSettings {
+    /// Override unload distance in chunks. If `null`, defaults to `render_distance + 2`.
+    pub unload_distance: Option<i32>,
+    /// Save modified chunks to disk before unloading (default: true).
+    /// Disabling this discards unsaved player modifications!
+    pub save_on_unload: bool,
+    /// Memory threshold in MB. When process RSS exceeds this, unload distance
+    /// shrinks to free memory faster. Default: 2048 (2 GB).
+    pub memory_threshold_mb: usize,
+    /// Chunk distance reduction under memory pressure. Default: 2.
+    pub memory_pressure_reduction: i32,
+    /// Maximum save tasks per frame. Default: 4.
+    pub max_saves_per_frame: u32,
+}
+
 /// Debug overlay settings
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(default)]
@@ -191,6 +215,7 @@ impl Default for EngineConfig {
             player: PlayerConfig::default(),
             controls: ControlsConfig::default(),
             debug: DebugConfig::default(),
+            unload: UnloadSettings::default(),
             cycle_duration_seconds: 600.0,
         }
     }
@@ -254,6 +279,18 @@ impl Default for ControlsConfig {
             toggle_fly: "KeyF".into(),
             toggle_noclip: "KeyN".into(),
             release_cursor: "Escape".into(),
+        }
+    }
+}
+
+impl Default for UnloadSettings {
+    fn default() -> Self {
+        Self {
+            unload_distance: None,
+            save_on_unload: true,
+            memory_threshold_mb: 2048,
+            memory_pressure_reduction: 2,
+            max_saves_per_frame: 4,
         }
     }
 }
@@ -484,6 +521,7 @@ fn apply_config_to_resources(
     mut chunk_manager: ResMut<ChunkManager>,
     mut terrain_config: ResMut<TerrainConfig>,
     mut debug_state: ResMut<DebugOverlayState>,
+    mut unload_config: ResMut<UnloadConfig>,
 ) {
     info!("Applying engine configuration...");
 
@@ -509,6 +547,19 @@ fn apply_config_to_resources(
     debug_state.show_memory = config.debug.show_memory;
     debug_state.show_input_state = config.debug.show_input;
     debug_state.show_chunks = config.debug.show_chunks;
+
+    // --- Unload settings ---
+    unload_config.unload_distance = config.unload.unload_distance;
+    unload_config.save_on_unload = config.unload.save_on_unload;
+    unload_config.memory_threshold_bytes = config.unload.memory_threshold_mb * 1024 * 1024;
+    unload_config.memory_pressure_reduction = config.unload.memory_pressure_reduction;
+    unload_config.max_saves_per_frame = config.unload.max_saves_per_frame;
+    info!(
+        "Unload: save_on_unload={}, threshold={}MB, distance={:?}",
+        config.unload.save_on_unload,
+        config.unload.memory_threshold_mb,
+        config.unload.unload_distance,
+    );
 
     // --- Input bindings ---
     // Clear default bindings and apply from config
@@ -594,6 +645,13 @@ mod tests {
 
         // Mouse sensitivity should match CameraController::default()
         assert_eq!(config.player.mouse_sensitivity, 0.1);
+
+        // Unload defaults should match UnloadConfig::default()
+        assert!(config.unload.save_on_unload);
+        assert_eq!(config.unload.unload_distance, None);
+        assert_eq!(config.unload.memory_threshold_mb, 2048);
+        assert_eq!(config.unload.memory_pressure_reduction, 2);
+        assert_eq!(config.unload.max_saves_per_frame, 4);
     }
 
     #[test]
@@ -608,6 +666,8 @@ mod tests {
         assert_eq!(deserialized.controls.move_forward, original.controls.move_forward);
         assert_eq!(deserialized.player.walk_speed, original.player.walk_speed);
         assert_eq!(deserialized.debug.overlay_visible, original.debug.overlay_visible);
+        assert_eq!(deserialized.unload.save_on_unload, original.unload.save_on_unload);
+        assert_eq!(deserialized.unload.memory_threshold_mb, original.unload.memory_threshold_mb);
     }
 
     #[test]
