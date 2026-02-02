@@ -336,12 +336,15 @@ fn setup_chunk_material(
 }
 
 /// Update the player's current chunk position based on camera
+///
+/// Uses `GlobalTransform` because the camera is a child entity of the player —
+/// its local `Transform` is just the eye-height offset, not the world position.
 fn update_player_chunk_position(
-    camera_query: Query<&Transform, With<Camera3d>>,
+    camera_query: Query<&GlobalTransform, With<Camera3d>>,
     mut chunk_manager: ResMut<ChunkManager>,
 ) {
-    if let Ok(transform) = camera_query.get_single() {
-        let new_chunk = world_to_chunk_pos(transform.translation);
+    if let Ok(global_transform) = camera_query.get_single() {
+        let new_chunk = world_to_chunk_pos(global_transform.translation());
         if new_chunk != chunk_manager.player_chunk {
             chunk_manager.player_chunk = new_chunk;
         }
