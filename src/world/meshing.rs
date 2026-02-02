@@ -11,6 +11,7 @@ use bevy::render::mesh::{Indices, PrimitiveTopology};
 use bevy::render::render_asset::RenderAssetUsages;
 
 use super::{BlockType, Chunk, CHUNK_SIZE};
+use super::texture_atlas;
 
 /// Face direction for cube faces
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -70,6 +71,17 @@ pub fn block_color(block: BlockType) -> [f32; 4] {
     }
 }
 
+/// Atlas configuration passed into face-building helpers.
+///
+/// When `None`, faces use legacy 0-1 UVs and block_color vertex colors.
+/// When `Some`, faces use atlas-mapped UVs and white vertex colors (AO only).
+#[derive(Clone, Copy)]
+pub struct AtlasConfig {
+    pub tiles_per_row: u32,
+    pub tile_size: u32,
+    pub atlas_size: u32,
+}
+
 /// Add vertices for a single 1×1 face of a cube (used by naive meshing).
 ///
 /// `ao` contains per-vertex ambient occlusion levels (0-3) matching the vertex
@@ -88,6 +100,8 @@ fn add_face(
     face: Face,
     color: [f32; 4],
     ao: [u8; 4],
+    atlas: Option<AtlasConfig>,
+    block_type: BlockType,
 ) {
     let base_index = positions.len() as u32;
     let normal = face.normal();
@@ -131,24 +145,34 @@ fn add_face(
         ],
     };
 
-    let face_uvs: [[f32; 2]; 4] = [
-        [0.0, 0.0],
-        [1.0, 0.0],
-        [1.0, 1.0],
-        [0.0, 1.0],
-    ];
+    let face_uvs: [[f32; 2]; 4] = if let Some(ac) = atlas {
+        let tile = texture_atlas::block_face_texture(block_type, face);
+        texture_atlas::face_uvs_atlas(tile, ac.tiles_per_row, ac.tile_size, ac.atlas_size, 1.0, 1.0)
+    } else {
+        [
+            [0.0, 0.0],
+            [1.0, 0.0],
+            [1.0, 1.0],
+            [0.0, 1.0],
+        ]
+    };
+
+    // When atlas is active, vertex color is white so only AO darkens.
+    // Otherwise vertex color is the block color darkened by AO.
+    let vert_color = if atlas.is_some() {
+        [1.0_f32, 1.0, 1.0, 1.0]
+    } else {
+        color
+    };
 
     for (i, vert) in verts.iter().enumerate() {
         positions.push(*vert);
         normals.push(normal);
-        colors.push(apply_ao(color, ao[i]));
+        colors.push(apply_ao(vert_color, ao[i]));
         uvs.push(face_uvs[i]);
     }
 
     // Flip the quad diagonal when AO creates asymmetry.
-    // Default triangulation: (0,2,1) + (0,3,2)  — diagonal along 0-2
-    // Flipped triangulation: (0,3,1) + (1,3,2)  — diagonal along 1-3
-    // Flip when ao[0]+ao[2] > ao[1]+ao[3] to keep the brighter diagonal.
     let flip = ao[0] as u16 + ao[2] as u16 > ao[1] as u16 + ao[3] as u16;
 
     if flip {
@@ -198,6 +222,8 @@ fn add_greedy_face(
     face: Face,
     color: [f32; 4],
     ao: [u8; 4],
+    atlas: Option<AtlasConfig>,
+    block_type: BlockType,
 ) {
     let base_index = positions.len() as u32;
     let normal = face.normal();
@@ -241,17 +267,29 @@ fn add_greedy_face(
         ],
     };
 
-    let face_uvs: [[f32; 2]; 4] = [
-        [0.0, 0.0],
-        [quad_w, 0.0],
-        [quad_w, quad_h],
-        [0.0, quad_h],
-    ];
+    let face_uvs: [[f32; 2]; 4] = if let Some(ac) = atlas {
+        let tile = texture_atlas::block_face_texture(block_type, face);
+        texture_atlas::face_uvs_atlas(tile, ac.tiles_per_row, ac.tile_size, ac.atlas_size, quad_w, quad_h)
+    } else {
+        [
+            [0.0, 0.0],
+            [quad_w, 0.0],
+            [quad_w, quad_h],
+            [0.0, quad_h],
+        ]
+    };
+
+    // When atlas is active, vertex color is white so only AO darkens.
+    let vert_color = if atlas.is_some() {
+        [1.0_f32, 1.0, 1.0, 1.0]
+    } else {
+        color
+    };
 
     for (i, vert) in verts.iter().enumerate() {
         positions.push(*vert);
         normals.push(normal);
-        colors.push(apply_ao(color, ao[i]));
+        colors.push(apply_ao(vert_color, ao[i]));
         uvs.push(face_uvs[i]);
     }
 
@@ -390,8 +428,24 @@ pub fn compute_face_ao(chunk: &Chunk, x: usize, y: usize, z: usize, face: Face) 
 /// then rectangles of identical block type are greedily merged before being emitted as
 /// single quads. This typically reduces vertex count by 80-90 % compared to naive
 /// per-block-face generation.
+///
+/// Uses legacy vertex-color mode (no texture atlas). For atlas-mapped meshing,
+/// use `build_chunk_mesh_with_atlas`.
 #[allow(clippy::needless_range_loop)]
 pub fn build_chunk_mesh(chunk: &Chunk) -> Mesh {
+    build_chunk_mesh_inner(chunk, None)
+}
+
+/// Build a chunk mesh with explicit atlas configuration.
+///
+/// Pass `None` for `atlas` to get legacy vertex-color mode.
+#[allow(clippy::needless_range_loop)]
+pub fn build_chunk_mesh_with_atlas(chunk: &Chunk, atlas: Option<AtlasConfig>) -> Mesh {
+    build_chunk_mesh_inner(chunk, atlas)
+}
+
+#[allow(clippy::needless_range_loop)]
+fn build_chunk_mesh_inner(chunk: &Chunk, atlas: Option<AtlasConfig>) -> Mesh {
     let mut positions: Vec<[f32; 3]> = Vec::new();
     let mut normals: Vec<[f32; 3]> = Vec::new();
     let mut colors: Vec<[f32; 4]> = Vec::new();
@@ -508,6 +562,8 @@ pub fn build_chunk_mesh(chunk: &Chunk) -> Mesh {
                         face,
                         color,
                         ao,
+                        atlas,
+                        block_type,
                     );
                 }
             }
@@ -531,6 +587,17 @@ pub fn build_chunk_mesh(chunk: &Chunk) -> Mesh {
 /// Retained for benchmarking comparisons against greedy meshing.
 #[allow(dead_code)]
 pub fn build_chunk_mesh_naive(chunk: &Chunk) -> Mesh {
+    build_chunk_mesh_naive_inner(chunk, None)
+}
+
+/// Naive meshing with explicit atlas configuration.
+#[allow(dead_code)]
+pub fn build_chunk_mesh_naive_with_atlas(chunk: &Chunk, atlas: Option<AtlasConfig>) -> Mesh {
+    build_chunk_mesh_naive_inner(chunk, atlas)
+}
+
+#[allow(dead_code)]
+fn build_chunk_mesh_naive_inner(chunk: &Chunk, atlas: Option<AtlasConfig>) -> Mesh {
     let mut positions: Vec<[f32; 3]> = Vec::new();
     let mut normals: Vec<[f32; 3]> = Vec::new();
     let mut colors: Vec<[f32; 4]> = Vec::new();
@@ -583,6 +650,8 @@ pub fn build_chunk_mesh_naive(chunk: &Chunk) -> Mesh {
                             face,
                             color,
                             ao,
+                            atlas,
+                            block,
                         );
                     }
                 }
@@ -1047,5 +1116,110 @@ mod tests {
         // Both should be all zeros for an isolated block
         assert_eq!(top, [0, 0, 0, 0]);
         assert_eq!(bottom, [0, 0, 0, 0]);
+    }
+
+    // ==================================================================
+    //  Texture atlas integration tests
+    // ==================================================================
+
+    #[test]
+    fn test_use_textures_false_keeps_vertex_colors() {
+        // With atlas=None (use_textures=false), vertex colors should be
+        // the original block_color * AO — identical to legacy behaviour.
+        let mut chunk = Chunk::new(IVec3::ZERO);
+        chunk.set_block(8, 8, 8, BlockType::Grass);
+
+        let legacy = build_chunk_mesh_with_atlas(&chunk, None);
+        let expected = block_color(BlockType::Grass);
+
+        if let Some(bevy::render::mesh::VertexAttributeValues::Float32x4(colors)) =
+            legacy.attribute(Mesh::ATTRIBUTE_COLOR)
+        {
+            // Isolated block → AO=0 → colors == base block color
+            for c in colors {
+                assert_eq!(*c, expected, "legacy mode should use block_color");
+            }
+        } else {
+            panic!("COLOR attribute missing");
+        }
+
+        // With atlas=Some, vertex colors should be white * AO instead
+        let atlas_cfg = AtlasConfig {
+            tiles_per_row: 16,
+            tile_size: 16,
+            atlas_size: 256,
+        };
+        let textured = build_chunk_mesh_with_atlas(&chunk, Some(atlas_cfg));
+
+        if let Some(bevy::render::mesh::VertexAttributeValues::Float32x4(colors)) =
+            textured.attribute(Mesh::ATTRIBUTE_COLOR)
+        {
+            for c in colors {
+                assert_eq!(*c, [1.0, 1.0, 1.0, 1.0], "atlas mode should use white vertex colors");
+            }
+        } else {
+            panic!("COLOR attribute missing");
+        }
+    }
+
+    #[test]
+    fn test_atlas_uvs_single_block() {
+        // With atlas enabled, a single Stone block (tile 0) should have
+        // atlas-mapped UVs within the first tile region.
+        let mut chunk = Chunk::new(IVec3::ZERO);
+        chunk.set_block(8, 8, 8, BlockType::Stone);
+
+        let atlas_cfg = AtlasConfig {
+            tiles_per_row: 16,
+            tile_size: 16,
+            atlas_size: 256,
+        };
+        let mesh = build_chunk_mesh_with_atlas(&chunk, Some(atlas_cfg));
+
+        if let Some(bevy::render::mesh::VertexAttributeValues::Float32x2(uv_data)) =
+            mesh.attribute(Mesh::ATTRIBUTE_UV_0)
+        {
+            // Stone = tile 0, so UVs should be within [0, 1/16] range
+            let tile_uv = 1.0 / 16.0_f32;
+            for uv in uv_data {
+                assert!(uv[0] >= -1e-6 && uv[0] <= tile_uv + 1e-6,
+                    "Stone tile 0 U should be in [0, {}], got {}", tile_uv, uv[0]);
+                assert!(uv[1] >= -1e-6 && uv[1] <= tile_uv + 1e-6,
+                    "Stone tile 0 V should be in [0, {}], got {}", tile_uv, uv[1]);
+            }
+        } else {
+            panic!("UV_0 attribute missing");
+        }
+    }
+
+    #[test]
+    fn test_atlas_greedy_uvs_tile_correctly() {
+        // A greedy face spanning multiple blocks should have UVs that exceed
+        // the single-tile UV region (for texture repeat/tiling).
+        let mut chunk = Chunk::new(IVec3::ZERO);
+        chunk.fill(BlockType::Stone);
+
+        let atlas_cfg = AtlasConfig {
+            tiles_per_row: 16,
+            tile_size: 16,
+            atlas_size: 256,
+        };
+        let mesh = build_chunk_mesh_with_atlas(&chunk, Some(atlas_cfg));
+
+        if let Some(bevy::render::mesh::VertexAttributeValues::Float32x2(uv_data)) =
+            mesh.attribute(Mesh::ATTRIBUTE_UV_0)
+        {
+            let tile_uv = 1.0 / 16.0_f32;
+            let max_u = uv_data.iter().map(|uv| uv[0]).fold(0.0_f32, f32::max);
+            let max_v = uv_data.iter().map(|uv| uv[1]).fold(0.0_f32, f32::max);
+
+            // A full chunk face is 16 blocks wide → UVs should reach tile_uv * 16 = 1.0
+            // Some faces with AO may merge into smaller quads, but there should be
+            // interior quads that merge larger.
+            assert!(max_u > tile_uv, "max U ({max_u}) should exceed single tile UV ({tile_uv})");
+            assert!(max_v > tile_uv, "max V ({max_v}) should exceed single tile UV ({tile_uv})");
+        } else {
+            panic!("UV_0 attribute missing");
+        }
     }
 }
