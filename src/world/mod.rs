@@ -39,6 +39,9 @@ pub enum BlockType {
     Water = 5,
     Wood = 6,
     Leaves = 7,
+    Sandstone = 8,
+    Snow = 9,
+    Ice = 10,
 }
 
 impl From<BlockType> for u16 {
@@ -58,6 +61,9 @@ impl From<u16> for BlockType {
             5 => BlockType::Water,
             6 => BlockType::Wood,
             7 => BlockType::Leaves,
+            8 => BlockType::Sandstone,
+            9 => BlockType::Snow,
+            10 => BlockType::Ice,
             _ => BlockType::Air, // Unknown block types default to Air
         }
     }
