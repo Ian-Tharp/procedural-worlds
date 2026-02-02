@@ -18,6 +18,9 @@ use crate::generation::{generate_cacti, generate_caves, generate_chunk_terrain, 
 
 pub mod meshing;
 pub mod persistence;
+pub mod unloading;
+
+use persistence::ChunkStorage;
 
 /// Size of a chunk in blocks (16x16x16)
 pub const CHUNK_SIZE: usize = 16;
@@ -120,6 +123,15 @@ pub struct Chunk {
     pub position: IVec3,
     /// Whether this chunk needs its mesh rebuilt
     pub dirty: bool,
+    /// Whether this chunk has been modified since generation/loading
+    /// (e.g., by player block placement). Modified chunks are saved to
+    /// disk before unloading; unmodified chunks can be regenerated.
+    ///
+    /// **Not set automatically** by `set_block` — callers (e.g., block
+    /// placement systems) should set `chunk.modified = true` explicitly
+    /// when making player-driven changes. This avoids terrain generation
+    /// routines (which also use `set_block`) from marking chunks as modified.
+    pub modified: bool,
 }
 
 impl Chunk {
@@ -129,6 +141,7 @@ impl Chunk {
             blocks: [BlockType::Air; CHUNK_VOLUME],
             position,
             dirty: true,
+            modified: false,
         }
     }
 
@@ -141,6 +154,7 @@ impl Chunk {
             blocks,
             position,
             dirty: true,
+            modified: false,
         }
     }
 
@@ -196,7 +210,7 @@ pub struct PendingChunk {
     /// The async task that will produce the completed `Chunk`.
     task: Task<Chunk>,
     /// The chunk-coordinate position (used to remove from pending set on completion).
-    position: IVec3,
+    pub(crate) position: IVec3,
 }
 
 /// Component attached to an entity while its mesh is being generated
@@ -284,6 +298,8 @@ impl Plugin for WorldPlugin {
         app.init_resource::<ChunkManager>()
             .init_resource::<TerrainConfig>()
             .init_resource::<ChunkMaterial>()
+            .init_resource::<ChunkStorage>()
+            .init_resource::<unloading::UnloadConfig>()
             .configure_sets(
                 Update,
                 (
@@ -310,7 +326,15 @@ impl Plugin for WorldPlugin {
                     .chain()
                     .in_set(WorldSystems::Meshing),
             )
-            .add_systems(Update, despawn_far_chunks.in_set(WorldSystems::Cleanup));
+            .add_systems(
+                Update,
+                (
+                    unloading::chunk_unloading_system,
+                    unloading::poll_pending_saves,
+                )
+                    .chain()
+                    .in_set(WorldSystems::Cleanup),
+            );
     }
 }
 
@@ -362,6 +386,7 @@ fn chunk_streaming_system(
     mut commands: Commands,
     mut chunk_manager: ResMut<ChunkManager>,
     terrain_config: Res<TerrainConfig>,
+    chunk_storage: Res<ChunkStorage>,
 ) {
     // Reset per-frame spawn counter
     chunk_manager.tasks_spawned_this_frame = 0;
@@ -400,11 +425,17 @@ fn chunk_streaming_system(
                         return;
                     }
 
-                    // Clone the config (cheap — just numbers) for the background task
+                    // Clone resources for the background task
                     let config = (*terrain_config).clone();
+                    let storage = ChunkStorage::new(chunk_storage.save_dir.clone());
 
-                    // Spawn async task for terrain generation
+                    // Spawn async task: try loading from disk first, generate if not found
                     let task = task_pool.spawn(async move {
+                        // Check for a previously saved chunk on disk
+                        if let Ok(chunk) = persistence::load_chunk(chunk_pos, &storage) {
+                            return chunk;
+                        }
+                        // Not on disk — generate new terrain
                         let mut chunk = Chunk::new(chunk_pos);
                         generate_chunk_terrain(&mut chunk, &config);
                         generate_caves(&mut chunk, &config);
@@ -526,46 +557,8 @@ fn poll_pending_meshes(
     }
 }
 
-/// Remove chunks (and pending chunk tasks) that are too far from the player.
-fn despawn_far_chunks(
-    mut commands: Commands,
-    mut chunk_manager: ResMut<ChunkManager>,
-    chunk_query: Query<(Entity, &Chunk)>,
-    pending_query: Query<(Entity, &PendingChunk)>,
-) {
-    let center = chunk_manager.player_chunk;
-    let max_dist = chunk_manager.render_distance + 2; // Buffer zone
-
-    // Despawn loaded chunks that are out of range
-    let mut to_remove = Vec::new();
-    for (entity, chunk) in &chunk_query {
-        let diff = chunk.position - center;
-        let dist = diff.x.abs().max(diff.y.abs()).max(diff.z.abs());
-
-        if dist > max_dist {
-            commands.entity(entity).despawn_recursive();
-            to_remove.push(chunk.position);
-        }
-    }
-    for pos in to_remove {
-        chunk_manager.chunks.remove(&pos);
-    }
-
-    // Despawn pending-chunk entities that are out of range
-    let mut pending_to_remove = Vec::new();
-    for (entity, pending) in &pending_query {
-        let diff = pending.position - center;
-        let dist = diff.x.abs().max(diff.y.abs()).max(diff.z.abs());
-
-        if dist > max_dist {
-            commands.entity(entity).despawn_recursive();
-            pending_to_remove.push(pending.position);
-        }
-    }
-    for pos in pending_to_remove {
-        chunk_manager.pending.remove(&pos);
-    }
-}
+// Chunk unloading is now handled by `unloading::chunk_unloading_system` and
+// `unloading::poll_pending_saves` — see `src/world/unloading.rs`.
 
 // ============================================================================
 // BLOCK QUERIES - For collision and gameplay
@@ -1049,6 +1042,138 @@ mod tests {
             assert_eq!(chunk.position, expected_pos);
             assert!(chunk.dirty);
         }
+    }
+
+    #[test]
+    fn test_chunk_modified_flag_defaults() {
+        // New chunks start as not modified
+        let chunk = Chunk::new(IVec3::ZERO);
+        assert!(!chunk.modified, "New chunks should not be modified");
+
+        // Chunks loaded from block data start as not modified
+        let chunk = Chunk::from_blocks(IVec3::ZERO, [BlockType::Air; CHUNK_VOLUME]);
+        assert!(!chunk.modified, "Loaded chunks should not be modified");
+    }
+
+    #[test]
+    fn test_chunk_modified_flag_explicit_set() {
+        let mut chunk = Chunk::new(IVec3::ZERO);
+        assert!(!chunk.modified);
+
+        // Callers set modified explicitly (simulating player block placement)
+        chunk.set_block(0, 0, 0, BlockType::Stone);
+        chunk.modified = true;
+        assert!(chunk.modified);
+
+        // set_block alone does NOT set modified (used by terrain generation)
+        let mut chunk2 = Chunk::new(IVec3::ZERO);
+        chunk2.set_block(5, 5, 5, BlockType::Dirt);
+        assert!(!chunk2.modified, "set_block should not auto-set modified");
+    }
+
+    #[test]
+    fn test_chunk_loads_from_disk_before_generating() {
+        init_task_pool();
+
+        // Create a temp save directory
+        let dir = std::env::temp_dir().join(format!(
+            "pw_disk_load_test_{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let storage = persistence::ChunkStorage::new(&dir);
+
+        // Save a chunk with a distinctive block pattern
+        let mut chunk = Chunk::new(IVec3::new(5, 0, 5));
+        chunk.set_block(7, 7, 7, BlockType::Obsidian);
+        persistence::save_chunk(&chunk, &storage).unwrap();
+
+        // Simulate what chunk_streaming_system does: try disk first, then generate
+        let chunk_pos = IVec3::new(5, 0, 5);
+        let config = TerrainConfig::default();
+        let storage_clone = persistence::ChunkStorage::new(&dir);
+
+        let task = AsyncComputeTaskPool::get().spawn(async move {
+            if let Ok(loaded) = persistence::load_chunk(chunk_pos, &storage_clone) {
+                return loaded;
+            }
+            let mut c = Chunk::new(chunk_pos);
+            generate_chunk_terrain(&mut c, &config);
+            generate_caves(&mut c, &config);
+            generate_trees(&mut c, &config);
+            generate_cacti(&mut c, &config);
+            c
+        });
+
+        let result = block_on(task);
+
+        // Should have loaded from disk, preserving the distinctive block
+        assert_eq!(result.get_block(7, 7, 7), BlockType::Obsidian);
+        assert_eq!(result.position, IVec3::new(5, 0, 5));
+        assert!(!result.modified, "Loaded chunks should not be marked modified");
+
+        // Cleanup
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_chunk_generates_when_not_on_disk() {
+        init_task_pool();
+
+        // Use a path that definitely has no saved chunks
+        let dir = std::env::temp_dir().join(format!(
+            "pw_no_disk_test_{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let storage = persistence::ChunkStorage::new(&dir);
+
+        let chunk_pos = IVec3::new(0, 2, 0);
+        let config = TerrainConfig::default();
+        let storage_clone = persistence::ChunkStorage::new(&dir);
+
+        let task = AsyncComputeTaskPool::get().spawn(async move {
+            if let Ok(loaded) = persistence::load_chunk(chunk_pos, &storage_clone) {
+                return loaded;
+            }
+            let mut c = Chunk::new(chunk_pos);
+            generate_chunk_terrain(&mut c, &config);
+            generate_caves(&mut c, &config);
+            generate_trees(&mut c, &config);
+            generate_cacti(&mut c, &config);
+            c
+        });
+
+        let result = block_on(task);
+
+        // Should have generated terrain (same as inline reference)
+        let config_ref = TerrainConfig::default();
+        let mut reference = Chunk::new(chunk_pos);
+        generate_chunk_terrain(&mut reference, &config_ref);
+        generate_caves(&mut reference, &config_ref);
+        generate_trees(&mut reference, &config_ref);
+        generate_cacti(&mut reference, &config_ref);
+
+        assert_eq!(result.position, chunk_pos);
+        for x in 0..CHUNK_SIZE {
+            for y in 0..CHUNK_SIZE {
+                for z in 0..CHUNK_SIZE {
+                    assert_eq!(
+                        result.get_block(x, y, z),
+                        reference.get_block(x, y, z),
+                        "Block mismatch at ({x}, {y}, {z}) — disk fallback should generate identically"
+                    );
+                }
+            }
+        }
+
+        // Cleanup (dir may not exist, that's fine)
+        let _ = std::fs::remove_dir_all(&dir);
+        let _ = persistence::chunk_exists(chunk_pos, &storage); // Ensure no leftover
     }
 
     #[test]

@@ -110,6 +110,14 @@ pub fn save_chunk(chunk: &Chunk, storage: &ChunkStorage) -> Result<(), io::Error
     Ok(())
 }
 
+/// Check if a saved chunk file exists on disk for the given position.
+///
+/// Useful for debugging and determining whether a chunk needs generation
+/// or can be loaded from a previous save.
+pub fn chunk_exists(position: IVec3, storage: &ChunkStorage) -> bool {
+    chunk_file_path(position, storage).exists()
+}
+
 /// Load a chunk's block data from disk
 ///
 /// Reads and deserializes a chunk file by position. The returned chunk
@@ -373,6 +381,21 @@ mod tests {
 
         let block: BlockType = 100u16.into();
         assert_eq!(block, BlockType::Air);
+    }
+
+    #[test]
+    fn test_chunk_exists() {
+        let storage = temp_storage();
+
+        assert!(!chunk_exists(IVec3::ZERO, &storage));
+
+        let chunk = Chunk::new(IVec3::ZERO);
+        save_chunk(&chunk, &storage).expect("save should succeed");
+
+        assert!(chunk_exists(IVec3::ZERO, &storage));
+        assert!(!chunk_exists(IVec3::ONE, &storage));
+
+        cleanup(&storage);
     }
 
     #[test]
