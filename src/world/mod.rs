@@ -18,6 +18,7 @@ use crate::generation::{generate_cacti, generate_caves, generate_chunk_terrain, 
 
 pub mod meshing;
 pub mod persistence;
+pub mod save;
 pub mod texture_atlas;
 pub mod unloading;
 
@@ -301,6 +302,8 @@ impl Plugin for WorldPlugin {
             .init_resource::<ChunkMaterial>()
             .init_resource::<ChunkStorage>()
             .init_resource::<unloading::UnloadConfig>()
+            // Save system plugin (auto-save, manual save, load on startup)
+            .add_plugins(save::SavePlugin)
             .configure_sets(
                 Update,
                 (
