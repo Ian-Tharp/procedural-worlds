@@ -8,7 +8,8 @@
 //! - Mesh generation (async via `AsyncComputeTaskPool`)
 //! - Block queries for collision
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
+use std::time::Instant;
 
 use bevy::prelude::*;
 use bevy::tasks::{block_on, futures_lite::future, AsyncComputeTaskPool, Task};
@@ -232,6 +233,12 @@ pub struct ChunkManager {
     pub pending: HashSet<IVec3>,
     /// Render distance in chunks
     pub render_distance: i32,
+    /// Horizontal chunk loading distance. If `None`, uses `render_distance`.
+    pub load_distance: Option<i32>,
+    /// Number of chunk layers to load above the player's chunk
+    pub vertical_load_up: i32,
+    /// Number of chunk layers to load below the player's chunk
+    pub vertical_load_down: i32,
     /// Player's current chunk position
     pub player_chunk: IVec3,
     /// Tasks spawned this frame (for rate limiting)
@@ -246,6 +253,9 @@ impl Default for ChunkManager {
             chunks: HashMap::new(),
             pending: HashSet::new(),
             render_distance: 4,
+            load_distance: None,
+            vertical_load_up: 4,
+            vertical_load_down: 2,
             player_chunk: IVec3::ZERO,
             tasks_spawned_this_frame: 0,
             // Increased from 2 to 4 for faster initial load
@@ -262,6 +272,102 @@ impl ChunkManager {
             render_distance,
             ..default()
         }
+    }
+
+    /// Returns the effective horizontal load distance.
+    ///
+    /// If `load_distance` is explicitly set, returns that value.
+    /// Otherwise falls back to `render_distance`.
+    pub fn effective_load_distance(&self) -> i32 {
+        self.load_distance.unwrap_or(self.render_distance)
+    }
+}
+
+/// Maximum number of load-time samples kept for rolling average calculation.
+const METRICS_HISTORY_SIZE: usize = 256;
+
+/// Performance metrics for chunk loading.
+///
+/// Tracks how many chunks are loaded per second, the average time each chunk
+/// takes to load, and related statistics. Updated by `update_chunk_load_metrics`
+/// and displayed in the debug overlay.
+#[derive(Resource)]
+pub struct ChunkLoadMetrics {
+    /// Rolling window of individual chunk load durations (in seconds).
+    load_times: VecDeque<f32>,
+    /// Timestamps (seconds since app start) of recent chunk completions.
+    /// Used to compute chunks-loaded-per-second over a sliding window.
+    completion_timestamps: VecDeque<f64>,
+    /// Number of chunks that completed loading since the last metrics update.
+    pub chunks_loaded_since_last: u32,
+    /// Smoothed chunks loaded per second (computed over a 2-second window).
+    pub chunks_per_second: f32,
+    /// Rolling average load time in milliseconds.
+    pub avg_load_time_ms: f32,
+    /// Total number of chunks loaded since application start.
+    pub total_chunks_loaded: u64,
+    /// Wall-clock `Instant` recorded when a set of pending chunks start
+    /// (used inside `poll_pending_chunks` to measure completion time).
+    pub pending_start_times: HashMap<IVec3, Instant>,
+}
+
+impl Default for ChunkLoadMetrics {
+    fn default() -> Self {
+        Self {
+            load_times: VecDeque::with_capacity(METRICS_HISTORY_SIZE),
+            completion_timestamps: VecDeque::with_capacity(METRICS_HISTORY_SIZE),
+            chunks_loaded_since_last: 0,
+            chunks_per_second: 0.0,
+            avg_load_time_ms: 0.0,
+            total_chunks_loaded: 0,
+            pending_start_times: HashMap::new(),
+        }
+    }
+}
+
+impl ChunkLoadMetrics {
+    /// Record one chunk load completion.
+    pub fn record_load(&mut self, load_duration_secs: f32, app_time_secs: f64) {
+        // Push load time
+        if self.load_times.len() >= METRICS_HISTORY_SIZE {
+            self.load_times.pop_front();
+        }
+        self.load_times.push_back(load_duration_secs);
+
+        // Push completion timestamp
+        if self.completion_timestamps.len() >= METRICS_HISTORY_SIZE {
+            self.completion_timestamps.pop_front();
+        }
+        self.completion_timestamps.push_back(app_time_secs);
+
+        self.chunks_loaded_since_last += 1;
+        self.total_chunks_loaded += 1;
+    }
+
+    /// Recompute derived metrics (called once per frame by the metrics system).
+    pub fn refresh(&mut self, app_time_secs: f64) {
+        // Average load time
+        if self.load_times.is_empty() {
+            self.avg_load_time_ms = 0.0;
+        } else {
+            let sum: f32 = self.load_times.iter().sum();
+            self.avg_load_time_ms = (sum / self.load_times.len() as f32) * 1000.0;
+        }
+
+        // Chunks per second: count completions in the last 2 seconds
+        let window_secs = 2.0;
+        let cutoff = app_time_secs - window_secs;
+        while let Some(&ts) = self.completion_timestamps.front() {
+            if ts < cutoff {
+                self.completion_timestamps.pop_front();
+            } else {
+                break;
+            }
+        }
+        let count = self.completion_timestamps.len() as f32;
+        self.chunks_per_second = count / window_secs as f32;
+
+        self.chunks_loaded_since_last = 0;
     }
 }
 
@@ -301,6 +407,7 @@ impl Plugin for WorldPlugin {
             .init_resource::<ChunkMaterial>()
             .init_resource::<ChunkStorage>()
             .init_resource::<unloading::UnloadConfig>()
+            .init_resource::<ChunkLoadMetrics>()
             .configure_sets(
                 Update,
                 (
@@ -320,6 +427,7 @@ impl Plugin for WorldPlugin {
                     update_player_chunk_position,
                     chunk_streaming_system,
                     poll_pending_chunks,
+                    update_chunk_load_metrics,
                 )
                     .chain()
                     .in_set(WorldSystems::ChunkLoading),
@@ -405,6 +513,7 @@ fn update_player_chunk_position(
 fn chunk_streaming_system(
     mut commands: Commands,
     mut chunk_manager: ResMut<ChunkManager>,
+    mut load_metrics: ResMut<ChunkLoadMetrics>,
     terrain_config: Res<TerrainConfig>,
     chunk_storage: Res<ChunkStorage>,
 ) {
@@ -412,8 +521,10 @@ fn chunk_streaming_system(
     chunk_manager.tasks_spawned_this_frame = 0;
 
     let center = chunk_manager.player_chunk;
-    let rd = chunk_manager.render_distance;
+    let rd = chunk_manager.effective_load_distance();
     let max_per_frame = chunk_manager.max_chunks_per_frame;
+    let vert_down = chunk_manager.vertical_load_down;
+    let vert_up = chunk_manager.vertical_load_up;
 
     let task_pool = AsyncComputeTaskPool::get();
 
@@ -429,8 +540,8 @@ fn chunk_streaming_system(
                     continue;
                 }
 
-                // Vertical range: -2 to +4 chunks (covers underground and surface)
-                for y in -2..=4 {
+                // Vertical range based on configurable load distances
+                for y in -vert_down..=vert_up {
                     let chunk_pos = IVec3::new(x, y, z);
 
                     // Skip if already loaded or already pending
@@ -472,6 +583,7 @@ fn chunk_streaming_system(
 
                     chunk_manager.pending.insert(chunk_pos);
                     chunk_manager.tasks_spawned_this_frame += 1;
+                    load_metrics.pending_start_times.insert(chunk_pos, Instant::now());
                 }
             }
         }
@@ -486,11 +598,21 @@ fn chunk_streaming_system(
 fn poll_pending_chunks(
     mut commands: Commands,
     mut chunk_manager: ResMut<ChunkManager>,
+    mut load_metrics: ResMut<ChunkLoadMetrics>,
     mut pending_query: Query<(Entity, &mut PendingChunk)>,
+    time: Res<Time>,
 ) {
+    let app_time = time.elapsed_secs_f64();
+
     for (entity, mut pending) in &mut pending_query {
         if let Some(chunk) = block_on(future::poll_once(&mut pending.task)) {
             let pos = pending.position;
+
+            // Measure load duration
+            if let Some(start) = load_metrics.pending_start_times.remove(&pos) {
+                let duration = start.elapsed().as_secs_f32();
+                load_metrics.record_load(duration, app_time);
+            }
 
             // Insert the completed chunk data onto this entity
             commands.entity(entity).insert(chunk).remove::<PendingChunk>();
@@ -500,6 +622,14 @@ fn poll_pending_chunks(
             chunk_manager.chunks.insert(pos, entity);
         }
     }
+}
+
+/// Recompute derived chunk load metrics once per frame.
+fn update_chunk_load_metrics(
+    mut load_metrics: ResMut<ChunkLoadMetrics>,
+    time: Res<Time>,
+) {
+    load_metrics.refresh(time.elapsed_secs_f64());
 }
 
 /// Maximum mesh-generation tasks to spawn per frame (prevents GPU upload stutter)
@@ -1206,6 +1336,130 @@ mod tests {
         // Cleanup (dir may not exist, that's fine)
         let _ = std::fs::remove_dir_all(&dir);
         let _ = persistence::chunk_exists(chunk_pos, &storage); // Ensure no leftover
+    }
+
+    // ========================================================================
+    // Chunk loading distance tests
+    // ========================================================================
+
+    #[test]
+    fn test_effective_load_distance_defaults_to_render_distance() {
+        let cm = ChunkManager::default();
+        assert_eq!(cm.load_distance, None);
+        assert_eq!(cm.effective_load_distance(), cm.render_distance);
+    }
+
+    #[test]
+    fn test_effective_load_distance_explicit() {
+        let cm = ChunkManager {
+            load_distance: Some(8),
+            render_distance: 4,
+            ..default()
+        };
+        assert_eq!(cm.effective_load_distance(), 8);
+    }
+
+    #[test]
+    fn test_effective_load_distance_independent_of_render() {
+        let mut cm = ChunkManager::default();
+        cm.render_distance = 6;
+        assert_eq!(cm.effective_load_distance(), 6);
+
+        cm.load_distance = Some(3);
+        assert_eq!(cm.effective_load_distance(), 3);
+    }
+
+    #[test]
+    fn test_vertical_load_defaults() {
+        let cm = ChunkManager::default();
+        assert_eq!(cm.vertical_load_up, 4);
+        assert_eq!(cm.vertical_load_down, 2);
+    }
+
+    #[test]
+    fn test_vertical_load_custom() {
+        let cm = ChunkManager {
+            vertical_load_up: 8,
+            vertical_load_down: 4,
+            ..default()
+        };
+        assert_eq!(cm.vertical_load_up, 8);
+        assert_eq!(cm.vertical_load_down, 4);
+    }
+
+    // ========================================================================
+    // Chunk load metrics tests
+    // ========================================================================
+
+    #[test]
+    fn test_chunk_load_metrics_default() {
+        let metrics = ChunkLoadMetrics::default();
+        assert_eq!(metrics.chunks_per_second, 0.0);
+        assert_eq!(metrics.avg_load_time_ms, 0.0);
+        assert_eq!(metrics.total_chunks_loaded, 0);
+        assert_eq!(metrics.chunks_loaded_since_last, 0);
+    }
+
+    #[test]
+    fn test_chunk_load_metrics_record_and_refresh() {
+        let mut metrics = ChunkLoadMetrics::default();
+
+        // Record 5 chunk loads at t=1.0s, each taking 0.05s
+        for i in 0..5 {
+            metrics.record_load(0.05, 1.0 + i as f64 * 0.01);
+        }
+        assert_eq!(metrics.total_chunks_loaded, 5);
+        assert_eq!(metrics.chunks_loaded_since_last, 5);
+
+        // Refresh at t=2.0s — all 5 loads within the 2s window
+        metrics.refresh(2.0);
+        assert_eq!(metrics.chunks_loaded_since_last, 0); // reset by refresh
+        assert!((metrics.avg_load_time_ms - 50.0).abs() < 0.01); // 0.05s = 50ms
+        assert!(metrics.chunks_per_second > 0.0);
+    }
+
+    #[test]
+    fn test_chunk_load_metrics_window_expiry() {
+        let mut metrics = ChunkLoadMetrics::default();
+
+        // Record loads at t=1.0
+        for _ in 0..10 {
+            metrics.record_load(0.01, 1.0);
+        }
+
+        // Refresh at t=5.0 — all loads older than 2s window → 0 chunks/sec
+        metrics.refresh(5.0);
+        assert_eq!(metrics.chunks_per_second, 0.0);
+        // avg_load_time_ms still valid (rolling buffer)
+        assert!((metrics.avg_load_time_ms - 10.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_chunk_load_metrics_rolling_capacity() {
+        let mut metrics = ChunkLoadMetrics::default();
+
+        // Fill beyond capacity
+        for i in 0..METRICS_HISTORY_SIZE + 50 {
+            metrics.record_load(0.1, i as f64);
+        }
+
+        // Should not exceed capacity
+        assert!(metrics.load_times.len() <= METRICS_HISTORY_SIZE);
+        assert!(metrics.completion_timestamps.len() <= METRICS_HISTORY_SIZE);
+        assert_eq!(metrics.total_chunks_loaded, (METRICS_HISTORY_SIZE + 50) as u64);
+    }
+
+    #[test]
+    fn test_chunk_load_metrics_pending_start_times() {
+        let mut metrics = ChunkLoadMetrics::default();
+        let pos = IVec3::new(1, 2, 3);
+
+        metrics.pending_start_times.insert(pos, std::time::Instant::now());
+        assert!(metrics.pending_start_times.contains_key(&pos));
+
+        let start = metrics.pending_start_times.remove(&pos).unwrap();
+        assert!(start.elapsed().as_secs_f32() < 1.0);
+        assert!(!metrics.pending_start_times.contains_key(&pos));
     }
 
     #[test]

@@ -72,6 +72,8 @@ pub struct EngineConfig {
     pub debug: DebugConfig,
     /// Chunk unloading and memory management settings
     pub unload: UnloadSettings,
+    /// World chunk loading settings (load distances, vertical range)
+    pub world: WorldConfig,
     /// Duration of a full day/night cycle in seconds (default: 600 = 10 min)
     pub cycle_duration_seconds: f32,
 }
@@ -221,6 +223,25 @@ pub struct UnloadSettings {
     pub max_saves_per_frame: u32,
 }
 
+/// World chunk loading configuration
+///
+/// Controls how far chunks are loaded around the player.
+/// The horizontal load distance defaults to `render_distance` if set to `None`.
+/// The vertical range controls how many chunk layers above and below the
+/// player's current chunk are loaded.
+///
+/// These values can be adjusted at runtime via F5 (decrease) / F6 (increase).
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(default)]
+pub struct WorldConfig {
+    /// Horizontal chunk loading distance (in chunks). If `null`, uses `render.render_distance`.
+    pub load_distance: Option<i32>,
+    /// Number of chunk layers to load above the player's chunk (default: 4)
+    pub vertical_load_up: i32,
+    /// Number of chunk layers to load below the player's chunk (default: 2)
+    pub vertical_load_down: i32,
+}
+
 /// Debug overlay settings
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(default)]
@@ -251,6 +272,7 @@ impl Default for EngineConfig {
             controls: ControlsConfig::default(),
             debug: DebugConfig::default(),
             unload: UnloadSettings::default(),
+            world: WorldConfig::default(),
             cycle_duration_seconds: 600.0,
         }
     }
@@ -342,6 +364,16 @@ impl Default for UnloadSettings {
             memory_threshold_mb: 2048,
             memory_pressure_reduction: 2,
             max_saves_per_frame: 4,
+        }
+    }
+}
+
+impl Default for WorldConfig {
+    fn default() -> Self {
+        Self {
+            load_distance: None,
+            vertical_load_up: 4,
+            vertical_load_down: 2,
         }
     }
 }
@@ -585,6 +617,17 @@ fn apply_config_to_resources(
         config.render.render_distance, config.render.max_chunks_per_frame
     );
 
+    // --- World / chunk loading settings ---
+    chunk_manager.load_distance = config.world.load_distance;
+    chunk_manager.vertical_load_up = config.world.vertical_load_up;
+    chunk_manager.vertical_load_down = config.world.vertical_load_down;
+    info!(
+        "Chunk loading: horizontal={}, vertical=(-{}..+{})",
+        chunk_manager.effective_load_distance(),
+        config.world.vertical_load_down,
+        config.world.vertical_load_up,
+    );
+
     // --- Terrain settings ---
     terrain_config.seed = config.terrain.seed;
     terrain_config.base_height = config.terrain.base_height;
@@ -707,6 +750,11 @@ mod tests {
         assert_eq!(config.unload.memory_threshold_mb, 2048);
         assert_eq!(config.unload.memory_pressure_reduction, 2);
         assert_eq!(config.unload.max_saves_per_frame, 4);
+
+        // World / chunk loading defaults
+        assert_eq!(config.world.load_distance, None);
+        assert_eq!(config.world.vertical_load_up, 4);
+        assert_eq!(config.world.vertical_load_down, 2);
     }
 
     #[test]
@@ -723,6 +771,9 @@ mod tests {
         assert_eq!(deserialized.debug.overlay_visible, original.debug.overlay_visible);
         assert_eq!(deserialized.unload.save_on_unload, original.unload.save_on_unload);
         assert_eq!(deserialized.unload.memory_threshold_mb, original.unload.memory_threshold_mb);
+        assert_eq!(deserialized.world.load_distance, original.world.load_distance);
+        assert_eq!(deserialized.world.vertical_load_up, original.world.vertical_load_up);
+        assert_eq!(deserialized.world.vertical_load_down, original.world.vertical_load_down);
     }
 
     #[test]
@@ -779,6 +830,36 @@ mod tests {
         assert_eq!(string_to_keycode(""), None);
         assert_eq!(string_to_keycode("InvalidKey"), None);
         assert_eq!(string_to_keycode("key_w"), None); // Case sensitive
+    }
+
+    #[test]
+    fn test_world_config_partial_json() {
+        // Partial world config — missing fields use defaults
+        let json = r#"{
+            "world": {
+                "load_distance": 6
+            }
+        }"#;
+        let config: EngineConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(config.world.load_distance, Some(6));
+        assert_eq!(config.world.vertical_load_up, 4);
+        assert_eq!(config.world.vertical_load_down, 2);
+    }
+
+    #[test]
+    fn test_world_config_null_load_distance() {
+        // Explicit null means "use render_distance"
+        let json = r#"{
+            "world": {
+                "load_distance": null,
+                "vertical_load_up": 6,
+                "vertical_load_down": 3
+            }
+        }"#;
+        let config: EngineConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(config.world.load_distance, None);
+        assert_eq!(config.world.vertical_load_up, 6);
+        assert_eq!(config.world.vertical_load_down, 3);
     }
 
     #[test]
