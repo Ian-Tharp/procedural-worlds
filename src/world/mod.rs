@@ -23,6 +23,7 @@ pub mod interaction;
 pub mod meshing;
 pub mod persistence;
 pub mod save;
+pub mod streaming;
 pub mod texture_atlas;
 pub mod unloading;
 
@@ -214,7 +215,7 @@ pub struct ChunkMesh;
 #[derive(Component)]
 pub struct PendingChunk {
     /// The async task that will produce the completed `Chunk`.
-    task: Task<Chunk>,
+    pub(crate) task: Task<Chunk>,
     /// The chunk-coordinate position (used to remove from pending set on completion).
     pub(crate) position: IVec3,
 }
@@ -509,6 +510,8 @@ impl Plugin for WorldPlugin {
                     .with_suffix(" MB")
                     .with_max_history_length(64),
             )
+            .init_resource::<streaming::StreamingConfig>()
+            .init_resource::<streaming::PlayerChunkVelocity>()
             // Custom atlas material pipeline (shader + material type registration)
             .add_plugins(atlas_material::BlockAtlasMaterialPlugin)
             // Save system plugin (auto-save, manual save, load on startup)
@@ -532,7 +535,9 @@ impl Plugin for WorldPlugin {
                 Update,
                 (
                     update_player_chunk_position,
+                    streaming::update_player_chunk_velocity,
                     chunk_streaming_system,
+                    streaming::predictive_chunk_streaming_system,
                     poll_pending_chunks,
                     update_chunk_load_metrics,
                 )
