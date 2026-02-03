@@ -11,6 +11,7 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::time::Instant;
 
+use bevy::diagnostic::{Diagnostic, DiagnosticPath, Diagnostics, RegisterDiagnostic};
 use bevy::prelude::*;
 use bevy::tasks::{block_on, futures_lite::future, AsyncComputeTaskPool, Task};
 use serde::{Deserialize, Serialize};
@@ -289,13 +290,34 @@ impl ChunkManager {
 /// Maximum number of load-time samples kept for rolling average calculation.
 const METRICS_HISTORY_SIZE: usize = 256;
 
+// ============================================================================
+// Bevy Diagnostic Paths for chunk metrics
+// ============================================================================
+
+/// Diagnostic path for average chunk load time (ms).
+pub const CHUNK_AVG_LOAD_TIME: DiagnosticPath = DiagnosticPath::const_new("chunk/avg_load_time_ms");
+/// Diagnostic path for peak chunk load time (ms).
+pub const CHUNK_PEAK_LOAD_TIME: DiagnosticPath = DiagnosticPath::const_new("chunk/peak_load_time_ms");
+/// Diagnostic path for chunks loaded per second.
+pub const CHUNK_LOADS_PER_SEC: DiagnosticPath = DiagnosticPath::const_new("chunk/loads_per_second");
+/// Diagnostic path for total chunks loaded.
+pub const CHUNK_TOTAL_LOADED: DiagnosticPath = DiagnosticPath::const_new("chunk/total_loaded");
+/// Diagnostic path for estimated chunk memory usage (MB).
+pub const CHUNK_MEMORY_MB: DiagnosticPath = DiagnosticPath::const_new("chunk/memory_mb");
+
 /// Performance metrics for chunk loading.
 ///
 /// Tracks how many chunks are loaded per second, the average time each chunk
-/// takes to load, and related statistics. Updated by `update_chunk_load_metrics`
-/// and displayed in the debug overlay.
+/// takes to load, peak load time, memory usage, and related statistics.
+/// Updated by `update_chunk_load_metrics` and displayed in the debug overlay.
+///
+/// Metrics collection can be disabled via `enabled`. When disabled, the
+/// recording functions become no-ops and derived values stay at their defaults.
 #[derive(Resource)]
 pub struct ChunkLoadMetrics {
+    /// Whether metrics collection is active. Controlled by
+    /// `EngineConfig::debug::show_chunks` at startup and toggleable at runtime.
+    pub enabled: bool,
     /// Rolling window of individual chunk load durations (in seconds).
     load_times: VecDeque<f32>,
     /// Timestamps (seconds since app start) of recent chunk completions.
@@ -307,8 +329,16 @@ pub struct ChunkLoadMetrics {
     pub chunks_per_second: f32,
     /// Rolling average load time in milliseconds.
     pub avg_load_time_ms: f32,
+    /// Peak (maximum) load time in milliseconds across the rolling window.
+    pub peak_load_time_ms: f32,
+    /// All-time peak load time in milliseconds since application start.
+    pub all_time_peak_load_time_ms: f32,
     /// Total number of chunks loaded since application start.
     pub total_chunks_loaded: u64,
+    /// Estimated memory usage for chunk block storage in bytes.
+    ///
+    /// Calculated as `loaded_chunk_count * CHUNK_VOLUME * size_of::<BlockType>()`.
+    pub chunk_memory_bytes: usize,
     /// Wall-clock `Instant` recorded when a set of pending chunks start
     /// (used inside `poll_pending_chunks` to measure completion time).
     pub pending_start_times: HashMap<IVec3, Instant>,
@@ -317,12 +347,16 @@ pub struct ChunkLoadMetrics {
 impl Default for ChunkLoadMetrics {
     fn default() -> Self {
         Self {
+            enabled: true,
             load_times: VecDeque::with_capacity(METRICS_HISTORY_SIZE),
             completion_timestamps: VecDeque::with_capacity(METRICS_HISTORY_SIZE),
             chunks_loaded_since_last: 0,
             chunks_per_second: 0.0,
             avg_load_time_ms: 0.0,
+            peak_load_time_ms: 0.0,
+            all_time_peak_load_time_ms: 0.0,
             total_chunks_loaded: 0,
+            chunk_memory_bytes: 0,
             pending_start_times: HashMap::new(),
         }
     }
@@ -330,7 +364,16 @@ impl Default for ChunkLoadMetrics {
 
 impl ChunkLoadMetrics {
     /// Record one chunk load completion.
+    ///
+    /// When `enabled` is `false` this still increments `total_chunks_loaded`
+    /// (a cheap counter) but skips the rolling-window bookkeeping.
     pub fn record_load(&mut self, load_duration_secs: f32, app_time_secs: f64) {
+        self.total_chunks_loaded += 1;
+
+        if !self.enabled {
+            return;
+        }
+
         // Push load time
         if self.load_times.len() >= METRICS_HISTORY_SIZE {
             self.load_times.pop_front();
@@ -344,17 +387,36 @@ impl ChunkLoadMetrics {
         self.completion_timestamps.push_back(app_time_secs);
 
         self.chunks_loaded_since_last += 1;
-        self.total_chunks_loaded += 1;
+
+        // Update all-time peak
+        let duration_ms = load_duration_secs * 1000.0;
+        if duration_ms > self.all_time_peak_load_time_ms {
+            self.all_time_peak_load_time_ms = duration_ms;
+        }
     }
 
     /// Recompute derived metrics (called once per frame by the metrics system).
     pub fn refresh(&mut self, app_time_secs: f64) {
-        // Average load time
+        if !self.enabled {
+            self.chunks_loaded_since_last = 0;
+            return;
+        }
+
+        // Average and peak load time from rolling window
         if self.load_times.is_empty() {
             self.avg_load_time_ms = 0.0;
+            self.peak_load_time_ms = 0.0;
         } else {
-            let sum: f32 = self.load_times.iter().sum();
+            let mut sum: f32 = 0.0;
+            let mut peak: f32 = 0.0;
+            for &t in &self.load_times {
+                sum += t;
+                if t > peak {
+                    peak = t;
+                }
+            }
             self.avg_load_time_ms = (sum / self.load_times.len() as f32) * 1000.0;
+            self.peak_load_time_ms = peak * 1000.0;
         }
 
         // Chunks per second: count completions in the last 2 seconds
@@ -371,6 +433,17 @@ impl ChunkLoadMetrics {
         self.chunks_per_second = count / window_secs as f32;
 
         self.chunks_loaded_since_last = 0;
+    }
+
+    /// Update the estimated chunk memory usage based on current chunk count.
+    pub fn update_memory_estimate(&mut self, loaded_chunk_count: usize) {
+        self.chunk_memory_bytes =
+            loaded_chunk_count * CHUNK_VOLUME * std::mem::size_of::<BlockType>();
+    }
+
+    /// Return chunk memory usage in megabytes.
+    pub fn chunk_memory_mb(&self) -> f64 {
+        self.chunk_memory_bytes as f64 / (1024.0 * 1024.0)
     }
 }
 
@@ -411,6 +484,31 @@ impl Plugin for WorldPlugin {
             .init_resource::<ChunkStorage>()
             .init_resource::<unloading::UnloadConfig>()
             .init_resource::<ChunkLoadMetrics>()
+            // Register chunk diagnostics with Bevy's DiagnosticsStore
+            .register_diagnostic(
+                Diagnostic::new(CHUNK_AVG_LOAD_TIME)
+                    .with_suffix(" ms")
+                    .with_max_history_length(64),
+            )
+            .register_diagnostic(
+                Diagnostic::new(CHUNK_PEAK_LOAD_TIME)
+                    .with_suffix(" ms")
+                    .with_max_history_length(64),
+            )
+            .register_diagnostic(
+                Diagnostic::new(CHUNK_LOADS_PER_SEC)
+                    .with_suffix(" chunks/s")
+                    .with_max_history_length(64),
+            )
+            .register_diagnostic(
+                Diagnostic::new(CHUNK_TOTAL_LOADED)
+                    .with_max_history_length(1),
+            )
+            .register_diagnostic(
+                Diagnostic::new(CHUNK_MEMORY_MB)
+                    .with_suffix(" MB")
+                    .with_max_history_length(64),
+            )
             // Custom atlas material pipeline (shader + material type registration)
             .add_plugins(atlas_material::BlockAtlasMaterialPlugin)
             // Save system plugin (auto-save, manual save, load on startup)
@@ -651,12 +749,34 @@ fn poll_pending_chunks(
     }
 }
 
-/// Recompute derived chunk load metrics once per frame.
+/// Recompute derived chunk load metrics once per frame and push to Bevy diagnostics.
 fn update_chunk_load_metrics(
     mut load_metrics: ResMut<ChunkLoadMetrics>,
+    chunk_manager: Res<ChunkManager>,
     time: Res<Time>,
+    mut diagnostics: Diagnostics,
 ) {
+    // Update memory estimate from current chunk count
+    load_metrics.update_memory_estimate(chunk_manager.chunks.len());
+
     load_metrics.refresh(time.elapsed_secs_f64());
+
+    // Push current values into Bevy's DiagnosticsStore
+    diagnostics.add_measurement(&CHUNK_AVG_LOAD_TIME, || {
+        load_metrics.avg_load_time_ms as f64
+    });
+    diagnostics.add_measurement(&CHUNK_PEAK_LOAD_TIME, || {
+        load_metrics.peak_load_time_ms as f64
+    });
+    diagnostics.add_measurement(&CHUNK_LOADS_PER_SEC, || {
+        load_metrics.chunks_per_second as f64
+    });
+    diagnostics.add_measurement(&CHUNK_TOTAL_LOADED, || {
+        load_metrics.total_chunks_loaded as f64
+    });
+    diagnostics.add_measurement(&CHUNK_MEMORY_MB, || {
+        load_metrics.chunk_memory_mb()
+    });
 }
 
 /// Maximum mesh-generation tasks to spawn per frame (prevents GPU upload stutter)
@@ -1473,10 +1593,14 @@ mod tests {
     #[test]
     fn test_chunk_load_metrics_default() {
         let metrics = ChunkLoadMetrics::default();
+        assert!(metrics.enabled);
         assert_eq!(metrics.chunks_per_second, 0.0);
         assert_eq!(metrics.avg_load_time_ms, 0.0);
+        assert_eq!(metrics.peak_load_time_ms, 0.0);
+        assert_eq!(metrics.all_time_peak_load_time_ms, 0.0);
         assert_eq!(metrics.total_chunks_loaded, 0);
         assert_eq!(metrics.chunks_loaded_since_last, 0);
+        assert_eq!(metrics.chunk_memory_bytes, 0);
     }
 
     #[test]
@@ -1539,6 +1663,132 @@ mod tests {
         let start = metrics.pending_start_times.remove(&pos).unwrap();
         assert!(start.elapsed().as_secs_f32() < 1.0);
         assert!(!metrics.pending_start_times.contains_key(&pos));
+    }
+
+    #[test]
+    fn test_chunk_load_metrics_peak_load_time() {
+        let mut metrics = ChunkLoadMetrics::default();
+
+        // Record loads with varying durations
+        metrics.record_load(0.01, 1.0); // 10ms
+        metrics.record_load(0.05, 1.1); // 50ms
+        metrics.record_load(0.20, 1.2); // 200ms — peak
+        metrics.record_load(0.02, 1.3); // 20ms
+
+        metrics.refresh(2.0);
+
+        // Peak in the rolling window should be the 200ms load
+        assert!((metrics.peak_load_time_ms - 200.0).abs() < 0.1);
+        // All-time peak should also be 200ms
+        assert!((metrics.all_time_peak_load_time_ms - 200.0).abs() < 0.1);
+    }
+
+    #[test]
+    fn test_chunk_load_metrics_all_time_peak_survives_window_rollover() {
+        let mut metrics = ChunkLoadMetrics::default();
+
+        // Record a very slow load early
+        metrics.record_load(0.50, 1.0); // 500ms
+        metrics.refresh(2.0);
+        assert!((metrics.all_time_peak_load_time_ms - 500.0).abs() < 0.1);
+
+        // Fill the rolling window with fast loads to push the slow one out
+        for i in 0..METRICS_HISTORY_SIZE + 10 {
+            metrics.record_load(0.001, 10.0 + i as f64);
+        }
+        metrics.refresh(10.0 + METRICS_HISTORY_SIZE as f64 + 10.0);
+
+        // Rolling window peak should be ~1ms (the slow load was evicted)
+        assert!(metrics.peak_load_time_ms < 5.0);
+        // But all-time peak is preserved
+        assert!((metrics.all_time_peak_load_time_ms - 500.0).abs() < 0.1);
+    }
+
+    #[test]
+    fn test_chunk_load_metrics_memory_estimate() {
+        let mut metrics = ChunkLoadMetrics::default();
+        assert_eq!(metrics.chunk_memory_bytes, 0);
+        assert_eq!(metrics.chunk_memory_mb(), 0.0);
+
+        // Simulate 100 loaded chunks
+        metrics.update_memory_estimate(100);
+        let expected_bytes = 100 * CHUNK_VOLUME * std::mem::size_of::<BlockType>();
+        assert_eq!(metrics.chunk_memory_bytes, expected_bytes);
+        assert!(metrics.chunk_memory_mb() > 0.0);
+
+        // Verify calculation: 100 chunks * 4096 blocks * 2 bytes = 819200 bytes
+        assert_eq!(expected_bytes, 100 * 4096 * 2);
+        let expected_mb = expected_bytes as f64 / (1024.0 * 1024.0);
+        assert!((metrics.chunk_memory_mb() - expected_mb).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_chunk_load_metrics_disabled_skips_rolling_window() {
+        let mut metrics = ChunkLoadMetrics::default();
+        metrics.enabled = false;
+
+        // Record loads while disabled
+        for i in 0..10 {
+            metrics.record_load(0.05, i as f64);
+        }
+
+        // total_chunks_loaded always increments
+        assert_eq!(metrics.total_chunks_loaded, 10);
+        // But rolling window data was not collected
+        assert_eq!(metrics.chunks_loaded_since_last, 0);
+        assert!(metrics.load_times.is_empty());
+        assert!(metrics.completion_timestamps.is_empty());
+
+        // Refresh while disabled should be a no-op
+        metrics.refresh(5.0);
+        assert_eq!(metrics.avg_load_time_ms, 0.0);
+        assert_eq!(metrics.peak_load_time_ms, 0.0);
+        assert_eq!(metrics.chunks_per_second, 0.0);
+    }
+
+    #[test]
+    fn test_chunk_load_metrics_enable_after_disable() {
+        let mut metrics = ChunkLoadMetrics::default();
+
+        // Disable and record some loads
+        metrics.enabled = false;
+        for i in 0..5 {
+            metrics.record_load(0.05, i as f64);
+        }
+        assert_eq!(metrics.total_chunks_loaded, 5);
+        assert!(metrics.load_times.is_empty());
+
+        // Re-enable and record more
+        metrics.enabled = true;
+        for i in 5..10 {
+            metrics.record_load(0.03, i as f64);
+        }
+        assert_eq!(metrics.total_chunks_loaded, 10);
+        assert_eq!(metrics.load_times.len(), 5); // Only the enabled ones
+        assert_eq!(metrics.chunks_loaded_since_last, 5);
+
+        metrics.refresh(10.0);
+        // Average should be from the 5 enabled loads (0.03s = 30ms)
+        assert!((metrics.avg_load_time_ms - 30.0).abs() < 0.1);
+    }
+
+    #[test]
+    fn test_diagnostic_paths_are_unique() {
+        // Ensure all diagnostic paths are distinct
+        let paths = [
+            &CHUNK_AVG_LOAD_TIME,
+            &CHUNK_PEAK_LOAD_TIME,
+            &CHUNK_LOADS_PER_SEC,
+            &CHUNK_TOTAL_LOADED,
+            &CHUNK_MEMORY_MB,
+        ];
+        for (i, a) in paths.iter().enumerate() {
+            for (j, b) in paths.iter().enumerate() {
+                if i != j {
+                    assert_ne!(a, b, "Diagnostic paths at index {} and {} must differ", i, j);
+                }
+            }
+        }
     }
 
     #[test]
