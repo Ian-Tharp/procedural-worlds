@@ -313,6 +313,15 @@ fn noise_hash(x: u32, y: u32, seed: u32) -> u8 {
     (n >> 24) as u8
 }
 
+/// Multi-octave noise helper: layers fine, medium, and coarse noise.
+#[inline]
+fn multi_noise(x: u32, y: u32, seed: u32) -> f32 {
+    let n1 = noise_hash(x, y, seed) as f32 / 255.0;
+    let n2 = noise_hash(x / 2, y / 2, seed.wrapping_add(100)) as f32 / 255.0;
+    let n3 = noise_hash(x / 4, y / 4, seed.wrapping_add(200)) as f32 / 255.0;
+    n1 * 0.5 + n2 * 0.3 + n3 * 0.2
+}
+
 /// Generate the RGBA pixel data for a single tile.
 ///
 /// Returns a `Vec<u8>` with `tile_size * tile_size * 4` bytes.
@@ -348,344 +357,573 @@ fn generate_tile_rgba(tile_index: u32, tile_size: u32) -> Vec<u8> {
         data[idx + 3] = a;
     };
 
+    let ts = tile_size;
+
     match tile_index {
-        // ── 0: Stone ────────────────────────────────────
+        // ── 0: Stone — multi-octave grey with crack lines and mineral speckles ──
         0 => {
-            for y in 0..tile_size {
-                for x in 0..tile_size {
-                    let n = noise_hash(x, y, 42) as i16;
+            for y in 0..ts {
+                for x in 0..ts {
+                    let mn = multi_noise(x, y, 42);
                     let base: i16 = 128;
-                    let v = (base + (n - 128) / 6).clamp(0, 255) as u8;
-                    // Subtle cracks: darken where hash mod is small
-                    let crack = noise_hash(x.wrapping_add(5), y.wrapping_add(3), 99);
-                    let v = if crack < 18 { v.saturating_sub(40) } else { v };
-                    set(&mut data, x, y, v, v, v, 255, tile_size);
+                    let v = (base as f32 + (mn - 0.5) * 40.0).clamp(0.0, 255.0) as u8;
+
+                    // Diagonal cracks: 2-3 cracks across the tile
+                    let crack1 = ((x as i32 + y as i32 * 2 - (ts as i32 / 3)).unsigned_abs() % ts) as u32;
+                    let crack2 = ((x as i32 * 2 - y as i32 + (ts as i32 * 2 / 3)).unsigned_abs() % ts) as u32;
+                    let crack_noise = noise_hash(x, y, 99) as u32;
+                    let on_crack1 = crack1 < 2 + (crack_noise % 2);
+                    let on_crack2 = crack2 < 2 + ((crack_noise / 4) % 2);
+                    let v = if on_crack1 || on_crack2 {
+                        v.saturating_sub(35 + (noise_hash(x, y, 101) % 15))
+                    } else {
+                        v
+                    };
+
+                    // Mineral speckles: occasional brighter pixels
+                    let speck = noise_hash(x.wrapping_add(7), y.wrapping_add(3), 105);
+                    let v = if speck < 8 { v.saturating_add(30) } else { v };
+
+                    set(&mut data, x, y, v, v, v, 255, ts);
                 }
             }
         }
 
-        // ── 1: Dirt ─────────────────────────────────────
+        // ── 1: Dirt — multi-scale noise with pebbles and organic patches ──
         1 => {
-            for y in 0..tile_size {
-                for x in 0..tile_size {
-                    let n = noise_hash(x, y, 77) as i16;
-                    let r = (115 + (n - 128) / 8).clamp(0, 255) as u8;
-                    let g = (82 + (n - 128) / 10).clamp(0, 255) as u8;
-                    let b = (56 + (n - 128) / 12).clamp(0, 255) as u8;
-                    // Speckles
-                    let speck = noise_hash(x, y, 200);
-                    let (r, g, b) = if speck < 20 {
-                        (r.saturating_add(25), g.saturating_add(15), b.saturating_add(10))
+            for y in 0..ts {
+                for x in 0..ts {
+                    let mn = multi_noise(x, y, 77);
+                    let variation = (mn - 0.5) * 30.0;
+                    let mut r = (115.0 + variation).clamp(0.0, 255.0);
+                    let mut g = (82.0 + variation * 0.8).clamp(0.0, 255.0);
+                    let mut b = (56.0 + variation * 0.6).clamp(0.0, 255.0);
+
+                    // Subtle horizontal layering
+                    let layer_noise = noise_hash(x / 2, y, 210) as f32 / 255.0;
+                    let layer_shift = ((y as f32 * 8.0 / ts as f32).sin() * 3.0) * layer_noise;
+                    r += layer_shift;
+                    g += layer_shift * 0.7;
+
+                    // Pebble dots (3-4px clusters, lighter)
+                    let peb = noise_hash(x / 3, y / 3, 200);
+                    let peb_fine = noise_hash(x, y, 201);
+                    if peb < 25 && peb_fine < 180 {
+                        r += 20.0;
+                        g += 14.0;
+                        b += 8.0;
+                    }
+
+                    // Dark organic patches
+                    let org = noise_hash(x / 4, y / 4, 215);
+                    if org < 20 {
+                        r -= 12.0;
+                        g -= 8.0;
+                        b -= 5.0;
+                    }
+
+                    set(&mut data, x, y, r.clamp(0.0, 255.0) as u8, g.clamp(0.0, 255.0) as u8, b.clamp(0.0, 255.0) as u8, 255, ts);
+                }
+            }
+        }
+
+        // ── 2: Grass top — multi-octave green with blade streaks and spots ──
+        2 => {
+            for y in 0..ts {
+                for x in 0..ts {
+                    let mn = multi_noise(x, y, 123);
+                    let mut r = (90.0 + (mn - 0.5) * 25.0).clamp(0.0, 255.0);
+                    let mut g = (155.0 + (mn - 0.5) * 35.0).clamp(0.0, 255.0);
+                    let mut b = (65.0 + (mn - 0.5) * 18.0).clamp(0.0, 255.0);
+
+                    // Darker blade-like streaks (thin diagonal lines)
+                    let blade_hash = noise_hash(x, y / 2, 130);
+                    let blade_dir = noise_hash(x / 3, y / 3, 131);
+                    if blade_hash < 22 {
+                        let dark = if blade_dir < 128 { 15.0 } else { 20.0 };
+                        r -= dark;
+                        g -= dark * 0.5;
+                        b -= dark;
+                    }
+
+                    // Occasional yellow/brown spots
+                    let spot = noise_hash(x / 4, y / 4, 140);
+                    let spot_fine = noise_hash(x, y, 141);
+                    if spot < 12 && spot_fine < 100 {
+                        r += 30.0;
+                        g -= 15.0;
+                        b -= 20.0;
+                    }
+
+                    // Bright green highlights for freshness
+                    let highlight = noise_hash(x.wrapping_add(5), y.wrapping_add(9), 145);
+                    if highlight < 10 {
+                        g += 20.0;
+                        r -= 5.0;
+                    }
+
+                    set(&mut data, x, y, r.clamp(0.0, 255.0) as u8, g.clamp(0.0, 255.0) as u8, b.clamp(0.0, 255.0) as u8, 255, ts);
+                }
+            }
+        }
+
+        // ── 3: Grass side — sharp green-top / dirt-bottom, Minecraft-style ──
+        3 => {
+            let green_height = ts * 3 / 16; // ~12 rows at 64px
+            let transition_width = ts * 3 / 32; // ~6 rows transition zone
+
+            for y in 0..ts {
+                for x in 0..ts {
+                    let mn = multi_noise(x, y, 155);
+
+                    // Per-column jagged transition: ±3 pixel variation
+                    let edge_hash = noise_hash(x, 0, 175) as i32;
+                    let jag = (edge_hash % 7) - 3; // -3 to +3
+                    let transition_row = (green_height as i32 + jag).max(1) as u32;
+
+                    if y < transition_row {
+                        // Green section with blade-like vertical streaks
+                        let mut r = (90.0 + (mn - 0.5) * 20.0).clamp(0.0, 255.0);
+                        let mut g = (155.0 + (mn - 0.5) * 30.0).clamp(0.0, 255.0);
+                        let b = (65.0 + (mn - 0.5) * 15.0).clamp(0.0, 255.0);
+
+                        // Vertical blade streaks hanging down
+                        let blade = noise_hash(x, 0, 180);
+                        if blade < 60 && y > transition_row / 2 {
+                            g -= 12.0;
+                            r -= 5.0;
+                        }
+
+                        set(&mut data, x, y, r.clamp(0.0, 255.0) as u8, g.clamp(0.0, 255.0) as u8, b.clamp(0.0, 255.0) as u8, 255, ts);
+                    } else if y < transition_row + transition_width {
+                        // Transition zone: blend from grass to dirt
+                        let t = (y - transition_row) as f32 / transition_width as f32;
+                        let gr = 90.0 + (mn - 0.5) * 20.0;
+                        let gg = 155.0 + (mn - 0.5) * 30.0;
+                        let gb = 65.0 + (mn - 0.5) * 15.0;
+                        let dr = 115.0 + (mn - 0.5) * 25.0;
+                        let dg = 82.0 + (mn - 0.5) * 20.0;
+                        let db = 56.0 + (mn - 0.5) * 15.0;
+                        let r = (gr * (1.0 - t) + dr * t).clamp(0.0, 255.0) as u8;
+                        let g = (gg * (1.0 - t) + dg * t).clamp(0.0, 255.0) as u8;
+                        let b = (gb * (1.0 - t) + db * t).clamp(0.0, 255.0) as u8;
+                        set(&mut data, x, y, r, g, b, 255, ts);
+                    } else {
+                        // Dirt section (matching tile 1 look)
+                        let variation = (mn - 0.5) * 30.0;
+                        let mut r = 115.0 + variation;
+                        let mut g = 82.0 + variation * 0.8;
+                        let mut b = 56.0 + variation * 0.6;
+
+                        // Pebble dots
+                        let peb = noise_hash(x / 3, y / 3, 200);
+                        let peb_fine = noise_hash(x, y, 201);
+                        if peb < 25 && peb_fine < 180 {
+                            r += 18.0;
+                            g += 12.0;
+                            b += 7.0;
+                        }
+
+                        set(&mut data, x, y, r.clamp(0.0, 255.0) as u8, g.clamp(0.0, 255.0) as u8, b.clamp(0.0, 255.0) as u8, 255, ts);
+                    }
+                }
+            }
+        }
+
+        // ── 4: Sand — multi-scale grain with diagonal ripple pattern ──
+        4 => {
+            for y in 0..ts {
+                for x in 0..ts {
+                    let mn = multi_noise(x, y, 210);
+
+                    // Diagonal ripple pattern
+                    let ripple = ((x as f32 * 0.7 + y as f32 * 0.3) * 6.2832 / ts as f32 * 3.0).sin() * 0.5 + 0.5;
+
+                    let r = (230.0 + (mn - 0.5) * 20.0 + ripple * 8.0).clamp(0.0, 255.0);
+                    let g = (217.0 + (mn - 0.5) * 18.0 + ripple * 6.0).clamp(0.0, 255.0);
+                    let b = (153.0 + (mn - 0.5) * 14.0 + ripple * 4.0).clamp(0.0, 255.0);
+
+                    // Granules: scattered lighter and darker grains
+                    let grain = noise_hash(x, y, 212);
+                    let (r, g, b) = if grain < 15 {
+                        ((r + 12.0).min(255.0), (g + 10.0).min(255.0), (b + 7.0).min(255.0))
+                    } else if grain > 240 {
+                        ((r - 10.0).max(0.0), (g - 8.0).max(0.0), (b - 6.0).max(0.0))
                     } else {
                         (r, g, b)
                     };
-                    set(&mut data, x, y, r, g, b, 255, tile_size);
+
+                    set(&mut data, x, y, r as u8, g as u8, b as u8, 255, ts);
                 }
             }
         }
 
-        // ── 2: Grass top ────────────────────────────────
-        2 => {
-            for y in 0..tile_size {
-                for x in 0..tile_size {
-                    let n = noise_hash(x, y, 123) as i16;
-                    let r = (90 + (n - 128) / 8).clamp(0, 255) as u8;
-                    let g = (155 + (n - 128) / 5).clamp(0, 255) as u8;
-                    let b = (65 + (n - 128) / 10).clamp(0, 255) as u8;
-                    set(&mut data, x, y, r, g, b, 255, tile_size);
-                }
-            }
-        }
-
-        // ── 3: Grass side (green strip at top, dirt below — Minecraft-style) ─
-        3 => {
-            // Transition row: nominally row 3 (0-indexed), with per-pixel noise
-            // shifting it ±1 pixel for a natural jagged edge.
-            for y in 0..tile_size {
-                for x in 0..tile_size {
-                    let n = noise_hash(x, y, 150) as i16;
-                    // Per-column transition noise: shift the boundary ±1 row
-                    let edge_noise = noise_hash(x, 0, 175);
-                    let transition_row = if edge_noise < 85 {
-                        2 // one pixel higher
-                    } else if edge_noise > 170 {
-                        4 // one pixel lower
-                    } else {
-                        3 // default
-                    };
-
-                    if y < transition_row {
-                        // Top rows: grass green (matching tile 2 palette)
-                        let r = (90 + (n - 128) / 8).clamp(0, 255) as u8;
-                        let g = (155 + (n - 128) / 5).clamp(0, 255) as u8;
-                        let b = (65 + (n - 128) / 10).clamp(0, 255) as u8;
-                        set(&mut data, x, y, r, g, b, 255, tile_size);
-                    } else if y == transition_row {
-                        // Transition pixel: blend between grass and dirt
-                        let r = (102 + (n - 128) / 10).clamp(0, 255) as u8;
-                        let g = (118 + (n - 128) / 8).clamp(0, 255) as u8;
-                        let b = (60 + (n - 128) / 12).clamp(0, 255) as u8;
-                        set(&mut data, x, y, r, g, b, 255, tile_size);
-                    } else {
-                        // Remaining rows: dirt brown (matching tile 1 palette)
-                        let r = (115 + (n - 128) / 8).clamp(0, 255) as u8;
-                        let g = (82 + (n - 128) / 10).clamp(0, 255) as u8;
-                        let b = (56 + (n - 128) / 12).clamp(0, 255) as u8;
-                        set(&mut data, x, y, r, g, b, 255, tile_size);
-                    }
-                }
-            }
-        }
-
-        // ── 4: Sand ─────────────────────────────────────
-        4 => {
-            for y in 0..tile_size {
-                for x in 0..tile_size {
-                    let n = noise_hash(x, y, 210) as i16;
-                    let r = (230 + (n - 128) / 8).clamp(0, 255) as u8;
-                    let g = (217 + (n - 128) / 8).clamp(0, 255) as u8;
-                    let b = (153 + (n - 128) / 8).clamp(0, 255) as u8;
-                    set(&mut data, x, y, r, g, b, 255, tile_size);
-                }
-            }
-        }
-
-        // ── 5: Water ────────────────────────────────────
+        // ── 5: Water — caustic-like pattern with depth variation ──
         5 => {
-            for y in 0..tile_size {
-                for x in 0..tile_size {
-                    let n = noise_hash(x, y, 55) as i16;
-                    let r = (51 + (n - 128) / 12).clamp(0, 255) as u8;
-                    let g = (102 + (n - 128) / 10).clamp(0, 255) as u8;
-                    let b = (204 + (n - 128) / 8).clamp(0, 255) as u8;
-                    set(&mut data, x, y, r, g, b, 204, tile_size); // semi-transparent
+            for y in 0..ts {
+                for x in 0..ts {
+                    let mn = multi_noise(x, y, 55);
+
+                    // Caustic-like overlapping circles
+                    let cx1 = ts as f32 * 0.3;
+                    let cy1 = ts as f32 * 0.4;
+                    let cx2 = ts as f32 * 0.7;
+                    let cy2 = ts as f32 * 0.6;
+                    let d1 = ((x as f32 - cx1).powi(2) + (y as f32 - cy1).powi(2)).sqrt();
+                    let d2 = ((x as f32 - cx2).powi(2) + (y as f32 - cy2).powi(2)).sqrt();
+                    let wave1 = (d1 * 6.2832 / (ts as f32 * 0.4)).sin() * 0.5 + 0.5;
+                    let wave2 = (d2 * 6.2832 / (ts as f32 * 0.35)).sin() * 0.5 + 0.5;
+                    let caustic = (wave1 + wave2) * 0.5;
+
+                    let r = (51.0 + (mn - 0.5) * 15.0 + caustic * 12.0).clamp(0.0, 255.0) as u8;
+                    let g = (102.0 + (mn - 0.5) * 20.0 + caustic * 15.0).clamp(0.0, 255.0) as u8;
+                    let b = (204.0 + (mn - 0.5) * 18.0 + caustic * 8.0).clamp(0.0, 255.0) as u8;
+                    set(&mut data, x, y, r, g, b, 204, ts);
                 }
             }
         }
 
-        // ── 6: Wood top/bottom (rings) ──────────────────
+        // ── 6: Wood top/bottom — detailed rings with off-center and grain ──
         6 => {
-            let cx = tile_size as f32 / 2.0;
-            let cy = tile_size as f32 / 2.0;
-            for y in 0..tile_size {
-                for x in 0..tile_size {
+            let cx = ts as f32 * 0.45; // slightly off-center
+            let cy = ts as f32 * 0.52;
+            for y in 0..ts {
+                for x in 0..ts {
                     let dx = x as f32 - cx;
                     let dy = y as f32 - cy;
                     let dist = (dx * dx + dy * dy).sqrt();
-                    let ring = ((dist * 1.5) as u32) % 2;
-                    let n = noise_hash(x, y, 170) as i16;
-                    let (r, g, b) = if ring == 0 {
-                        (
-                            (160 + (n - 128) / 10).clamp(0, 255) as u8,
-                            (120 + (n - 128) / 12).clamp(0, 255) as u8,
-                            (70 + (n - 128) / 14).clamp(0, 255) as u8,
-                        )
-                    } else {
-                        (
-                            (130 + (n - 128) / 10).clamp(0, 255) as u8,
-                            (90 + (n - 128) / 12).clamp(0, 255) as u8,
-                            (50 + (n - 128) / 14).clamp(0, 255) as u8,
-                        )
-                    };
-                    set(&mut data, x, y, r, g, b, 255, tile_size);
+                    let mn = multi_noise(x, y, 170);
+
+                    // Ring spacing with variation
+                    let ring_freq = 0.8 + mn * 0.4; // varying ring density
+                    let ring_val = ((dist * ring_freq) * 3.14159 / 3.0).sin() * 0.5 + 0.5;
+
+                    let r = (130.0 + ring_val * 35.0 + (mn - 0.5) * 15.0).clamp(0.0, 255.0) as u8;
+                    let g = (90.0 + ring_val * 30.0 + (mn - 0.5) * 12.0).clamp(0.0, 255.0) as u8;
+                    let b = (50.0 + ring_val * 20.0 + (mn - 0.5) * 8.0).clamp(0.0, 255.0) as u8;
+
+                    set(&mut data, x, y, r, g, b, 255, ts);
                 }
             }
         }
 
-        // ── 7: Wood side / bark ─────────────────────────
+        // ── 7: Wood bark — vertical strips with horizontal cracks and grain ──
         7 => {
-            for y in 0..tile_size {
-                for x in 0..tile_size {
-                    let n = noise_hash(x, y, 180) as i16;
-                    // Vertical line pattern
-                    let stripe = ((x as i16 * 3 / tile_size as i16) % 2) as i16;
-                    let r = (128 + stripe * 15 + (n - 128) / 10).clamp(0, 255) as u8;
-                    let g = (89 + stripe * 10 + (n - 128) / 12).clamp(0, 255) as u8;
-                    let b = (51 + stripe * 5 + (n - 128) / 14).clamp(0, 255) as u8;
-                    set(&mut data, x, y, r, g, b, 255, tile_size);
+            for y in 0..ts {
+                for x in 0..ts {
+                    let mn = multi_noise(x, y, 180);
+
+                    // Vertical bark strips (5-6 strips)
+                    let strip_freq = 5.0;
+                    let strip_val = (x as f32 * strip_freq * 6.2832 / ts as f32).sin() * 0.5 + 0.5;
+                    let depth = strip_val * 20.0;
+
+                    let mut r = (128.0 + depth + (mn - 0.5) * 18.0).clamp(0.0, 255.0);
+                    let mut g = (89.0 + depth * 0.7 + (mn - 0.5) * 14.0).clamp(0.0, 255.0);
+                    let mut b = (51.0 + depth * 0.4 + (mn - 0.5) * 10.0).clamp(0.0, 255.0);
+
+                    // Horizontal cracks between strips
+                    let crack_h = noise_hash(x / 4, y, 185);
+                    if crack_h < 12 && strip_val < 0.3 {
+                        r -= 20.0;
+                        g -= 15.0;
+                        b -= 10.0;
+                    }
+
+                    // Fine vertical grain detail
+                    let grain = noise_hash(x, y, 188) as f32 / 255.0;
+                    r += (grain - 0.5) * 6.0;
+                    g += (grain - 0.5) * 4.0;
+
+                    set(&mut data, x, y, r.clamp(0.0, 255.0) as u8, g.clamp(0.0, 255.0) as u8, b.clamp(0.0, 255.0) as u8, 255, ts);
                 }
             }
         }
 
-        // ── 8: Leaves ───────────────────────────────────
+        // ── 8: Leaves — varied shapes with gaps and color clusters ──
         8 => {
-            for y in 0..tile_size {
-                for x in 0..tile_size {
-                    let n = noise_hash(x, y, 88);
-                    // "Holes" — make some pixels much darker (simulating see-through)
-                    let hole = noise_hash(x.wrapping_add(11), y.wrapping_add(7), 33);
-                    if hole < 35 {
-                        set(&mut data, x, y, 30, 60, 20, 200, tile_size);
+            for y in 0..ts {
+                for x in 0..ts {
+                    let mn = multi_noise(x, y, 88);
+
+                    // Gaps/holes at medium scale
+                    let hole = noise_hash(x / 3, y / 3, 33);
+                    let hole_fine = noise_hash(x, y, 34);
+
+                    if hole < 20 && hole_fine < 120 {
+                        // Dark gap / see-through
+                        set(&mut data, x, y, 30, 60, 20, 180, ts);
                     } else {
-                        let n = n as i16;
-                        let r = (51 + (n - 128) / 8).clamp(0, 255) as u8;
-                        let g = (128 + (n - 128) / 5).clamp(0, 255) as u8;
-                        let b = (38 + (n - 128) / 10).clamp(0, 255) as u8;
-                        set(&mut data, x, y, r, g, b, 230, tile_size);
+                        // Color clusters for visual interest
+                        let cluster = noise_hash(x / 4, y / 4, 90) as f32 / 255.0;
+                        let brightness = if cluster < 0.3 { -12.0 } else if cluster > 0.7 { 12.0 } else { 0.0 };
+
+                        let r = (51.0 + (mn - 0.5) * 28.0 + brightness).clamp(0.0, 255.0) as u8;
+                        let g = (128.0 + (mn - 0.5) * 40.0 + brightness).clamp(0.0, 255.0) as u8;
+                        let b = (38.0 + (mn - 0.5) * 18.0 + brightness * 0.5).clamp(0.0, 255.0) as u8;
+                        set(&mut data, x, y, r, g, b, 225, ts);
                     }
                 }
             }
         }
 
-        // ── 9: Sandstone ────────────────────────────────
+        // ── 9: Sandstone — horizontal stratification layers ──
         9 => {
-            for y in 0..tile_size {
-                for x in 0..tile_size {
-                    let n = noise_hash(x, y, 250) as i16;
-                    // Horizontal layers
-                    let layer = (y * 4 / tile_size) % 2;
-                    let base_r: i16 = if layer == 0 { 210 } else { 195 };
-                    let base_g: i16 = if layer == 0 { 186 } else { 175 };
-                    let base_b: i16 = if layer == 0 { 135 } else { 128 };
-                    let r = (base_r + (n - 128) / 10).clamp(0, 255) as u8;
-                    let g = (base_g + (n - 128) / 10).clamp(0, 255) as u8;
-                    let b = (base_b + (n - 128) / 10).clamp(0, 255) as u8;
-                    set(&mut data, x, y, r, g, b, 255, tile_size);
+            for y in 0..ts {
+                for x in 0..ts {
+                    let mn = multi_noise(x, y, 250);
+
+                    // Stratification layers of varying thickness (2-6px)
+                    // Use cumulative layer boundaries generated from noise
+                    let layer_seed = noise_hash(0, y / 3, 255) as f32 / 255.0;
+                    let layer_band = ((y as f32 * 8.0 / ts as f32 + layer_seed * 2.0) as u32) % 3;
+
+                    let (base_r, base_g, base_b): (f32, f32, f32) = match layer_band {
+                        0 => (210.0, 186.0, 135.0), // cream
+                        1 => (200.0, 178.0, 130.0), // tan
+                        _ => (195.0, 172.0, 125.0), // darker tan
+                    };
+
+                    // Fine noise within each layer
+                    let r = (base_r + (mn - 0.5) * 16.0).clamp(0.0, 255.0) as u8;
+                    let g = (base_g + (mn - 0.5) * 14.0).clamp(0.0, 255.0) as u8;
+                    let b = (base_b + (mn - 0.5) * 12.0).clamp(0.0, 255.0) as u8;
+                    set(&mut data, x, y, r, g, b, 255, ts);
                 }
             }
         }
 
-        // ── 10: Snow ────────────────────────────────────
+        // ── 10: Snow — subtle blue shadows, sparkle pixels, crystalline ──
         10 => {
-            for y in 0..tile_size {
-                for x in 0..tile_size {
-                    let n = noise_hash(x, y, 300) as i16;
-                    let r = (242 + (n - 128) / 20).clamp(0, 255) as u8;
-                    let g = (242 + (n - 128) / 20).clamp(0, 255) as u8;
-                    let b = (248 + (n - 128) / 25).clamp(0, 255) as u8;
-                    set(&mut data, x, y, r, g, b, 255, tile_size);
+            for y in 0..ts {
+                for x in 0..ts {
+                    let mn = multi_noise(x, y, 300);
+
+                    // Subtle blue shadow pattern
+                    let shadow = noise_hash(x / 4, y / 4, 305) as f32 / 255.0;
+                    let blue_shift = shadow * 4.0;
+
+                    let mut r = (242.0 + (mn - 0.5) * 8.0 - blue_shift).clamp(0.0, 255.0);
+                    let mut g = (242.0 + (mn - 0.5) * 8.0 - blue_shift * 0.5).clamp(0.0, 255.0);
+                    let mut b = (248.0 + (mn - 0.5) * 6.0).clamp(0.0, 255.0);
+
+                    // Sparkle pixels (very bright)
+                    let sparkle = noise_hash(x.wrapping_add(13), y.wrapping_add(29), 310);
+                    if sparkle < 4 {
+                        r = 255.0;
+                        g = 255.0;
+                        b = 255.0;
+                    }
+
+                    // Crystalline pattern (barely visible)
+                    let crystal = ((x as f32 * 2.0 + y as f32).sin() * 0.5 + 0.5) * 2.0;
+                    b = (b + crystal).min(255.0);
+
+                    set(&mut data, x, y, r as u8, g as u8, b as u8, 255, ts);
                 }
             }
         }
 
-        // ── 11: Ice ─────────────────────────────────────
+        // ── 11: Ice — crack lines, semi-transparent, blue variation ──
         11 => {
-            for y in 0..tile_size {
-                for x in 0..tile_size {
-                    let n = noise_hash(x, y, 310) as i16;
-                    let r = (178 + (n - 128) / 10).clamp(0, 255) as u8;
-                    let g = (217 + (n - 128) / 10).clamp(0, 255) as u8;
-                    let b = (242 + (n - 128) / 12).clamp(0, 255) as u8;
-                    set(&mut data, x, y, r, g, b, 230, tile_size);
+            for y in 0..ts {
+                for x in 0..ts {
+                    let mn = multi_noise(x, y, 310);
+
+                    let mut r = (178.0 + (mn - 0.5) * 20.0).clamp(0.0, 255.0);
+                    let mut g = (217.0 + (mn - 0.5) * 18.0).clamp(0.0, 255.0);
+                    let mut b = (242.0 + (mn - 0.5) * 10.0).clamp(0.0, 255.0);
+
+                    // Crack lines
+                    let crack_a = ((x as i32 * 3 + y as i32 - (ts as i32 / 2)).unsigned_abs() % ts) as u32;
+                    let crack_b = ((x as i32 - y as i32 * 2 + (ts as i32 / 3)).unsigned_abs() % ts) as u32;
+                    let crack_n = noise_hash(x, y, 315);
+                    if crack_a < 2 + (crack_n as u32 % 2) || crack_b < 2 {
+                        r -= 25.0;
+                        g -= 15.0;
+                        b -= 8.0;
+                    }
+
+                    set(&mut data, x, y, r.clamp(0.0, 255.0) as u8, g.clamp(0.0, 255.0) as u8, b.clamp(0.0, 255.0) as u8, 220, ts);
                 }
             }
         }
 
-        // ── 12: Obsidian ────────────────────────────────
+        // ── 12: Obsidian — deep purple-black with glossy streaks ──
         12 => {
-            for y in 0..tile_size {
-                for x in 0..tile_size {
-                    let n = noise_hash(x, y, 320) as i16;
-                    let r = (25 + (n - 128) / 14).clamp(0, 255) as u8;
-                    let g = (20 + (n - 128) / 16).clamp(0, 255) as u8;
-                    let b = (31 + (n - 128) / 12).clamp(0, 255) as u8;
-                    set(&mut data, x, y, r, g, b, 255, tile_size);
+            for y in 0..ts {
+                for x in 0..ts {
+                    let mn = multi_noise(x, y, 320);
+
+                    let mut r = (25.0 + (mn - 0.5) * 12.0).clamp(0.0, 255.0);
+                    let mut g = (20.0 + (mn - 0.5) * 10.0).clamp(0.0, 255.0);
+                    let mut b = (31.0 + (mn - 0.5) * 14.0).clamp(0.0, 255.0);
+
+                    // Glossy diagonal streaks
+                    let streak = ((x as f32 * 0.8 + y as f32 * 0.6) * 4.0 / ts as f32 * 6.2832).sin();
+                    if streak > 0.85 {
+                        r += 8.0;
+                        g += 5.0;
+                        b += 12.0;
+                    }
+
+                    // Subtle purple highlights
+                    let highlight = noise_hash(x / 3, y / 3, 325);
+                    if highlight < 10 {
+                        r += 6.0;
+                        b += 10.0;
+                    }
+
+                    set(&mut data, x, y, r.clamp(0.0, 255.0) as u8, g.clamp(0.0, 255.0) as u8, b.clamp(0.0, 255.0) as u8, 255, ts);
                 }
             }
         }
 
-        // ── 13: VolcanicRock ────────────────────────────
+        // ── 13: VolcanicRock — dark base with connected orange/red vein network ──
         13 => {
-            for y in 0..tile_size {
-                for x in 0..tile_size {
-                    let n = noise_hash(x, y, 330) as i16;
-                    let base_r: i16 = 77;
-                    let base_g: i16 = 46;
-                    let base_b: i16 = 38;
-                    // Orange/red veins
-                    let vein = noise_hash(x.wrapping_add(3), y.wrapping_add(9), 335);
-                    let (r, g, b) = if vein < 22 {
+            for y in 0..ts {
+                for x in 0..ts {
+                    let mn = multi_noise(x, y, 330);
+
+                    // Connected vein network using distance field approach
+                    // Multiple vein lines that branch
+                    let vein_d1 = ((x as i32 * 2 + y as i32 - (ts as i32)).unsigned_abs() % ts) as f32;
+                    let vein_d2 = ((x as i32 - y as i32 * 2 + (ts as i32 * 3 / 4)).unsigned_abs() % ts) as f32;
+                    let vein_d3 = ((x as i32 + y as i32 * 3 / 2 - (ts as i32 / 2)).unsigned_abs() % ts) as f32;
+                    let vein_noise = noise_hash(x / 2, y / 2, 335) as f32 / 255.0;
+                    let vein_threshold = 3.0 + vein_noise * 2.0;
+                    let is_vein = vein_d1 < vein_threshold || vein_d2 < vein_threshold || vein_d3 < vein_threshold;
+
+                    let (r, g, b) = if is_vein {
+                        // Orange/red vein
+                        let glow = 1.0 - (vein_d1.min(vein_d2).min(vein_d3) / vein_threshold).min(1.0);
                         (
-                            (200 + (n - 128) / 10).clamp(0, 255) as u8,
-                            (80 + (n - 128) / 12).clamp(0, 255) as u8,
-                            (20 + (n - 128) / 14).clamp(0, 255) as u8,
+                            (180.0 + glow * 40.0 + (mn - 0.5) * 15.0).clamp(0.0, 255.0) as u8,
+                            (65.0 + glow * 25.0 + (mn - 0.5) * 10.0).clamp(0.0, 255.0) as u8,
+                            (15.0 + glow * 10.0 + (mn - 0.5) * 8.0).clamp(0.0, 255.0) as u8,
                         )
                     } else {
+                        // Ashy dark base
                         (
-                            (base_r + (n - 128) / 10).clamp(0, 255) as u8,
-                            (base_g + (n - 128) / 12).clamp(0, 255) as u8,
-                            (base_b + (n - 128) / 14).clamp(0, 255) as u8,
+                            (77.0 + (mn - 0.5) * 18.0).clamp(0.0, 255.0) as u8,
+                            (46.0 + (mn - 0.5) * 14.0).clamp(0.0, 255.0) as u8,
+                            (38.0 + (mn - 0.5) * 12.0).clamp(0.0, 255.0) as u8,
                         )
                     };
-                    set(&mut data, x, y, r, g, b, 255, tile_size);
+                    set(&mut data, x, y, r, g, b, 255, ts);
                 }
             }
         }
 
-        // ── 14: Cactus top ──────────────────────────────
+        // ── 14: Cactus top — star/cross pattern with rim and thorns ──
         14 => {
-            let cx = tile_size as f32 / 2.0;
-            let cy = tile_size as f32 / 2.0;
-            for y in 0..tile_size {
-                for x in 0..tile_size {
-                    let n = noise_hash(x, y, 340) as i16;
-                    let dx = (x as f32 - cx).abs();
-                    let dy = (y as f32 - cy).abs();
-                    let dist = dx.max(dy);
-                    let rim = dist > (tile_size as f32 / 2.0 - 2.0);
-                    let (r, g, b) = if rim {
+            let cx = ts as f32 / 2.0;
+            let cy = ts as f32 / 2.0;
+            let rim_dist = ts as f32 / 2.0 - (ts as f32 * 3.0 / 32.0);
+
+            for y in 0..ts {
+                for x in 0..ts {
+                    let mn = multi_noise(x, y, 340);
+                    let dx = x as f32 - cx;
+                    let dy = y as f32 - cy;
+                    let dist = (dx * dx + dy * dy).sqrt();
+                    let chebyshev = dx.abs().max(dy.abs());
+
+                    // Star/cross pattern: brighter along axes
+                    let cross_dist = dx.abs().min(dy.abs());
+                    let on_cross = cross_dist < ts as f32 / 10.0;
+
+                    // Rim detection
+                    let on_rim = chebyshev > rim_dist;
+
+                    let (mut r, mut g, mut b) = if on_rim {
+                        // Darker rim
                         (
-                            (50 + (n - 128) / 12).clamp(0, 255) as u8,
-                            (110 + (n - 128) / 10).clamp(0, 255) as u8,
-                            (40 + (n - 128) / 14).clamp(0, 255) as u8,
+                            50.0 + (mn - 0.5) * 12.0,
+                            110.0 + (mn - 0.5) * 16.0,
+                            40.0 + (mn - 0.5) * 10.0,
+                        )
+                    } else if on_cross {
+                        // Cross/star pattern — slightly lighter center line
+                        (
+                            82.0 + (mn - 0.5) * 14.0,
+                            155.0 + (mn - 0.5) * 18.0,
+                            65.0 + (mn - 0.5) * 12.0,
                         )
                     } else {
+                        // Standard cactus green
                         (
-                            (75 + (n - 128) / 10).clamp(0, 255) as u8,
-                            (145 + (n - 128) / 8).clamp(0, 255) as u8,
-                            (60 + (n - 128) / 12).clamp(0, 255) as u8,
+                            75.0 + (mn - 0.5) * 14.0,
+                            145.0 + (mn - 0.5) * 20.0,
+                            60.0 + (mn - 0.5) * 12.0,
                         )
                     };
-                    set(&mut data, x, y, r, g, b, 255, tile_size);
+
+                    // Thorn dots as bright specks
+                    let thorn = noise_hash(x.wrapping_mul(7), y.wrapping_mul(11), 345);
+                    if thorn < 5 && dist < rim_dist && dist > ts as f32 * 0.15 {
+                        r = 200.0;
+                        g = 210.0;
+                        b = 170.0;
+                    }
+
+                    set(&mut data, x, y, r.clamp(0.0, 255.0) as u8, g.clamp(0.0, 255.0) as u8, b.clamp(0.0, 255.0) as u8, 255, ts);
                 }
             }
         }
 
-        // ── 15: Cactus side ─────────────────────────────
+        // ── 15: Cactus side — vertical ribs with thorn dots ──
         15 => {
-            for y in 0..tile_size {
-                for x in 0..tile_size {
-                    let n = noise_hash(x, y, 350) as i16;
-                    // Vertical stripes
-                    let stripe = (x * 4 / tile_size) % 2;
-                    let (r, g, b) = if stripe == 0 {
-                        (
-                            (64 + (n - 128) / 10).clamp(0, 255) as u8,
-                            (140 + (n - 128) / 8).clamp(0, 255) as u8,
-                            (51 + (n - 128) / 12).clamp(0, 255) as u8,
-                        )
-                    } else {
-                        (
-                            (55 + (n - 128) / 10).clamp(0, 255) as u8,
-                            (120 + (n - 128) / 8).clamp(0, 255) as u8,
-                            (45 + (n - 128) / 12).clamp(0, 255) as u8,
-                        )
-                    };
-                    set(&mut data, x, y, r, g, b, 255, tile_size);
+            let num_ribs = 4u32;
+            for y in 0..ts {
+                for x in 0..ts {
+                    let mn = multi_noise(x, y, 350);
+
+                    // Vertical ribs: sinusoidal pattern for raised sections
+                    let rib_phase = (x as f32 * num_ribs as f32 * 6.2832 / ts as f32).sin();
+                    let on_rib_edge = rib_phase.abs() < 0.3;
+                    let rib_bright = (rib_phase * 0.5 + 0.5) * 12.0;
+
+                    let mut r = (60.0 + rib_bright + (mn - 0.5) * 16.0).clamp(0.0, 255.0);
+                    let mut g = (132.0 + rib_bright * 1.5 + (mn - 0.5) * 22.0).clamp(0.0, 255.0);
+                    let mut b = (48.0 + rib_bright * 0.6 + (mn - 0.5) * 12.0).clamp(0.0, 255.0);
+
+                    // Thorn dots along rib edges
+                    let thorn = noise_hash(x, y.wrapping_mul(5), 355);
+                    if on_rib_edge && thorn < 8 && (y % (ts / 8)) < 2 {
+                        r = 195.0;
+                        g = 200.0;
+                        b = 160.0;
+                    }
+
+                    set(&mut data, x, y, r.clamp(0.0, 255.0) as u8, g.clamp(0.0, 255.0) as u8, b.clamp(0.0, 255.0) as u8, 255, ts);
                 }
             }
         }
 
-        // ── 16: SandDunes ───────────────────────────────
+        // ── 16: SandDunes — diagonal wind ripple pattern ──
         16 => {
-            for y in 0..tile_size {
-                for x in 0..tile_size {
-                    let n = noise_hash(x, y, 360) as i16;
-                    // Wave pattern via sin-like approximation
-                    let wave = ((x as f32 + y as f32 * 0.5).sin() * 0.5 + 0.5) * 20.0;
-                    let r = (217 + wave as i16 + (n - 128) / 12).clamp(0, 255) as u8;
-                    let g = (199 + wave as i16 + (n - 128) / 12).clamp(0, 255) as u8;
-                    let b = (140 + wave as i16 / 2 + (n - 128) / 14).clamp(0, 255) as u8;
-                    set(&mut data, x, y, r, g, b, 255, tile_size);
+            for y in 0..ts {
+                for x in 0..ts {
+                    let mn = multi_noise(x, y, 360);
+
+                    // Wind ripple waves (diagonal, period ~6px at 64px tile)
+                    let period = ts as f32 / 10.0;
+                    let wave = ((x as f32 * 0.8 + y as f32 * 0.6) * 6.2832 / period).sin() * 0.5 + 0.5;
+
+                    let r = (217.0 + wave * 20.0 + (mn - 0.5) * 16.0).clamp(0.0, 255.0) as u8;
+                    let g = (199.0 + wave * 16.0 + (mn - 0.5) * 14.0).clamp(0.0, 255.0) as u8;
+                    let b = (140.0 + wave * 10.0 + (mn - 0.5) * 12.0).clamp(0.0, 255.0) as u8;
+                    set(&mut data, x, y, r, g, b, 255, ts);
                 }
             }
         }
 
         // ── Unused tiles: magenta debug fill ────────────
         _ => {
-            for y in 0..tile_size {
-                for x in 0..tile_size {
-                    set(&mut data, x, y, 255, 0, 255, 255, tile_size);
+            for y in 0..ts {
+                for x in 0..ts {
+                    set(&mut data, x, y, 255, 0, 255, 255, ts);
                 }
             }
         }
@@ -766,11 +1004,11 @@ mod tests {
 
     #[test]
     fn test_atlas_dimensions() {
-        let image = build_atlas_image(16, 16);
-        // 16 tiles * 16 pixels = 256px per side
-        assert_eq!(image.width(), 256);
-        assert_eq!(image.height(), 256);
-        assert_eq!(image.data.len(), 256 * 256 * 4);
+        let image = build_atlas_image(64, 16);
+        // 16 tiles * 64 pixels = 1024px per side
+        assert_eq!(image.width(), 1024);
+        assert_eq!(image.height(), 1024);
+        assert_eq!(image.data.len(), 1024 * 1024 * 4);
     }
 
     #[test]
@@ -810,12 +1048,12 @@ mod tests {
         // Packed atlas UVs must stay within a tile rectangle. We deliberately do NOT
         // scale UVs with greedy quad size here (StandardMaterial can't repeat within
         // a tile). We inset by a full texel to robustly prevent edge sampling bleed.
-        let uvs = face_uvs_atlas(0, 16, 16, 256, 3.0, 2.0);
+        let uvs = face_uvs_atlas(0, 16, 64, 1024, 3.0, 2.0);
         let u_tile = 1.0 / 16.0_f32;
         let v_tile = 1.0 / 16.0_f32;
 
         // Full-texel inset (matches shader strategy)
-        let texel = 1.0 / 256.0_f32;
+        let texel = 1.0 / 1024.0_f32;
         let mut inset = texel; // full texel
         inset = inset.min(u_tile * 0.25).min(v_tile * 0.25);
 
@@ -869,8 +1107,8 @@ mod tests {
     #[test]
     fn test_tile_rgba_correct_size() {
         for tile_idx in 0..=MAX_TILE_INDEX + 1 {
-            let data = generate_tile_rgba(tile_idx, 16);
-            assert_eq!(data.len(), 16 * 16 * 4, "Tile {} has wrong data size", tile_idx);
+            let data = generate_tile_rgba(tile_idx, 64);
+            assert_eq!(data.len(), 64 * 64 * 4, "Tile {} has wrong data size", tile_idx);
         }
     }
 }
