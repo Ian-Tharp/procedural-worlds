@@ -45,6 +45,17 @@ pub struct TerrainConfig {
     /// Seed offset added to `seed` for the biome noise instance,
     /// ensuring biome boundaries are independent of terrain shape.
     pub biome_seed_offset: u32,
+    /// Whether biome boundary blending is enabled.
+    ///
+    /// When enabled, terrain generation parameters (amplitude, frequency)
+    /// are smoothly interpolated at biome boundaries using distance-weighted
+    /// sampling of nearby biomes.
+    pub blend_enabled: bool,
+    /// Distance in blocks over which biome parameters blend at boundaries.
+    ///
+    /// Larger values produce wider, smoother transitions between biomes.
+    /// A value of 32.0 creates ~32-block-wide transition zones.
+    pub blend_distance: f64,
 }
 
 /// Default tree density value used as the scaling reference.
@@ -62,14 +73,109 @@ impl Default for TerrainConfig {
             sea_level: 28,
             biome_scale: 0.005,
             biome_seed_offset: 999,
+            blend_enabled: true,
+            blend_distance: 32.0,
         }
     }
 }
+
+// ============================================================================
+// BIOME BOUNDARY BLENDING
+// ============================================================================
+
+/// Hermite smoothstep interpolation for smooth blending transitions.
+///
+/// Maps input `t` in [0, 1] to a smooth S-curve that has zero first-derivative
+/// at both endpoints, eliminating visible seams in terrain transitions.
+fn smoothstep(t: f64) -> f64 {
+    let t = t.clamp(0.0, 1.0);
+    t * t * (3.0 - 2.0 * t)
+}
+
+/// Sample biomes around a world coordinate and return distance-weighted
+/// blended terrain parameters.
+///
+/// When blending is disabled (or `blend_distance <= 0`), returns the raw
+/// parameters of the biome at the exact query coordinate — identical to
+/// the original single-biome lookup.
+///
+/// When enabled, nine sample points (center + 8 surrounding at `blend_distance`)
+/// are evaluated.  Each sample's biome parameters are weighted by a smoothstep
+/// falloff based on distance, producing seamless transitions at biome boundaries.
+///
+/// Returns `(blended_amplitude, blended_frequency, primary_biome)`.
+fn blended_biome_params(
+    world_x: i32,
+    world_z: i32,
+    biome_noise: &Simplex,
+    config: &TerrainConfig,
+) -> (f64, f64, BiomeType) {
+    let primary_biome = biome_at(world_x, world_z, biome_noise, config.biome_scale);
+
+    if !config.blend_enabled || config.blend_distance <= 0.0 {
+        let params = primary_biome.params();
+        return (params.terrain_amplitude, params.terrain_frequency, primary_biome);
+    }
+
+    let bd = config.blend_distance;
+
+    // Sample at center + 8 surrounding points (cardinal + diagonal) at blend_distance.
+    // This gives good coverage of nearby biome boundaries without excessive cost.
+    let offsets: &[(f64, f64)] = &[
+        (0.0, 0.0),                         // center
+        (-bd, 0.0), (bd, 0.0),              // W, E
+        (0.0, -bd), (0.0, bd),              // N, S
+        (-bd, -bd), (bd, -bd),              // NW, NE
+        (-bd, bd),  (bd, bd),               // SW, SE
+    ];
+
+    // Maximum possible distance among samples (diagonal corner)
+    let max_dist = bd * (2.0_f64).sqrt();
+
+    let mut total_weight = 0.0;
+    let mut blended_amplitude = 0.0;
+    let mut blended_frequency = 0.0;
+
+    for &(dx, dz) in offsets {
+        let sx = world_x as f64 + dx;
+        let sz = world_z as f64 + dz;
+        let biome = biome_at(sx as i32, sz as i32, biome_noise, config.biome_scale);
+        let params = biome.params();
+
+        let dist = (dx * dx + dz * dz).sqrt();
+        let t = 1.0 - (dist / max_dist);
+        let weight = smoothstep(t);
+
+        blended_amplitude += params.terrain_amplitude * weight;
+        blended_frequency += params.terrain_frequency * weight;
+        total_weight += weight;
+    }
+
+    if total_weight > 0.0 {
+        blended_amplitude /= total_weight;
+        blended_frequency /= total_weight;
+    } else {
+        let params = primary_biome.params();
+        blended_amplitude = params.terrain_amplitude;
+        blended_frequency = params.terrain_frequency;
+    }
+
+    (blended_amplitude, blended_frequency, primary_biome)
+}
+
+// ============================================================================
+// TERRAIN HEIGHT CALCULATION
+// ============================================================================
 
 /// Calculate the terrain height and biome at a world (x, z) column.
 ///
 /// Shared by terrain generation and cave generation so both agree on
 /// where the surface is.
+///
+/// When biome blending is enabled in `config`, terrain parameters
+/// (amplitude, frequency) are smoothly interpolated at biome boundaries.
+/// The primary biome (at the exact coordinate) is still returned for
+/// block-palette selection, since discrete block types cannot be blended.
 fn terrain_column(
     world_x: i32,
     world_z: i32,
@@ -77,23 +183,23 @@ fn terrain_column(
     biome_noise: &Simplex,
     config: &TerrainConfig,
 ) -> (i32, BiomeType) {
-    let biome = biome_at(world_x, world_z, biome_noise, config.biome_scale);
-    let params = biome.params();
+    let (blended_amplitude, blended_frequency, biome) =
+        blended_biome_params(world_x, world_z, biome_noise, config);
 
     let mut height = 0.0;
-    let mut amplitude = 1.0;
-    let mut frequency = params.terrain_frequency;
+    let mut octave_amp = 1.0;
+    let mut freq = blended_frequency;
 
     for _ in 0..config.octaves {
         height += terrain_noise.get([
-            world_x as f64 * frequency,
-            world_z as f64 * frequency,
-        ]) * amplitude;
-        amplitude *= 0.5;
-        frequency *= 2.0;
+            world_x as f64 * freq,
+            world_z as f64 * freq,
+        ]) * octave_amp;
+        octave_amp *= 0.5;
+        freq *= 2.0;
     }
 
-    let terrain_height = (config.base_height + height * params.terrain_amplitude) as i32;
+    let terrain_height = (config.base_height + height * blended_amplitude) as i32;
     (terrain_height, biome)
 }
 
@@ -1058,7 +1164,7 @@ mod tests {
     #[test]
     fn test_cactus_height_is_2_to_4() {
         let config = TerrainConfig::default();
-        let chunk_pos = find_desert_chunk_pos(&config)
+        let _chunk_pos = find_desert_chunk_pos(&config)
             .expect("Should find a desert chunk within scan range");
 
         // Scan multiple desert chunks to find a cactus and verify its height
@@ -1159,5 +1265,263 @@ mod tests {
         }
 
         panic!("Could not find a Plains chunk to test");
+    }
+
+    // ========================================================================
+    // Biome boundary blending tests
+    // ========================================================================
+
+    #[test]
+    fn test_smoothstep_boundaries() {
+        // Endpoints
+        assert!(smoothstep(0.0).abs() < f64::EPSILON);
+        assert!((smoothstep(1.0) - 1.0).abs() < f64::EPSILON);
+        // Midpoint
+        assert!((smoothstep(0.5) - 0.5).abs() < f64::EPSILON);
+        // Monotonically increasing
+        assert!(smoothstep(0.25) < smoothstep(0.5));
+        assert!(smoothstep(0.5) < smoothstep(0.75));
+        // Clamping beyond [0, 1]
+        assert!(smoothstep(-1.0).abs() < f64::EPSILON);
+        assert!((smoothstep(2.0) - 1.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_blend_config_defaults() {
+        let config = TerrainConfig::default();
+        assert!(config.blend_enabled, "Blending should be enabled by default");
+        assert!(
+            (config.blend_distance - 32.0).abs() < f64::EPSILON,
+            "Default blend_distance should be 32.0"
+        );
+    }
+
+    #[test]
+    fn test_blending_disabled_matches_original() {
+        // With blending disabled, terrain_column should produce identical results
+        // to the original algorithm (biome_at → params → noise octaves).
+        let config = TerrainConfig {
+            blend_enabled: false,
+            ..Default::default()
+        };
+
+        let terrain_noise = Simplex::new(config.seed);
+        let biome_noise = Simplex::new(config.seed.wrapping_add(config.biome_seed_offset));
+
+        for x in -20..20 {
+            for z in -20..20 {
+                let (h, b) = terrain_column(x, z, &terrain_noise, &biome_noise, &config);
+
+                // Replicate the original algorithm manually
+                let expected_biome = biome_at(x, z, &biome_noise, config.biome_scale);
+                let params = expected_biome.params();
+
+                let mut height = 0.0;
+                let mut amplitude = 1.0;
+                let mut frequency = params.terrain_frequency;
+
+                for _ in 0..config.octaves {
+                    height += terrain_noise.get([
+                        x as f64 * frequency,
+                        z as f64 * frequency,
+                    ]) * amplitude;
+                    amplitude *= 0.5;
+                    frequency *= 2.0;
+                }
+
+                let expected_height = (config.base_height + height * params.terrain_amplitude) as i32;
+
+                assert_eq!(b, expected_biome, "Biome mismatch at ({}, {})", x, z);
+                assert_eq!(h, expected_height, "Height mismatch at ({}, {})", x, z);
+            }
+        }
+    }
+
+    #[test]
+    fn test_blending_is_deterministic() {
+        let config = TerrainConfig {
+            blend_enabled: true,
+            blend_distance: 32.0,
+            ..Default::default()
+        };
+
+        let terrain_noise = Simplex::new(config.seed);
+        let biome_noise = Simplex::new(config.seed.wrapping_add(config.biome_seed_offset));
+
+        for x in -50..50 {
+            for z in -50..50 {
+                let (h1, b1) = terrain_column(x, z, &terrain_noise, &biome_noise, &config);
+                let (h2, b2) = terrain_column(x, z, &terrain_noise, &biome_noise, &config);
+                assert_eq!(h1, h2, "Blended height not deterministic at ({}, {})", x, z);
+                assert_eq!(b1, b2, "Blended biome not deterministic at ({}, {})", x, z);
+            }
+        }
+    }
+
+    #[test]
+    fn test_blended_params_in_uniform_biome_match_raw() {
+        // Deep inside a single biome (far from boundaries), blended params
+        // should closely match the raw biome params since all 9 samples
+        // return the same biome.
+        let config = TerrainConfig {
+            blend_enabled: true,
+            blend_distance: 16.0, // small so we can find uniform regions easily
+            ..Default::default()
+        };
+
+        let biome_noise = Simplex::new(config.seed.wrapping_add(config.biome_seed_offset));
+        let bd = config.blend_distance as i32;
+
+        // Find a position where ALL sample points return the same biome
+        for x in -200..200 {
+            for z in -200..200 {
+                let center_biome = biome_at(x, z, &biome_noise, config.biome_scale);
+
+                // Check all 9 sample offsets
+                let all_same = [
+                    (0, 0), (-bd, 0), (bd, 0), (0, -bd), (0, bd),
+                    (-bd, -bd), (bd, -bd), (-bd, bd), (bd, bd),
+                ].iter().all(|&(dx, dz)| {
+                    biome_at(x + dx, z + dz, &biome_noise, config.biome_scale) == center_biome
+                });
+
+                if all_same {
+                    let (amp, freq, biome) = blended_biome_params(x, z, &biome_noise, &config);
+                    let raw = center_biome.params();
+
+                    assert_eq!(biome, center_biome);
+                    assert!(
+                        (amp - raw.terrain_amplitude).abs() < 0.001,
+                        "Uniform biome: blended amplitude {:.4} should match raw {:.4}",
+                        amp, raw.terrain_amplitude
+                    );
+                    assert!(
+                        (freq - raw.terrain_frequency).abs() < 0.0001,
+                        "Uniform biome: blended frequency {:.6} should match raw {:.6}",
+                        freq, raw.terrain_frequency
+                    );
+                    return; // Found and verified
+                }
+            }
+        }
+
+        panic!("Could not find a position deep inside a uniform biome");
+    }
+
+    #[test]
+    fn test_blending_produces_intermediate_values_at_boundary() {
+        // At a biome boundary, blended amplitude should fall between the
+        // two biomes' raw amplitudes (when they differ).
+        let config = TerrainConfig {
+            blend_enabled: true,
+            blend_distance: 32.0,
+            ..Default::default()
+        };
+
+        let biome_noise = Simplex::new(config.seed.wrapping_add(config.biome_seed_offset));
+        let bd = config.blend_distance as i32;
+
+        // Find a position where the center biome differs from at least one sample
+        for x in -300..300 {
+            for z in -300..300 {
+                let center_biome = biome_at(x, z, &biome_noise, config.biome_scale);
+
+                // Find a neighboring biome that has different amplitude
+                let neighbor_biome = [
+                    (-bd, 0), (bd, 0), (0, -bd), (0, bd),
+                ].iter().find_map(|&(dx, dz)| {
+                    let b = biome_at(x + dx, z + dz, &biome_noise, config.biome_scale);
+                    if b != center_biome {
+                        let diff = (b.params().terrain_amplitude - center_biome.params().terrain_amplitude).abs();
+                        if diff > 2.0 { Some(b) } else { None }
+                    } else {
+                        None
+                    }
+                });
+
+                if let Some(other) = neighbor_biome {
+                    let (amp, _freq, _biome) = blended_biome_params(x, z, &biome_noise, &config);
+                    let amp_a = center_biome.params().terrain_amplitude;
+                    let amp_b = other.params().terrain_amplitude;
+                    let lo = amp_a.min(amp_b);
+                    let hi = amp_a.max(amp_b);
+
+                    // Blended amplitude should be in [lo, hi] range
+                    // (with some tolerance for weighted averaging)
+                    assert!(
+                        amp >= lo - 0.5 && amp <= hi + 0.5,
+                        "Blended amplitude {:.2} should be between {:.2} and {:.2} \
+                         (biomes {:?} and {:?}) at ({}, {})",
+                        amp, lo, hi, center_biome, other, x, z
+                    );
+
+                    // And it should NOT exactly equal the center biome's raw value
+                    // (blending should have changed it)
+                    assert!(
+                        (amp - amp_a).abs() > 0.01,
+                        "Blended amplitude {:.4} should differ from raw {:.4} at boundary ({}, {})",
+                        amp, amp_a, x, z
+                    );
+                    return; // Found and verified
+                }
+            }
+        }
+
+        panic!("Could not find a biome boundary with differing amplitudes");
+    }
+
+    #[test]
+    fn test_blending_with_zero_distance_equals_disabled() {
+        // blend_distance = 0 should behave identically to blend_enabled = false
+        let config_zero = TerrainConfig {
+            blend_enabled: true,
+            blend_distance: 0.0,
+            ..Default::default()
+        };
+        let config_off = TerrainConfig {
+            blend_enabled: false,
+            ..Default::default()
+        };
+
+        let terrain_noise = Simplex::new(config_zero.seed);
+        let biome_noise = Simplex::new(config_zero.seed.wrapping_add(config_zero.biome_seed_offset));
+
+        for x in -20..20 {
+            for z in -20..20 {
+                let (h1, b1) = terrain_column(x, z, &terrain_noise, &biome_noise, &config_zero);
+                let (h2, b2) = terrain_column(x, z, &terrain_noise, &biome_noise, &config_off);
+                assert_eq!(h1, h2, "Zero distance should match disabled at ({}, {})", x, z);
+                assert_eq!(b1, b2, "Biome should match at ({}, {})", x, z);
+            }
+        }
+    }
+
+    #[test]
+    fn test_terrain_generation_with_blending_produces_surface() {
+        // Full chunk generation with blending enabled should still produce
+        // valid terrain (air above, solid below, grass layer).
+        let config = TerrainConfig {
+            blend_enabled: true,
+            blend_distance: 32.0,
+            ..Default::default()
+        };
+        let mut chunk = Chunk::new(IVec3::new(0, 2, 0));
+        generate_chunk_terrain(&mut chunk, &config);
+
+        let mut has_air = false;
+        let mut has_solid = false;
+        for x in 0..CHUNK_SIZE {
+            for y in 0..CHUNK_SIZE {
+                for z in 0..CHUNK_SIZE {
+                    match chunk.get_block(x, y, z) {
+                        BlockType::Air => has_air = true,
+                        _ => has_solid = true,
+                    }
+                }
+            }
+        }
+
+        assert!(has_air, "Blended surface chunk should have air");
+        assert!(has_solid, "Blended surface chunk should have solid blocks");
     }
 }
