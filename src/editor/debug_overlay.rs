@@ -17,7 +17,7 @@ use crate::engine::input::{ActionState, ActionStates, InputAction};
 use crate::engine::lighting::{DayNightCycle, Sun};
 use crate::engine::memory;
 use crate::engine::raycast::CurrentTarget;
-use crate::world::{ChunkMesh, CHUNK_SIZE, CHUNK_VOLUME};
+use crate::world::{ChunkLoadMetrics, ChunkMesh, CHUNK_SIZE, CHUNK_VOLUME};
 
 /// Number of frame time samples to keep for the graph
 const FRAME_TIME_HISTORY_SIZE: usize = 120;
@@ -247,14 +247,30 @@ pub fn update_debug_render_data(
     overlay_state.fog_end = config.render.fog_end;
 }
 
-/// System to handle debug keyboard shortcuts (F3 overlay toggle, F7 shadow toggle)
+/// System to handle debug keyboard shortcuts (F3 overlay toggle, F5/F6 load dist, F7 shadow toggle)
 pub fn debug_keyboard_input(
     keyboard: Res<ButtonInput<KeyCode>>,
     mut overlay_state: ResMut<DebugOverlayState>,
     mut sun_query: Query<&mut DirectionalLight, With<Sun>>,
+    mut chunk_manager: Option<ResMut<crate::world::ChunkManager>>,
 ) {
     if keyboard.just_pressed(KeyCode::F3) {
         overlay_state.visible = !overlay_state.visible;
+    }
+    // Adjust chunk loading distance with F5 (decrease) / F6 (increase)
+    if let Some(ref mut cm) = chunk_manager {
+        if keyboard.just_pressed(KeyCode::F5) {
+            let current = cm.effective_load_distance();
+            let new_dist = (current - 1).max(1);
+            cm.load_distance = Some(new_dist);
+            info!("Chunk load distance decreased to {}", new_dist);
+        }
+        if keyboard.just_pressed(KeyCode::F6) {
+            let current = cm.effective_load_distance();
+            let new_dist = current + 1;
+            cm.load_distance = Some(new_dist);
+            info!("Chunk load distance increased to {}", new_dist);
+        }
     }
     if keyboard.just_pressed(KeyCode::F7) {
         for mut light in &mut sun_query {
@@ -284,15 +300,20 @@ pub struct WireframeConfig {
 ///
 /// This is NOT a Bevy system — it's a plain function that the inspector system
 /// calls, passing all the data it needs.
+#[allow(clippy::too_many_arguments)]
 pub fn draw_debug_ui(
     ui: &mut egui::Ui,
     overlay_state: &mut DebugOverlayState,
     player_pos: Vec3,
     chunk_count: usize,
     render_distance: u32,
+    load_distance: i32,
+    vertical_up: i32,
+    vertical_down: i32,
     current_target: Option<&CurrentTarget>,
     day_night: Option<&DayNightCycle>,
     action_states: Option<&ActionStates>,
+    load_metrics: Option<&ChunkLoadMetrics>,
 ) {
     // ── Performance summary (always visible at top) ─────────
     {
@@ -502,8 +523,8 @@ pub fn draw_debug_ui(
     // Chunk statistics
     if overlay_state.show_chunks {
         ui.collapsing("📦 Chunk Statistics", |ui| {
-            let vertical_levels = 7;
-            let side = (2 * render_distance + 1) as usize;
+            let vertical_levels = (vertical_down + vertical_up + 1) as usize;
+            let side = (2 * load_distance + 1) as usize;
             let expected_chunks = side * side * vertical_levels;
 
             let loaded_pct = if expected_chunks > 0 {
@@ -519,8 +540,54 @@ pub fn draw_debug_ui(
             ui.horizontal(|ui| { ui.label("Expected:"); ui.monospace(format!("{}", expected_chunks)); });
             ui.horizontal(|ui| { ui.label("Pending:"); ui.monospace(format!("{}", pending)); });
             ui.horizontal(|ui| { ui.label("Loaded %:"); ui.monospace(format!("{:.1}%", loaded_pct)); });
-            ui.horizontal(|ui| { ui.label("Render dist:"); ui.monospace(format!("{}", render_distance)); });
+            ui.horizontal(|ui| {
+                ui.label("Render dist:");
+                ui.monospace(format!("{}", render_distance));
+            });
+            ui.horizontal(|ui| {
+                ui.label("Load dist:");
+                ui.monospace(format!("{}", load_distance));
+                ui.small("(F5↓ F6↑)");
+            });
+            ui.horizontal(|ui| {
+                ui.label("Vertical:");
+                ui.monospace(format!("-{}..+{}", vertical_down, vertical_up));
+            });
             ui.horizontal(|ui| { ui.label("Block memory:"); ui.monospace(format!("{:.1} MB", block_mb)); });
+
+            // Performance metrics sub-section
+            if let Some(metrics) = load_metrics {
+                ui.separator();
+                ui.label(egui::RichText::new("⏱ Load Performance").strong());
+                ui.horizontal(|ui| {
+                    ui.label("Chunks/sec:");
+                    let cps = metrics.chunks_per_second;
+                    let cps_color = if cps >= 10.0 {
+                        egui::Color32::from_rgb(100, 255, 100)
+                    } else if cps >= 2.0 {
+                        egui::Color32::from_rgb(255, 255, 100)
+                    } else {
+                        egui::Color32::from_rgb(255, 100, 100)
+                    };
+                    ui.colored_label(cps_color, format!("{:.1}", cps));
+                });
+                ui.horizontal(|ui| {
+                    ui.label("Avg load time:");
+                    let avg = metrics.avg_load_time_ms;
+                    let avg_color = if avg <= 20.0 {
+                        egui::Color32::from_rgb(100, 255, 100)
+                    } else if avg <= 100.0 {
+                        egui::Color32::from_rgb(255, 255, 100)
+                    } else {
+                        egui::Color32::from_rgb(255, 100, 100)
+                    };
+                    ui.colored_label(avg_color, format!("{:.1} ms", avg));
+                });
+                ui.horizontal(|ui| {
+                    ui.label("Total loaded:");
+                    ui.monospace(format!("{}", metrics.total_chunks_loaded));
+                });
+            }
         });
     }
 
@@ -618,7 +685,7 @@ pub fn draw_debug_ui(
         ui.checkbox(&mut overlay_state.show_render, "Render");
     });
 
-    ui.small("F3 toggle debug | F7 toggle shadows");
+    ui.small("F3 overlay | F5/F6 load dist | F7 shadows");
 }
 
 /// Plugin to add debug overlay functionality.

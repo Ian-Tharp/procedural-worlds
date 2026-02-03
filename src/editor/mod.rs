@@ -14,6 +14,7 @@ use crate::actors::{Movement, Player};
 use crate::engine::input::ActionStates;
 use crate::engine::lighting::DayNightCycle;
 use crate::engine::raycast::CurrentTarget;
+use crate::world::ChunkLoadMetrics;
 
 /// System set for editor UI (runs in Update).
 ///
@@ -93,6 +94,7 @@ fn yaw_to_cardinal(yaw: f32) -> &'static str {
 }
 
 /// Main editor UI system
+#[allow(clippy::too_many_arguments)]
 fn editor_ui_system(
     mut contexts: EguiContexts,
     mut editor_state: ResMut<EditorState>,
@@ -105,6 +107,7 @@ fn editor_ui_system(
     current_target: Option<Res<CurrentTarget>>,
     day_night: Option<Res<DayNightCycle>>,
     action_states: Option<Res<ActionStates>>,
+    load_metrics: Option<Res<ChunkLoadMetrics>>,
 ) {
     // Update player position for display (world-space, robust to parenting)
     if let Ok(player_global) = player_transform_query.get_single() {
@@ -273,6 +276,9 @@ fn editor_ui_system(
 
                         let chunk_count = chunk_manager.as_ref().map(|cm| cm.chunks.len()).unwrap_or(0);
                         let render_distance = chunk_manager.as_ref().map(|cm| cm.render_distance as u32).unwrap_or(0);
+                        let ld = chunk_manager.as_ref().map(|cm| cm.effective_load_distance()).unwrap_or(render_distance as i32);
+                        let vert_up = chunk_manager.as_ref().map(|cm| cm.vertical_load_up).unwrap_or(4);
+                        let vert_down = chunk_manager.as_ref().map(|cm| cm.vertical_load_down).unwrap_or(2);
 
                         debug_overlay::draw_debug_ui(
                             ui,
@@ -280,9 +286,13 @@ fn editor_ui_system(
                             editor_state.player_position,
                             chunk_count,
                             render_distance,
+                            ld,
+                            vert_up,
+                            vert_down,
                             current_target.as_deref(),
                             day_night.as_deref(),
                             action_states.as_deref(),
+                            load_metrics.as_deref(),
                         );
                     }
                 });
