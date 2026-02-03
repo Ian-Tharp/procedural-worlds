@@ -397,17 +397,42 @@ fn generate_tile_rgba(tile_index: u32, tile_size: u32) -> Vec<u8> {
             }
         }
 
-        // ── 3: Grass side (green-top / dirt-bottom gradient) ─
+        // ── 3: Grass side (green strip at top, dirt below — Minecraft-style) ─
         3 => {
+            // Transition row: nominally row 3 (0-indexed), with per-pixel noise
+            // shifting it ±1 pixel for a natural jagged edge.
             for y in 0..tile_size {
                 for x in 0..tile_size {
                     let n = noise_hash(x, y, 150) as i16;
-                    let t = y as f32 / tile_size as f32; // 0 = top, 1 = bottom
-                    // Blend from grass green to dirt brown
-                    let r = ((90.0 * (1.0 - t) + 115.0 * t) as i16 + (n - 128) / 10).clamp(0, 255) as u8;
-                    let g = ((155.0 * (1.0 - t) + 82.0 * t) as i16 + (n - 128) / 8).clamp(0, 255) as u8;
-                    let b = ((65.0 * (1.0 - t) + 56.0 * t) as i16 + (n - 128) / 12).clamp(0, 255) as u8;
-                    set(&mut data, x, y, r, g, b, 255, tile_size);
+                    // Per-column transition noise: shift the boundary ±1 row
+                    let edge_noise = noise_hash(x, 0, 175);
+                    let transition_row = if edge_noise < 85 {
+                        2 // one pixel higher
+                    } else if edge_noise > 170 {
+                        4 // one pixel lower
+                    } else {
+                        3 // default
+                    };
+
+                    if y < transition_row {
+                        // Top rows: grass green (matching tile 2 palette)
+                        let r = (90 + (n - 128) / 8).clamp(0, 255) as u8;
+                        let g = (155 + (n - 128) / 5).clamp(0, 255) as u8;
+                        let b = (65 + (n - 128) / 10).clamp(0, 255) as u8;
+                        set(&mut data, x, y, r, g, b, 255, tile_size);
+                    } else if y == transition_row {
+                        // Transition pixel: blend between grass and dirt
+                        let r = (102 + (n - 128) / 10).clamp(0, 255) as u8;
+                        let g = (118 + (n - 128) / 8).clamp(0, 255) as u8;
+                        let b = (60 + (n - 128) / 12).clamp(0, 255) as u8;
+                        set(&mut data, x, y, r, g, b, 255, tile_size);
+                    } else {
+                        // Remaining rows: dirt brown (matching tile 1 palette)
+                        let r = (115 + (n - 128) / 8).clamp(0, 255) as u8;
+                        let g = (82 + (n - 128) / 10).clamp(0, 255) as u8;
+                        let b = (56 + (n - 128) / 12).clamp(0, 255) as u8;
+                        set(&mut data, x, y, r, g, b, 255, tile_size);
+                    }
                 }
             }
         }

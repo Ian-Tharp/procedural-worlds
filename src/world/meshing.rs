@@ -71,6 +71,70 @@ pub fn block_color(block: BlockType) -> [f32; 4] {
     }
 }
 
+// ── Biome Vegetation Tinting ─────────────────────────────────────────
+
+/// Simple deterministic hash for per-block tint noise.
+#[inline]
+fn tint_noise(x: i32, z: i32, seed: u32) -> f32 {
+    let n = (x as u32)
+        .wrapping_mul(73)
+        .wrapping_add((z as u32).wrapping_mul(37))
+        .wrapping_add(seed);
+    let n = n ^ (n >> 13);
+    let n = n.wrapping_mul(1274126177);
+    ((n >> 24) as f32) / 255.0
+}
+
+/// Compute a biome-inspired vegetation tint multiplier for a world position.
+///
+/// Returns an RGB multiplier that shifts grass/leaf color based on smooth
+/// noise fields, simulating temperature variation across the world:
+/// - Warm areas: yellow-green tint (higher R, lower B)
+/// - Cool areas: deep blue-green tint (lower R, higher B)
+/// - Per-block noise adds ±8% brightness variation
+///
+/// The smooth component varies over ~48 blocks, producing natural-looking
+/// biome-scale color gradients without requiring actual biome data at
+/// mesh time.
+pub fn biome_grass_tint(world_x: f32, world_z: f32) -> [f32; 3] {
+    // Smooth large-scale variation over ~48 blocks
+    let scale = 1.0 / 48.0;
+    let sx = world_x * scale;
+    let sz = world_z * scale;
+
+    // Two overlapping waves for organic, non-axis-aligned variation
+    let raw = (sx * 0.7 + sz * 0.3).sin() * 0.5 + 0.5
+        + (sx * 0.3 - sz * 0.8).cos() * 0.25;
+    let temp = raw.clamp(0.0, 1.0);
+
+    // Temperature → color multiplier
+    //   cool (temp≈0): [0.85, 0.95, 1.05]  — blue-green (forest/tundra edge)
+    //   warm (temp≈1): [1.08, 1.00, 0.82]  — yellow-green (plains/desert edge)
+    let r = 0.85 + temp * 0.23;
+    let g = 0.95 + temp * 0.05;
+    let b = 1.05 - temp * 0.23;
+
+    // Per-block noise for subtle variation so adjacent blocks differ
+    let noise = tint_noise(world_x.floor() as i32, world_z.floor() as i32, 54321);
+    let variation = noise * 0.16 - 0.08; // ±8%
+
+    [
+        (r + variation).max(0.0),
+        (g + variation).max(0.0),
+        (b + variation).max(0.0),
+    ]
+}
+
+/// Whether a block type + face combination should receive vegetation tinting.
+#[inline]
+fn should_tint(block_type: BlockType, face: Face) -> bool {
+    match block_type {
+        BlockType::Grass => face == Face::Top,
+        BlockType::Leaves => true,
+        _ => false,
+    }
+}
+
 /// Atlas configuration passed into face-building helpers.
 ///
 /// When `None`, faces use legacy 0-1 UVs and block_color vertex colors.
@@ -103,6 +167,7 @@ fn add_face(
     ao: [u8; 4],
     atlas: Option<AtlasConfig>,
     block_type: BlockType,
+    world_offset: IVec3,
 ) {
     let base_index = positions.len() as u32;
     let normal = face.normal();
@@ -176,10 +241,19 @@ fn add_face(
         [0.0, 0.0]
     };
 
+    let do_tint = should_tint(block_type, face);
+
     for (i, vert) in verts.iter().enumerate() {
         positions.push(*vert);
         normals.push(normal);
-        colors.push(apply_ao(vert_color, ao[i]));
+        let mut vc = vert_color;
+        if do_tint {
+            let wx = vert[0] + world_offset.x as f32;
+            let wz = vert[2] + world_offset.z as f32;
+            let tint = biome_grass_tint(wx, wz);
+            vc = [vc[0] * tint[0], vc[1] * tint[1], vc[2] * tint[2], vc[3]];
+        }
+        colors.push(apply_ao(vc, ao[i]));
         uvs.push(face_uvs[i]);
         uv1s.push(tile_xy);
     }
@@ -237,6 +311,7 @@ fn add_greedy_face(
     ao: [u8; 4],
     atlas: Option<AtlasConfig>,
     block_type: BlockType,
+    world_offset: IVec3,
 ) {
     let base_index = positions.len() as u32;
     let normal = face.normal();
@@ -307,10 +382,19 @@ fn add_greedy_face(
         [0.0, 0.0]
     };
 
+    let do_tint = should_tint(block_type, face);
+
     for (i, vert) in verts.iter().enumerate() {
         positions.push(*vert);
         normals.push(normal);
-        colors.push(apply_ao(vert_color, ao[i]));
+        let mut vc = vert_color;
+        if do_tint {
+            let wx = vert[0] + world_offset.x as f32;
+            let wz = vert[2] + world_offset.z as f32;
+            let tint = biome_grass_tint(wx, wz);
+            vc = [vc[0] * tint[0], vc[1] * tint[1], vc[2] * tint[2], vc[3]];
+        }
+        colors.push(apply_ao(vc, ao[i]));
         uvs.push(face_uvs[i]);
         uv1s.push(tile_xy);
     }
@@ -360,7 +444,7 @@ fn is_neighbor_transparent(chunk: &Chunk, x: i32, y: i32, z: i32) -> bool {
 
 /// AO darkening multipliers for levels 0-3.
 /// Level 0 = no occlusion (full brightness), level 3 = maximum occlusion.
-const AO_CURVE: [f32; 4] = [1.0, 0.75, 0.5, 0.25];
+const AO_CURVE: [f32; 4] = [1.0, 0.6, 0.35, 0.15];
 
 /// Compute the ambient occlusion level (0-3) for a single vertex.
 ///
@@ -468,6 +552,8 @@ pub fn build_chunk_mesh_with_atlas(chunk: &Chunk, atlas: Option<AtlasConfig>) ->
 
 #[allow(clippy::needless_range_loop)]
 fn build_chunk_mesh_inner(chunk: &Chunk, atlas: Option<AtlasConfig>) -> Mesh {
+    let world_offset = chunk.world_position();
+
     let mut positions: Vec<[f32; 3]> = Vec::new();
     let mut normals: Vec<[f32; 3]> = Vec::new();
     let mut colors: Vec<[f32; 4]> = Vec::new();
@@ -588,6 +674,7 @@ fn build_chunk_mesh_inner(chunk: &Chunk, atlas: Option<AtlasConfig>) -> Mesh {
                         ao,
                         atlas,
                         block_type,
+                        world_offset,
                     );
                 }
             }
@@ -630,6 +717,8 @@ pub fn build_chunk_mesh_naive_with_atlas(chunk: &Chunk, atlas: Option<AtlasConfi
 
 #[allow(dead_code)]
 fn build_chunk_mesh_naive_inner(chunk: &Chunk, atlas: Option<AtlasConfig>) -> Mesh {
+    let world_offset = chunk.world_position();
+
     let mut positions: Vec<[f32; 3]> = Vec::new();
     let mut normals: Vec<[f32; 3]> = Vec::new();
     let mut colors: Vec<[f32; 4]> = Vec::new();
@@ -686,6 +775,7 @@ fn build_chunk_mesh_naive_inner(chunk: &Chunk, atlas: Option<AtlasConfig>) -> Me
                             ao,
                             atlas,
                             block,
+                            world_offset,
                         );
                     }
                 }
@@ -766,24 +856,24 @@ mod tests {
         assert!((ao0[2] - 0.6).abs() < 1e-6);
         assert_eq!(ao0[3], 1.0);
 
-        // AO level 1: 0.75× darkening
+        // AO level 1: 0.6× darkening
         let ao1 = apply_ao(color, 1);
-        assert!((ao1[0] - 0.75).abs() < 1e-6);
-        assert!((ao1[1] - 0.6).abs() < 1e-6);
-        assert!((ao1[2] - 0.45).abs() < 1e-5); // float precision
+        assert!((ao1[0] - 0.6).abs() < 1e-6);
+        assert!((ao1[1] - 0.48).abs() < 1e-5);
+        assert!((ao1[2] - 0.36).abs() < 1e-5);
         assert_eq!(ao1[3], 1.0);
 
-        // AO level 2: 0.5× darkening
+        // AO level 2: 0.35× darkening
         let ao2 = apply_ao(color, 2);
-        assert!((ao2[0] - 0.5).abs() < 1e-6);
-        assert!((ao2[1] - 0.4).abs() < 1e-6);
-        assert!((ao2[2] - 0.3).abs() < 1e-6);
+        assert!((ao2[0] - 0.35).abs() < 1e-6);
+        assert!((ao2[1] - 0.28).abs() < 1e-5);
+        assert!((ao2[2] - 0.21).abs() < 1e-5);
 
-        // AO level 3: 0.25× darkening
+        // AO level 3: 0.15× darkening
         let ao3 = apply_ao(color, 3);
-        assert!((ao3[0] - 0.25).abs() < 1e-6);
-        assert!((ao3[1] - 0.2).abs() < 1e-6);
-        assert!((ao3[2] - 0.15).abs() < 1e-5);
+        assert!((ao3[0] - 0.15).abs() < 1e-5);
+        assert!((ao3[1] - 0.12).abs() < 1e-5);
+        assert!((ao3[2] - 0.09).abs() < 1e-5);
 
         // Alpha is never affected
         let transparent = [0.5, 0.5, 0.5, 0.5];
@@ -982,11 +1072,12 @@ mod tests {
     #[test]
     fn test_greedy_preserves_colors_isolated_block() {
         // Isolated block: AO=0 → colors should match base exactly
+        // Uses Stone (not subject to biome tinting) for exact color comparison.
         let mut chunk = Chunk::new(IVec3::ZERO);
-        chunk.set_block(8, 8, 8, BlockType::Grass);
+        chunk.set_block(8, 8, 8, BlockType::Stone);
 
         let mesh = build_chunk_mesh(&chunk);
-        let expected = block_color(BlockType::Grass);
+        let expected = block_color(BlockType::Stone);
 
         if let Some(bevy::render::mesh::VertexAttributeValues::Float32x4(mesh_colors)) =
             mesh.attribute(Mesh::ATTRIBUTE_COLOR)
@@ -1214,11 +1305,12 @@ mod tests {
     fn test_use_textures_false_keeps_vertex_colors() {
         // With atlas=None (use_textures=false), vertex colors should be
         // the original block_color * AO — identical to legacy behaviour.
+        // Uses Stone (not subject to biome tinting) for exact comparison.
         let mut chunk = Chunk::new(IVec3::ZERO);
-        chunk.set_block(8, 8, 8, BlockType::Grass);
+        chunk.set_block(8, 8, 8, BlockType::Stone);
 
         let legacy = build_chunk_mesh_with_atlas(&chunk, None);
-        let expected = block_color(BlockType::Grass);
+        let expected = block_color(BlockType::Stone);
 
         if let Some(bevy::render::mesh::VertexAttributeValues::Float32x4(colors)) =
             legacy.attribute(Mesh::ATTRIBUTE_COLOR)
