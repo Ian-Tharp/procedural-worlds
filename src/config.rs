@@ -28,8 +28,11 @@
 //! 3. Apply it in `apply_config_to_resources` or `apply_config_to_entities`
 
 use bevy::prelude::*;
+use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use serde::{Deserialize, Serialize};
 use std::fs;
+use std::path::PathBuf;
+use std::sync::{mpsc, Mutex};
 
 use crate::actors::{Movement, Player};
 use crate::actors::player::projection_from_config;
@@ -359,6 +362,66 @@ impl Default for DebugConfig {
 }
 
 // ============================================================================
+// HOT-RELOAD FILE WATCHER
+// ============================================================================
+
+/// Resource that holds the file watcher and change notification receiver.
+///
+/// The `notify` crate watches `config.json` on a background thread and sends
+/// events through a channel. The Bevy system `poll_config_changes` drains
+/// this channel each frame and triggers a config reload when modifications
+/// are detected.
+#[derive(Resource)]
+pub struct ConfigWatcher {
+    /// Receives file-change events from the `notify` watcher thread.
+    /// Wrapped in `Mutex` to satisfy Bevy's `Sync` requirement for resources.
+    /// Only locked briefly each frame in `poll_config_changes`.
+    receiver: Mutex<mpsc::Receiver<Result<Event, notify::Error>>>,
+    /// Kept alive to maintain the watch. Dropping this stops the watcher.
+    _watcher: RecommendedWatcher,
+}
+
+impl ConfigWatcher {
+    /// Create a new file watcher monitoring `config.json`.
+    ///
+    /// Returns `None` if the watcher fails to initialize (e.g., OS limit on
+    /// inotify watches). The game continues without hot-reload in that case.
+    pub fn new() -> Option<Self> {
+        let (tx, rx) = mpsc::channel();
+
+        let mut watcher = match RecommendedWatcher::new(
+            move |res: Result<Event, notify::Error>| {
+                // Send all events; filtering happens on the consumer side
+                let _ = tx.send(res);
+            },
+            notify::Config::default(),
+        ) {
+            Ok(w) => w,
+            Err(e) => {
+                warn!("Failed to create config file watcher: {}. Hot-reload disabled.", e);
+                return None;
+            }
+        };
+
+        let config_path = PathBuf::from(CONFIG_FILE);
+
+        // Canonicalize to absolute path if possible (helps notify on Windows)
+        let watch_path = fs::canonicalize(&config_path).unwrap_or(config_path);
+
+        if let Err(e) = watcher.watch(&watch_path, RecursiveMode::NonRecursive) {
+            warn!("Failed to watch {}: {}. Hot-reload disabled.", CONFIG_FILE, e);
+            return None;
+        }
+
+        info!("Config hot-reload enabled — watching {}", CONFIG_FILE);
+        Some(Self {
+            receiver: Mutex::new(rx),
+            _watcher: watcher,
+        })
+    }
+}
+
+// ============================================================================
 // LOADING & SAVING
 // ============================================================================
 
@@ -549,14 +612,27 @@ fn bind_from_config(input_map: &mut InputMap, action: InputAction, key_name: &st
 /// The `EngineConfig` resource must be inserted before this plugin runs.
 /// Use `PostStartup` schedule to ensure all other plugins have initialized
 /// their resources and entities first.
+///
+/// Also sets up config hot-reload: a file watcher monitors `config.json` and
+/// automatically re-applies settings when the file changes on disk.
 pub struct ConfigPlugin;
 
 impl Plugin for ConfigPlugin {
     fn build(&self, app: &mut App) {
+        // Apply config once at startup
         app.add_systems(
             PostStartup,
             (apply_config_to_resources, apply_config_to_entities).chain(),
         );
+
+        // Initialize file watcher for hot-reload
+        if let Some(watcher) = ConfigWatcher::new() {
+            app.insert_resource(watcher);
+            app.add_systems(
+                Update,
+                poll_config_changes.run_if(resource_exists::<ConfigWatcher>),
+            );
+        }
     }
 }
 
@@ -658,6 +734,136 @@ fn apply_config_to_entities(
 
     info!("Player config applied (sensitivity: {}, walk: {}, fly: {})",
         config.player.mouse_sensitivity,
+        config.player.walk_speed,
+        config.player.fly_speed,
+    );
+}
+
+// ============================================================================
+// HOT-RELOAD SYSTEMS
+// ============================================================================
+
+/// Polls the file watcher for config changes and reloads when detected.
+///
+/// Runs every frame in `Update`. The `mpsc::Receiver::try_recv` is non-blocking,
+/// so this has near-zero cost when no changes occur. When a modify event is
+/// detected, the config is re-read from disk and all resource/entity settings
+/// are re-applied.
+#[allow(clippy::too_many_arguments)]
+fn poll_config_changes(
+    watcher: Res<ConfigWatcher>,
+    mut config: ResMut<EngineConfig>,
+    mut input_map: ResMut<InputMap>,
+    mut chunk_manager: ResMut<ChunkManager>,
+    mut terrain_config: ResMut<TerrainConfig>,
+    mut debug_state: ResMut<DebugOverlayState>,
+    mut unload_config: ResMut<UnloadConfig>,
+    mut camera_query: Query<(&mut CameraController, &mut Projection), With<Camera3d>>,
+    mut player_query: Query<&mut Movement, With<Player>>,
+) {
+    let mut should_reload = false;
+
+    // Lock the receiver briefly to drain pending events
+    let receiver = watcher.receiver.lock().unwrap();
+
+    // Drain all pending events — we only care whether *any* modify happened
+    while let Ok(event_result) = receiver.try_recv() {
+        match event_result {
+            Ok(event) => {
+                if matches!(
+                    event.kind,
+                    EventKind::Modify(_) | EventKind::Create(_)
+                ) {
+                    should_reload = true;
+                }
+            }
+            Err(e) => {
+                warn!("Config watcher error: {}", e);
+            }
+        }
+    }
+
+    // Release the lock before doing any I/O or resource mutation
+    drop(receiver);
+
+    if !should_reload {
+        return;
+    }
+
+    // Re-read config from disk
+    let path = std::path::Path::new(CONFIG_FILE);
+    let new_config = match fs::read_to_string(path) {
+        Ok(contents) => match serde_json::from_str::<EngineConfig>(&contents) {
+            Ok(c) => c,
+            Err(e) => {
+                warn!("Hot-reload: failed to parse {}: {}. Keeping current config.", CONFIG_FILE, e);
+                return;
+            }
+        },
+        Err(e) => {
+            warn!("Hot-reload: failed to read {}: {}. Keeping current config.", CONFIG_FILE, e);
+            return;
+        }
+    };
+
+    info!("Hot-reload: config.json changed — applying new settings");
+
+    // Update the stored config resource
+    *config = new_config;
+
+    // --- Re-apply to resources (mirrors apply_config_to_resources) ---
+
+    chunk_manager.render_distance = config.render.render_distance;
+    chunk_manager.max_chunks_per_frame = config.render.max_chunks_per_frame;
+
+    terrain_config.seed = config.terrain.seed;
+    terrain_config.base_height = config.terrain.base_height;
+    terrain_config.height_scale = config.terrain.height_scale;
+    terrain_config.frequency = config.terrain.frequency;
+    terrain_config.octaves = config.terrain.octaves;
+    terrain_config.biome_scale = config.terrain.biome_scale;
+
+    debug_state.visible = config.debug.overlay_visible;
+    debug_state.show_memory = config.debug.show_memory;
+    debug_state.show_input_state = config.debug.show_input;
+    debug_state.show_chunks = config.debug.show_chunks;
+    debug_state.show_render = config.debug.show_render;
+
+    unload_config.unload_distance = config.unload.unload_distance;
+    unload_config.save_on_unload = config.unload.save_on_unload;
+    unload_config.memory_threshold_bytes = config.unload.memory_threshold_mb * 1024 * 1024;
+    unload_config.memory_pressure_reduction = config.unload.memory_pressure_reduction;
+    unload_config.max_saves_per_frame = config.unload.max_saves_per_frame;
+
+    input_map.clear();
+    bind_from_config(&mut input_map, InputAction::MoveForward, &config.controls.move_forward);
+    bind_from_config(&mut input_map, InputAction::MoveBackward, &config.controls.move_backward);
+    bind_from_config(&mut input_map, InputAction::MoveLeft, &config.controls.move_left);
+    bind_from_config(&mut input_map, InputAction::MoveRight, &config.controls.move_right);
+    bind_from_config(&mut input_map, InputAction::Jump, &config.controls.jump);
+    bind_from_config(&mut input_map, InputAction::Crouch, &config.controls.crouch);
+    bind_from_config(&mut input_map, InputAction::Sprint, &config.controls.sprint);
+    bind_from_config(&mut input_map, InputAction::ToggleFly, &config.controls.toggle_fly);
+    bind_from_config(&mut input_map, InputAction::ToggleNoclip, &config.controls.toggle_noclip);
+    bind_from_config(&mut input_map, InputAction::ReleaseCursor, &config.controls.release_cursor);
+
+    // --- Re-apply to entities (mirrors apply_config_to_entities) ---
+
+    let proj = projection_from_config(&config);
+    for (mut controller, mut camera_proj) in &mut camera_query {
+        controller.sensitivity = config.player.mouse_sensitivity;
+        *camera_proj = proj.clone();
+    }
+
+    for mut movement in &mut player_query {
+        movement.walk_speed = config.player.walk_speed;
+        movement.sprint_speed = config.player.sprint_speed;
+        movement.fly_speed = config.player.fly_speed;
+        movement.jump_velocity = config.player.jump_velocity;
+    }
+
+    info!("Hot-reload complete: render_dist={}, walk_speed={}, fly_speed={}",
+        config.render.render_distance,
         config.player.walk_speed,
         config.player.fly_speed,
     );
@@ -779,6 +985,42 @@ mod tests {
         assert_eq!(string_to_keycode(""), None);
         assert_eq!(string_to_keycode("InvalidKey"), None);
         assert_eq!(string_to_keycode("key_w"), None); // Case sensitive
+    }
+
+    #[test]
+    fn test_config_reload_from_modified_json() {
+        // Simulate hot-reload: start with defaults, "reload" from modified JSON
+        let original = EngineConfig::default();
+        assert_eq!(original.player.walk_speed, 4.3);
+
+        let modified_json = r#"{
+            "player": {
+                "walk_speed": 10.0,
+                "sprint_speed": 15.0,
+                "fly_speed": 20.0,
+                "jump_velocity": 12.0,
+                "mouse_sensitivity": 0.2
+            },
+            "render": {
+                "render_distance": 8
+            }
+        }"#;
+
+        let reloaded: EngineConfig = serde_json::from_str(modified_json).unwrap();
+        assert_eq!(reloaded.player.walk_speed, 10.0);
+        assert_eq!(reloaded.player.sprint_speed, 15.0);
+        assert_eq!(reloaded.render.render_distance, 8);
+        // Unmodified fields should have defaults
+        assert_eq!(reloaded.terrain.seed, 12345);
+        assert_eq!(reloaded.window.title, "Procedural Worlds Engine");
+    }
+
+    #[test]
+    fn test_config_watcher_creation() {
+        // ConfigWatcher::new() should succeed when config.json exists,
+        // or return None gracefully if the file doesn't exist.
+        // Either outcome is acceptable — the important thing is no panic.
+        let _result = ConfigWatcher::new();
     }
 
     #[test]
