@@ -217,6 +217,7 @@ pub fn create_block_atlas_material(
             base_color_texture: Some(atlas.texture.clone()),
             perceptual_roughness: 0.9,
             metallic: 0.0,
+            alpha_mode: AlphaMode::Blend,
             ..default()
         },
         extension: BlockAtlasExtension::new(atlas.tiles_per_row, atlas.atlas_size),

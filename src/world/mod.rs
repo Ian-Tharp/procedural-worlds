@@ -496,11 +496,12 @@ fn setup_chunk_material(
         }
     }
 
-    // Fallback: plain white StandardMaterial
+    // Fallback: plain white StandardMaterial with alpha blending for water transparency
     let material = materials.add(StandardMaterial {
         base_color: Color::WHITE,
         perceptual_roughness: 0.9,
         metallic: 0.0,
+        alpha_mode: AlphaMode::Blend,
         ..default()
     });
     chunk_material.handle = Some(ChunkMaterialHandle::Standard(material));

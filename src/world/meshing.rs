@@ -58,7 +58,7 @@ pub fn block_color(block: BlockType) -> [f32; 4] {
         BlockType::Dirt => [0.45, 0.32, 0.22, 1.0],
         BlockType::Grass => [0.35, 0.6, 0.25, 1.0],
         BlockType::Sand => [0.9, 0.85, 0.6, 1.0],
-        BlockType::Water => [0.2, 0.4, 0.8, 1.0],
+        BlockType::Water => [0.2, 0.4, 0.8, 0.7],
         BlockType::Wood => [0.5, 0.35, 0.2, 1.0],
         BlockType::Leaves => [0.2, 0.5, 0.15, 1.0],
         BlockType::Sandstone => [0.82, 0.73, 0.53, 1.0],
@@ -172,12 +172,19 @@ fn add_face(
     let base_index = positions.len() as u32;
     let normal = face.normal();
 
+    // Lowered water surface: top face of water sits at y + 0.875 instead of y + 1.0
+    let water_top_offset = if block_type == BlockType::Water && face == Face::Top {
+        -0.125
+    } else {
+        0.0
+    };
+
     let verts: [[f32; 3]; 4] = match face {
         Face::Top => [
-            [x, y + 1.0, z],
-            [x + 1.0, y + 1.0, z],
-            [x + 1.0, y + 1.0, z + 1.0],
-            [x, y + 1.0, z + 1.0],
+            [x, y + 1.0 + water_top_offset, z],
+            [x + 1.0, y + 1.0 + water_top_offset, z],
+            [x + 1.0, y + 1.0 + water_top_offset, z + 1.0],
+            [x, y + 1.0 + water_top_offset, z + 1.0],
         ],
         Face::Bottom => [
             [x, y, z + 1.0],
@@ -224,9 +231,14 @@ fn add_face(
     };
 
     // When atlas is active, vertex color is white so only AO darkens.
+    // Water blocks get semi-transparent alpha even in atlas mode.
     // Otherwise vertex color is the block color darkened by AO.
     let vert_color = if atlas.is_some() {
-        [1.0_f32, 1.0, 1.0, 1.0]
+        if block_type == BlockType::Water {
+            [1.0_f32, 1.0, 1.0, 0.7]
+        } else {
+            [1.0_f32, 1.0, 1.0, 1.0]
+        }
     } else {
         color
     };
@@ -316,12 +328,19 @@ fn add_greedy_face(
     let base_index = positions.len() as u32;
     let normal = face.normal();
 
+    // Lowered water surface: top face of water sits at y + 0.875 instead of y + 1.0
+    let water_top_offset = if block_type == BlockType::Water && face == Face::Top {
+        -0.125
+    } else {
+        0.0
+    };
+
     let verts: [[f32; 3]; 4] = match face {
         Face::Top => [
-            [x, y + 1.0, z],
-            [x + quad_w, y + 1.0, z],
-            [x + quad_w, y + 1.0, z + quad_h],
-            [x, y + 1.0, z + quad_h],
+            [x, y + 1.0 + water_top_offset, z],
+            [x + quad_w, y + 1.0 + water_top_offset, z],
+            [x + quad_w, y + 1.0 + water_top_offset, z + quad_h],
+            [x, y + 1.0 + water_top_offset, z + quad_h],
         ],
         Face::Bottom => [
             [x, y, z + quad_h],
@@ -368,8 +387,13 @@ fn add_greedy_face(
     };
 
     // When atlas is active, vertex color is white so only AO darkens.
+    // Water blocks get semi-transparent alpha even in atlas mode.
     let vert_color = if atlas.is_some() {
-        [1.0_f32, 1.0, 1.0, 1.0]
+        if block_type == BlockType::Water {
+            [1.0_f32, 1.0, 1.0, 0.7]
+        } else {
+            [1.0_f32, 1.0, 1.0, 1.0]
+        }
     } else {
         color
     };
@@ -421,6 +445,24 @@ fn add_greedy_face(
             base_index + 2,
         ]);
     }
+}
+
+/// Determine whether a face of `block` should be rendered given its `neighbor`.
+///
+/// - Air never renders faces.
+/// - Water hides faces adjacent to other water (internal culling), but shows
+///   faces adjacent to air or any other transparent block.
+/// - Solid blocks show faces when the neighbor is transparent (air or water).
+fn should_render_face(block: BlockType, neighbor: BlockType) -> bool {
+    if block == BlockType::Air {
+        return false;
+    }
+    if block == BlockType::Water {
+        // Water-to-water faces are hidden; water-to-anything-else is shown.
+        return neighbor != BlockType::Water;
+    }
+    // Solid blocks: show face when neighbor is transparent
+    neighbor.is_transparent()
 }
 
 /// Check if a neighboring block at the given offset is transparent
@@ -600,7 +642,20 @@ fn build_chunk_mesh_inner(chunk: &Chunk, atlas: Option<AtlasConfig>) -> Mesh {
                     let ny = y as i32 + oy;
                     let nz = z as i32 + oz;
 
-                    if is_neighbor_transparent(chunk, nx, ny, nz) {
+                    // Determine neighbor block type (out-of-bounds = Air)
+                    let neighbor = if nx < 0
+                        || nx >= CHUNK_SIZE as i32
+                        || ny < 0
+                        || ny >= CHUNK_SIZE as i32
+                        || nz < 0
+                        || nz >= CHUNK_SIZE as i32
+                    {
+                        BlockType::Air
+                    } else {
+                        chunk.get_block(nx as usize, ny as usize, nz as usize)
+                    };
+
+                    if should_render_face(block, neighbor) {
                         let ao = compute_face_ao(chunk, x, y, z, face);
                         mask[v][u] = Some((block, ao));
                     }
@@ -757,8 +812,21 @@ fn build_chunk_mesh_naive_inner(chunk: &Chunk, atlas: Option<AtlasConfig>) -> Me
                     let ny = y as i32 + oy;
                     let nz = z as i32 + oz;
 
-                    // Only add face if neighbor is transparent
-                    if is_neighbor_transparent(chunk, nx, ny, nz) {
+                    // Determine neighbor block type (out-of-bounds = Air)
+                    let neighbor = if nx < 0
+                        || nx >= CHUNK_SIZE as i32
+                        || ny < 0
+                        || ny >= CHUNK_SIZE as i32
+                        || nz < 0
+                        || nz >= CHUNK_SIZE as i32
+                    {
+                        BlockType::Air
+                    } else {
+                        chunk.get_block(nx as usize, ny as usize, nz as usize)
+                    };
+
+                    // Only add face if should_render_face says so
+                    if should_render_face(block, neighbor) {
                         let ao = compute_face_ao(chunk, x, y, z, face);
                         add_face(
                             &mut positions,
