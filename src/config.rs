@@ -150,6 +150,17 @@ pub struct TerrainSettings {
     pub octaves: usize,
     /// Biome noise frequency — lower values produce larger biomes (default: 0.005)
     pub biome_scale: f64,
+    /// Enable smooth biome boundary blending (default: true).
+    ///
+    /// When enabled, terrain generation parameters (height amplitude, noise
+    /// frequency) are interpolated at biome boundaries using distance-weighted
+    /// sampling, eliminating abrupt terrain seams between biomes.
+    pub biome_blend_enabled: bool,
+    /// Distance in blocks over which biome parameters blend at boundaries (default: 32.0).
+    ///
+    /// Larger values produce wider, more gradual transitions. A value of 0
+    /// effectively disables blending. Typical range: 16–64.
+    pub biome_blend_distance: f64,
 }
 
 /// Player movement and camera settings
@@ -301,6 +312,8 @@ impl Default for TerrainSettings {
             frequency: 0.02,
             octaves: 4,
             biome_scale: 0.005,
+            biome_blend_enabled: true,
+            biome_blend_distance: 32.0,
         }
     }
 }
@@ -592,7 +605,15 @@ fn apply_config_to_resources(
     terrain_config.frequency = config.terrain.frequency;
     terrain_config.octaves = config.terrain.octaves;
     terrain_config.biome_scale = config.terrain.biome_scale;
-    info!("Terrain seed: {}, biome_scale: {}", config.terrain.seed, config.terrain.biome_scale);
+    terrain_config.blend_enabled = config.terrain.biome_blend_enabled;
+    terrain_config.blend_distance = config.terrain.biome_blend_distance;
+    info!(
+        "Terrain seed: {}, biome_scale: {}, blend: {} (distance: {})",
+        config.terrain.seed,
+        config.terrain.biome_scale,
+        config.terrain.biome_blend_enabled,
+        config.terrain.biome_blend_distance,
+    );
 
     // --- Debug overlay settings ---
     debug_state.visible = config.debug.overlay_visible;
@@ -723,6 +744,8 @@ mod tests {
         assert_eq!(deserialized.debug.overlay_visible, original.debug.overlay_visible);
         assert_eq!(deserialized.unload.save_on_unload, original.unload.save_on_unload);
         assert_eq!(deserialized.unload.memory_threshold_mb, original.unload.memory_threshold_mb);
+        assert_eq!(deserialized.terrain.biome_blend_enabled, original.terrain.biome_blend_enabled);
+        assert_eq!(deserialized.terrain.biome_blend_distance, original.terrain.biome_blend_distance);
     }
 
     #[test]
@@ -742,6 +765,29 @@ mod tests {
         assert_eq!(config.render.render_distance, 4);
         assert_eq!(config.terrain.seed, 12345);
         assert_eq!(config.controls.move_forward, "KeyW");
+    }
+
+    #[test]
+    fn test_biome_blend_config_defaults() {
+        let config = EngineConfig::default();
+        assert!(config.terrain.biome_blend_enabled, "Blending should be enabled by default");
+        assert_eq!(config.terrain.biome_blend_distance, 32.0, "Default blend distance should be 32.0");
+    }
+
+    #[test]
+    fn test_biome_blend_config_from_partial_json() {
+        // Config without blend fields should get defaults
+        let json = r#"{ "terrain": { "seed": 99999 } }"#;
+        let config: EngineConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(config.terrain.seed, 99999);
+        assert!(config.terrain.biome_blend_enabled);
+        assert_eq!(config.terrain.biome_blend_distance, 32.0);
+
+        // Config with blend fields should honor them
+        let json = r#"{ "terrain": { "biome_blend_enabled": false, "biome_blend_distance": 64.0 } }"#;
+        let config: EngineConfig = serde_json::from_str(json).unwrap();
+        assert!(!config.terrain.biome_blend_enabled);
+        assert_eq!(config.terrain.biome_blend_distance, 64.0);
     }
 
     #[test]
