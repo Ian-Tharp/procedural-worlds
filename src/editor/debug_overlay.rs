@@ -10,15 +10,14 @@
 use bevy::pbr::{DirectionalLightShadowMap, NotShadowCaster};
 use bevy::prelude::*;
 use bevy::diagnostic::{DiagnosticsStore, EntityCountDiagnosticsPlugin, FrameTimeDiagnosticsPlugin};
-use bevy_egui::{egui, EguiContexts};
+use bevy_egui::egui;
 
-use crate::actors::Player;
 use crate::config::EngineConfig;
 use crate::engine::input::{ActionState, ActionStates, InputAction};
 use crate::engine::lighting::{DayNightCycle, Sun};
 use crate::engine::memory;
 use crate::engine::raycast::CurrentTarget;
-use crate::world::{ChunkManager, ChunkMesh, CHUNK_SIZE, CHUNK_VOLUME};
+use crate::world::{ChunkMesh, CHUNK_SIZE, CHUNK_VOLUME};
 
 /// Number of frame time samples to keep for the graph
 const FRAME_TIME_HISTORY_SIZE: usize = 120;
@@ -54,15 +53,36 @@ pub struct DebugOverlayState {
     /// Show rendering settings panel
     pub show_render: bool,
     /// Cached FPS value (smoothed for stable display)
-    cached_fps: f64,
+    pub cached_fps: f64,
     /// Cached frame time in ms
-    cached_frame_time_ms: f64,
+    pub cached_frame_time_ms: f64,
     /// Cached process memory snapshot
-    cached_process_memory: Option<memory::ProcessMemory>,
+    pub cached_process_memory: Option<memory::ProcessMemory>,
     /// Cached entity count
-    cached_entity_count: f64,
+    pub cached_entity_count: f64,
     /// Timer for periodic metric refresh (avoids per-frame OS queries)
     metrics_refresh_timer: f32,
+    // ── Pre-computed render/shadow data (populated by update_debug_render_data) ──
+    /// Shadow map resolution in pixels
+    pub shadow_map_size: usize,
+    /// Number of shadow cascade levels from config
+    pub shadow_cascade_count: u32,
+    /// Whether shadows are currently enabled on the sun
+    pub shadows_enabled: bool,
+    /// Number of chunks that ARE shadow casters
+    pub shadow_caster_count: usize,
+    /// Number of chunks culled from shadow casting
+    pub shadow_culled_count: usize,
+    /// Bloom enabled from config
+    pub bloom_enabled: bool,
+    /// Bloom intensity from config
+    pub bloom_intensity: f32,
+    /// Fog enabled from config
+    pub fog_enabled: bool,
+    /// Fog start distance
+    pub fog_start: f32,
+    /// Fog end distance
+    pub fog_end: f32,
 }
 
 impl Default for DebugOverlayState {
@@ -82,6 +102,16 @@ impl Default for DebugOverlayState {
             cached_process_memory: None,
             cached_entity_count: 0.0,
             metrics_refresh_timer: 0.0,
+            shadow_map_size: 0,
+            shadow_cascade_count: 0,
+            shadows_enabled: true,
+            shadow_caster_count: 0,
+            shadow_culled_count: 0,
+            bloom_enabled: false,
+            bloom_intensity: 0.0,
+            fog_enabled: false,
+            fog_start: 0.0,
+            fog_end: 0.0,
         }
     }
 }
@@ -196,6 +226,44 @@ pub fn update_frame_time_history(
     }
 }
 
+/// System to pre-compute render/shadow data for display
+pub fn update_debug_render_data(
+    mut overlay_state: ResMut<DebugOverlayState>,
+    config: Res<EngineConfig>,
+    shadow_map: Option<Res<DirectionalLightShadowMap>>,
+    sun_query: Query<&DirectionalLight, With<Sun>>,
+    not_shadow_caster_query: Query<(), (With<ChunkMesh>, With<NotShadowCaster>)>,
+    shadow_caster_query: Query<(), (With<ChunkMesh>, Without<NotShadowCaster>)>,
+) {
+    overlay_state.shadow_map_size = shadow_map.as_ref().map(|sm| sm.size).unwrap_or(0);
+    overlay_state.shadow_cascade_count = config.render.shadow_cascade_count;
+    overlay_state.shadows_enabled = sun_query.iter().next().map(|l| l.shadows_enabled).unwrap_or(false);
+    overlay_state.shadow_caster_count = shadow_caster_query.iter().count();
+    overlay_state.shadow_culled_count = not_shadow_caster_query.iter().count();
+    overlay_state.bloom_enabled = config.render.bloom_enabled;
+    overlay_state.bloom_intensity = config.render.bloom_intensity;
+    overlay_state.fog_enabled = config.render.fog_enabled;
+    overlay_state.fog_start = config.render.fog_start;
+    overlay_state.fog_end = config.render.fog_end;
+}
+
+/// System to handle debug keyboard shortcuts (F3 overlay toggle, F7 shadow toggle)
+pub fn debug_keyboard_input(
+    keyboard: Res<ButtonInput<KeyCode>>,
+    mut overlay_state: ResMut<DebugOverlayState>,
+    mut sun_query: Query<&mut DirectionalLight, With<Sun>>,
+) {
+    if keyboard.just_pressed(KeyCode::F3) {
+        overlay_state.visible = !overlay_state.visible;
+    }
+    if keyboard.just_pressed(KeyCode::F7) {
+        for mut light in &mut sun_query {
+            light.shadows_enabled = !light.shadows_enabled;
+            info!("Shadows toggled: {}", light.shadows_enabled);
+        }
+    }
+}
+
 /// System to toggle wireframe mode
 pub fn toggle_wireframe(
     overlay_state: Res<DebugOverlayState>,
@@ -212,540 +280,351 @@ pub struct WireframeConfig {
     pub global: bool,
 }
 
-/// System to render the debug overlay window
-pub fn debug_overlay_ui(
-    mut contexts: EguiContexts,
-    mut overlay_state: ResMut<DebugOverlayState>,
-    player_query: Query<&GlobalTransform, With<Player>>,
-    chunk_manager: Option<Res<ChunkManager>>,
-    day_night: Option<Res<DayNightCycle>>,
-    action_states: Option<Res<ActionStates>>,
-    keyboard: Res<ButtonInput<KeyCode>>,
-    current_target: Option<Res<CurrentTarget>>,
-    config: Res<EngineConfig>,
-    shadow_map: Option<Res<DirectionalLightShadowMap>>,
-    mut sun_query: Query<&mut DirectionalLight, With<Sun>>,
-    not_shadow_caster_query: Query<(), (With<ChunkMesh>, With<NotShadowCaster>)>,
-    shadow_caster_query: Query<(), (With<ChunkMesh>, Without<NotShadowCaster>)>,
+/// Draw debug sections into the given UI container (called from the inspector panel).
+///
+/// This is NOT a Bevy system — it's a plain function that the inspector system
+/// calls, passing all the data it needs.
+pub fn draw_debug_ui(
+    ui: &mut egui::Ui,
+    overlay_state: &mut DebugOverlayState,
+    player_pos: Vec3,
+    chunk_count: usize,
+    render_distance: u32,
+    current_target: Option<&CurrentTarget>,
+    day_night: Option<&DayNightCycle>,
+    action_states: Option<&ActionStates>,
 ) {
-    // Toggle overlay with F3
-    if keyboard.just_pressed(KeyCode::F3) {
-        overlay_state.visible = !overlay_state.visible;
-    }
+    // ── Performance summary (always visible at top) ─────────
+    {
+        let fps = overlay_state.cached_fps;
+        let frame_ms = overlay_state.cached_frame_time_ms;
 
-    // Toggle shadows with F7
-    if keyboard.just_pressed(KeyCode::F7) {
-        for mut light in &mut sun_query {
-            light.shadows_enabled = !light.shadows_enabled;
-            info!("Shadows toggled: {}", light.shadows_enabled);
-        }
-    }
+        let fps_color = if fps >= 60.0 {
+            egui::Color32::from_rgb(100, 255, 100)
+        } else if fps >= 30.0 {
+            egui::Color32::from_rgb(255, 255, 100)
+        } else {
+            egui::Color32::from_rgb(255, 100, 100)
+        };
 
-    if !overlay_state.visible {
-        return;
-    }
+        ui.horizontal(|ui| {
+            ui.label("⚡");
+            ui.colored_label(
+                fps_color,
+                egui::RichText::new(format!("{:.0} FPS", fps))
+                    .strong()
+                    .size(16.0),
+            );
+            ui.monospace(format!("({:.2} ms)", frame_ms));
+        });
 
-    // Get player world position (feet). This is the canonical "where am I?" location.
-    let player_pos = player_query
-        .get_single()
-        .map(|t| t.translation())
-        .unwrap_or(Vec3::ZERO);
-    let chunk_coords = world_to_chunk_coords(player_pos);
-    
-    // Get chunk count
-    let chunk_count = chunk_manager.as_ref().map(|cm| cm.chunks.len()).unwrap_or(0);
-
-    // Main debug overlay window (top-left corner)
-    egui::Window::new("🔧 Debug Overlay")
-        .default_pos([10.0, 40.0])
-        .default_width(280.0)
-        .collapsible(true)
-        .resizable(true)
-        .show(contexts.ctx_mut(), |ui| {
-            // ── Performance summary (always visible at top) ─────────
-            {
-                let fps = overlay_state.cached_fps;
-                let frame_ms = overlay_state.cached_frame_time_ms;
-
-                // FPS color: green ≥60, yellow ≥30, red <30
-                let fps_color = if fps >= 60.0 {
-                    egui::Color32::from_rgb(100, 255, 100)
-                } else if fps >= 30.0 {
-                    egui::Color32::from_rgb(255, 255, 100)
-                } else {
-                    egui::Color32::from_rgb(255, 100, 100)
-                };
-
-                ui.horizontal(|ui| {
-                    ui.label("⚡");
+        ui.horizontal(|ui| {
+            if let Some(ref mem) = overlay_state.cached_process_memory {
+                ui.label("💾");
+                ui.monospace(memory::format_bytes(mem.rss_bytes));
+                if let Some(peak) = mem.peak_rss_bytes {
                     ui.colored_label(
-                        fps_color,
-                        egui::RichText::new(format!("{:.0} FPS", fps))
-                            .strong()
-                            .size(16.0),
+                        egui::Color32::from_rgb(150, 150, 150),
+                        format!("(peak {})", memory::format_bytes(peak)),
                     );
-                    ui.monospace(format!("({:.2} ms)", frame_ms));
-                });
-
-                ui.horizontal(|ui| {
-                    // Process memory
-                    if let Some(ref mem) = overlay_state.cached_process_memory {
-                        ui.label("💾");
-                        ui.monospace(memory::format_bytes(mem.rss_bytes));
-                        if let Some(peak) = mem.peak_rss_bytes {
-                            ui.colored_label(
-                                egui::Color32::from_rgb(150, 150, 150),
-                                format!("(peak {})", memory::format_bytes(peak)),
-                            );
-                        }
-                    } else {
-                        ui.label("💾");
-                        ui.colored_label(
-                            egui::Color32::from_rgb(150, 150, 150),
-                            "N/A",
-                        );
-                    }
-                });
-
-                ui.horizontal(|ui| {
-                    ui.label("📦");
-                    ui.monospace(format!("{} chunks", chunk_count));
-                    ui.label("  🧩");
-                    ui.monospace(format!("{} entities", overlay_state.cached_entity_count as u64));
-                });
+                }
+            } else {
+                ui.label("💾");
+                ui.colored_label(egui::Color32::from_rgb(150, 150, 150), "N/A");
             }
+        });
 
-            ui.separator();
+        ui.horizontal(|ui| {
+            ui.label("📦");
+            ui.monospace(format!("{} chunks", chunk_count));
+            ui.label("  🧩");
+            ui.monospace(format!("{} entities", overlay_state.cached_entity_count as u64));
+        });
+    }
 
-            // Coordinates section
-            ui.collapsing("📍 Position", |ui| {
+    ui.separator();
+
+    // Coordinates section
+    let chunk_coords = world_to_chunk_coords(player_pos);
+    ui.collapsing("📍 Position", |ui| {
+        ui.horizontal(|ui| {
+            ui.label("World:");
+            ui.monospace(format!("X:{:.1} Y:{:.1} Z:{:.1}", player_pos.x, player_pos.y, player_pos.z));
+        });
+        ui.horizontal(|ui| {
+            ui.label("Chunk:");
+            ui.monospace(format!("({}, {}, {})", chunk_coords.x, chunk_coords.y, chunk_coords.z));
+        });
+        ui.horizontal(|ui| {
+            ui.label("Local:");
+            let local_x = ((player_pos.x % CHUNK_SIZE as f32) + CHUNK_SIZE as f32) % CHUNK_SIZE as f32;
+            let local_y = ((player_pos.y % CHUNK_SIZE as f32) + CHUNK_SIZE as f32) % CHUNK_SIZE as f32;
+            let local_z = ((player_pos.z % CHUNK_SIZE as f32) + CHUNK_SIZE as f32) % CHUNK_SIZE as f32;
+            ui.monospace(format!("({:.1}, {:.1}, {:.1})", local_x, local_y, local_z));
+        });
+    });
+
+    ui.separator();
+
+    // Target block section
+    ui.collapsing("🎯 Target Block", |ui| {
+        if let Some(target_res) = current_target {
+            if let Some(ref result) = target_res.0 {
                 ui.horizontal(|ui| {
-                    ui.label("World:");
-                    ui.monospace(format!(
-                        "X:{:.1} Y:{:.1} Z:{:.1}",
-                        player_pos.x, player_pos.y, player_pos.z
-                    ));
+                    ui.label("Block:");
+                    ui.monospace(format!("({}, {}, {})", result.block_pos.x, result.block_pos.y, result.block_pos.z));
                 });
                 ui.horizontal(|ui| {
-                    ui.label("Chunk:");
-                    ui.monospace(format!(
-                        "({}, {}, {})",
-                        chunk_coords.x, chunk_coords.y, chunk_coords.z
-                    ));
+                    ui.label("Type:");
+                    ui.monospace(format!("{:?}", result.block_type));
                 });
                 ui.horizontal(|ui| {
-                    ui.label("Local:");
-                    let local_x =
-                        ((player_pos.x % CHUNK_SIZE as f32) + CHUNK_SIZE as f32) % CHUNK_SIZE as f32;
-                    let local_y =
-                        ((player_pos.y % CHUNK_SIZE as f32) + CHUNK_SIZE as f32) % CHUNK_SIZE as f32;
-                    let local_z =
-                        ((player_pos.z % CHUNK_SIZE as f32) + CHUNK_SIZE as f32) % CHUNK_SIZE as f32;
-                    ui.monospace(format!("({:.1}, {:.1}, {:.1})", local_x, local_y, local_z));
+                    ui.label("Face:");
+                    let face_name = match (result.face_normal.x, result.face_normal.y, result.face_normal.z) {
+                        (1, 0, 0) => "+X (East)",
+                        (-1, 0, 0) => "-X (West)",
+                        (0, 1, 0) => "+Y (Top)",
+                        (0, -1, 0) => "-Y (Bottom)",
+                        (0, 0, 1) => "+Z (South)",
+                        (0, 0, -1) => "-Z (North)",
+                        _ => "Unknown",
+                    };
+                    ui.monospace(face_name);
                 });
-            });
+                ui.horizontal(|ui| {
+                    ui.label("Distance:");
+                    ui.monospace(format!("{:.2} blocks", result.distance));
+                });
+                ui.horizontal(|ui| {
+                    ui.label("Place at:");
+                    ui.monospace(format!("({}, {}, {})", result.adjacent_pos.x, result.adjacent_pos.y, result.adjacent_pos.z));
+                });
+            } else {
+                ui.colored_label(egui::Color32::from_rgb(150, 150, 150), "No block in range");
+            }
+        } else {
+            ui.label("Raycast not available");
+        }
+    });
 
-            ui.separator();
+    ui.separator();
 
-            // Target block section
-            ui.collapsing("🎯 Target Block", |ui| {
-                if let Some(ref target_res) = current_target {
-                    if let Some(ref result) = target_res.0 {
-                        ui.horizontal(|ui| {
-                            ui.label("Block:");
-                            ui.monospace(format!(
-                                "({}, {}, {})",
-                                result.block_pos.x, result.block_pos.y, result.block_pos.z
-                            ));
-                        });
-                        ui.horizontal(|ui| {
-                            ui.label("Type:");
-                            ui.monospace(format!("{:?}", result.block_type));
-                        });
-                        ui.horizontal(|ui| {
-                            ui.label("Face:");
-                            let face_name = match (result.face_normal.x, result.face_normal.y, result.face_normal.z) {
-                                (1, 0, 0) => "+X (East)",
-                                (-1, 0, 0) => "-X (West)",
-                                (0, 1, 0) => "+Y (Top)",
-                                (0, -1, 0) => "-Y (Bottom)",
-                                (0, 0, 1) => "+Z (South)",
-                                (0, 0, -1) => "-Z (North)",
-                                _ => "Unknown",
-                            };
-                            ui.monospace(face_name);
-                        });
-                        ui.horizontal(|ui| {
-                            ui.label("Distance:");
-                            ui.monospace(format!("{:.2} blocks", result.distance));
-                        });
-                        ui.horizontal(|ui| {
-                            ui.label("Place at:");
-                            ui.monospace(format!(
-                                "({}, {}, {})",
-                                result.adjacent_pos.x, result.adjacent_pos.y, result.adjacent_pos.z
-                            ));
-                        });
-                    } else {
-                        ui.colored_label(
-                            egui::Color32::from_rgb(150, 150, 150),
-                            "No block in range",
-                        );
-                    }
-                } else {
-                    ui.label("Raycast not available");
+    // Day/night cycle section
+    if let Some(cycle) = day_night {
+        ui.collapsing("🌅 Time of Day", |ui| {
+            ui.horizontal(|ui| { ui.label("Clock:"); ui.monospace(cycle.clock_display()); });
+            ui.horizontal(|ui| { ui.label("Phase:"); ui.monospace(cycle.phase_name()); });
+            ui.horizontal(|ui| { ui.label("Raw:"); ui.monospace(format!("{:.4}", cycle.time_of_day)); });
+            ui.horizontal(|ui| {
+                ui.label("Cycle:");
+                ui.monospace(format!("{:.0}s", cycle.cycle_duration));
+                if cycle.paused {
+                    ui.colored_label(egui::Color32::from_rgb(255, 200, 100), " ⏸ PAUSED");
                 }
             });
 
-            ui.separator();
+            // Visual time-of-day bar
+            let (rect, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 12.0), egui::Sense::hover());
+            ui.painter().rect_filled(rect, 2.0, egui::Color32::from_rgb(20, 20, 40));
+            let marker_x = rect.min.x + rect.width() * cycle.time_of_day;
+            let marker_center = egui::pos2(marker_x, rect.center().y);
+            ui.painter().circle_filled(marker_center, 5.0, egui::Color32::from_rgb(255, 220, 80));
+        });
+        ui.separator();
+    }
 
-            // Day/night cycle section
-            if let Some(ref cycle) = day_night {
-                ui.collapsing("🌅 Time of Day", |ui| {
-                    ui.horizontal(|ui| {
-                        ui.label("Clock:");
-                        ui.monospace(cycle.clock_display());
-                    });
-                    ui.horizontal(|ui| {
-                        ui.label("Phase:");
-                        ui.monospace(cycle.phase_name());
-                    });
-                    ui.horizontal(|ui| {
-                        ui.label("Raw:");
-                        ui.monospace(format!("{:.4}", cycle.time_of_day));
-                    });
-                    ui.horizontal(|ui| {
-                        ui.label("Cycle:");
-                        ui.monospace(format!("{:.0}s", cycle.cycle_duration));
-                        if cycle.paused {
-                            ui.colored_label(
-                                egui::Color32::from_rgb(255, 200, 100),
-                                " ⏸ PAUSED",
-                            );
-                        }
-                    });
+    // Frame time graph
+    ui.collapsing("📊 Frame Time", |ui| {
+        let history = overlay_state.get_ordered_history();
+        let (avg, min, max) = overlay_state.frame_time_stats();
 
-                    // Visual time-of-day bar
-                    let (rect, _) = ui.allocate_exact_size(
-                        egui::vec2(ui.available_width(), 12.0),
-                        egui::Sense::hover(),
-                    );
-                    // Background gradient hint (night-dawn-day-dusk-night)
-                    ui.painter().rect_filled(rect, 2.0, egui::Color32::from_rgb(20, 20, 40));
-                    // Sun position marker
-                    let marker_x = rect.min.x + rect.width() * cycle.time_of_day;
-                    let marker_center = egui::pos2(marker_x, rect.center().y);
-                    ui.painter().circle_filled(
-                        marker_center,
-                        5.0,
-                        egui::Color32::from_rgb(255, 220, 80),
-                    );
-                });
+        ui.horizontal(|ui| {
+            ui.label("Avg:"); ui.monospace(format!("{:.2}ms", avg));
+            ui.label("Min:"); ui.monospace(format!("{:.2}ms", min));
+            ui.label("Max:"); ui.monospace(format!("{:.2}ms", max));
+        });
 
-                ui.separator();
-            }
+        let fps = if avg > 0.0 { 1000.0 / avg } else { 0.0 };
+        let fps_color = if fps >= 60.0 {
+            egui::Color32::from_rgb(100, 255, 100)
+        } else if fps >= 30.0 {
+            egui::Color32::from_rgb(255, 255, 100)
+        } else {
+            egui::Color32::from_rgb(255, 100, 100)
+        };
+        ui.horizontal(|ui| { ui.label("FPS:"); ui.colored_label(fps_color, format!("{:.0}", fps)); });
 
-            // Frame time graph
-            ui.collapsing("📊 Frame Time", |ui| {
-                let history = overlay_state.get_ordered_history();
-                let (avg, min, max) = overlay_state.frame_time_stats();
-                
-                ui.horizontal(|ui| {
-                    ui.label("Avg:");
-                    ui.monospace(format!("{:.2}ms", avg));
-                    ui.label("Min:");
-                    ui.monospace(format!("{:.2}ms", min));
-                    ui.label("Max:");
-                    ui.monospace(format!("{:.2}ms", max));
-                });
-                
-                // Calculate FPS from average frame time
-                let fps = if avg > 0.0 { 1000.0 / avg } else { 0.0 };
-                let fps_color = if fps >= 60.0 {
+        ui.add_space(4.0);
+        ui.label("Recent frame times:");
+
+        let recent: Vec<f32> = history.iter().rev().take(30).copied().collect();
+        let max_frame_time = recent.iter().copied().fold(33.33_f32, f32::max);
+
+        ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().item_spacing = egui::vec2(1.0, 0.0);
+            for &frame_time in recent.iter().rev() {
+                let normalized = (frame_time / max_frame_time).min(1.0);
+                let color = if frame_time <= 16.67 {
                     egui::Color32::from_rgb(100, 255, 100)
-                } else if fps >= 30.0 {
+                } else if frame_time <= 33.33 {
                     egui::Color32::from_rgb(255, 255, 100)
                 } else {
                     egui::Color32::from_rgb(255, 100, 100)
                 };
-                ui.horizontal(|ui| {
-                    ui.label("FPS:");
-                    ui.colored_label(fps_color, format!("{:.0}", fps));
-                });
-                
-                // Simple bar graph using progress bars for last 30 frames
-                ui.add_space(4.0);
-                ui.label("Recent frame times:");
-                
-                // Take last 30 samples for visualization
-                let recent: Vec<f32> = history.iter().rev().take(30).copied().collect();
-                let max_frame_time = recent.iter().copied().fold(33.33_f32, f32::max);
-                
-                // Draw a simple horizontal bar chart
-                ui.horizontal_wrapped(|ui| {
-                    ui.spacing_mut().item_spacing = egui::vec2(1.0, 0.0);
-                    for &frame_time in recent.iter().rev() {
-                        let normalized = (frame_time / max_frame_time).min(1.0);
-                        let color = if frame_time <= 16.67 {
-                            egui::Color32::from_rgb(100, 255, 100) // Green: good
-                        } else if frame_time <= 33.33 {
-                            egui::Color32::from_rgb(255, 255, 100) // Yellow: ok
-                        } else {
-                            egui::Color32::from_rgb(255, 100, 100) // Red: bad
-                        };
-                        
-                        let height = 20.0 * normalized;
-                        let (rect, _response) = ui.allocate_exact_size(
-                            egui::vec2(4.0, 20.0),
-                            egui::Sense::hover(),
-                        );
-                        
-                        // Draw the bar from bottom
-                        let bar_rect = egui::Rect::from_min_max(
-                            egui::pos2(rect.min.x, rect.max.y - height),
-                            rect.max,
-                        );
-                        ui.painter().rect_filled(bar_rect, 0.0, color);
-                    }
-                });
-                
-                ui.small("Green ≤16.7ms (60fps) | Yellow ≤33.3ms (30fps) | Red >33.3ms");
-            });
-
-            ui.separator();
-
-            // Memory estimation
-            if overlay_state.show_memory {
-                ui.collapsing("💾 Memory (estimated)", |ui| {
-                    let (block_mb, mesh_mb, total_mb) = estimate_memory_usage(chunk_count);
-                    
-                    ui.horizontal(|ui| {
-                        ui.label("Chunks loaded:");
-                        ui.monospace(format!("{}", chunk_count));
-                    });
-                    ui.horizontal(|ui| {
-                        ui.label("Block data:");
-                        ui.monospace(format!("{:.1} MB", block_mb));
-                    });
-                    ui.horizontal(|ui| {
-                        ui.label("Mesh data:");
-                        ui.monospace(format!("~{:.1} MB", mesh_mb));
-                    });
-                    ui.horizontal(|ui| {
-                        ui.label("Total (est):");
-                        ui.strong(format!("~{:.1} MB", total_mb));
-                    });
-                });
+                let height = 20.0 * normalized;
+                let (rect, _response) = ui.allocate_exact_size(egui::vec2(4.0, 20.0), egui::Sense::hover());
+                let bar_rect = egui::Rect::from_min_max(
+                    egui::pos2(rect.min.x, rect.max.y - height),
+                    rect.max,
+                );
+                ui.painter().rect_filled(bar_rect, 0.0, color);
             }
-
-            ui.separator();
-
-            // Chunk statistics
-            if overlay_state.show_chunks {
-                ui.collapsing("📦 Chunk Statistics", |ui| {
-                    let render_distance = chunk_manager
-                        .as_ref()
-                        .map(|cm| cm.render_distance)
-                        .unwrap_or(0);
-
-                    // Vertical range matches chunk_streaming_system: y in -2..=4 (7 levels)
-                    let vertical_levels = 7;
-                    let side = (2 * render_distance + 1) as usize;
-                    let expected_chunks = side * side * vertical_levels;
-
-                    let loaded_pct = if expected_chunks > 0 {
-                        (chunk_count as f64 / expected_chunks as f64 * 100.0).min(100.0)
-                    } else {
-                        0.0
-                    };
-
-                    let pending = expected_chunks.saturating_sub(chunk_count);
-
-                    // Memory estimate: block data only (CHUNK_VOLUME × size_of BlockType per chunk)
-                    let block_bytes = chunk_count * CHUNK_VOLUME * std::mem::size_of::<crate::world::BlockType>();
-                    let block_mb = block_bytes as f64 / (1024.0 * 1024.0);
-
-                    ui.horizontal(|ui| {
-                        ui.label("Loaded:");
-                        ui.monospace(format!("{}", chunk_count));
-                    });
-                    ui.horizontal(|ui| {
-                        ui.label("Expected:");
-                        ui.monospace(format!("{}", expected_chunks));
-                    });
-                    ui.horizontal(|ui| {
-                        ui.label("Pending:");
-                        ui.monospace(format!("{}", pending));
-                    });
-                    ui.horizontal(|ui| {
-                        ui.label("Loaded %:");
-                        ui.monospace(format!("{:.1}%", loaded_pct));
-                    });
-                    ui.horizontal(|ui| {
-                        ui.label("Render dist:");
-                        ui.monospace(format!("{}", render_distance));
-                    });
-                    ui.horizontal(|ui| {
-                        ui.label("Block memory:");
-                        ui.monospace(format!("{:.1} MB", block_mb));
-                    });
-                });
-            }
-
-            ui.separator();
-
-            // Rendering debug panel
-            if overlay_state.show_render {
-                ui.collapsing("🌟 Rendering", |ui| {
-                    // Shadow map
-                    let shadow_size = shadow_map
-                        .as_ref()
-                        .map(|sm| sm.size)
-                        .unwrap_or(0);
-                    ui.horizontal(|ui| {
-                        ui.label("Shadow map:");
-                        ui.monospace(format!("{}px", shadow_size));
-                    });
-                    ui.horizontal(|ui| {
-                        ui.label("Cascades:");
-                        ui.monospace(format!("{}", config.render.shadow_cascade_count));
-                    });
-
-                    // Shadow state from sun
-                    for light in sun_query.iter() {
-                        ui.horizontal(|ui| {
-                            ui.label("Shadows:");
-                            if light.shadows_enabled {
-                                ui.colored_label(
-                                    egui::Color32::from_rgb(100, 255, 100),
-                                    "ON",
-                                );
-                            } else {
-                                ui.colored_label(
-                                    egui::Color32::from_rgb(255, 100, 100),
-                                    "OFF",
-                                );
-                            }
-                            ui.small("(F7 toggle)");
-                        });
-                    }
-
-                    // Shadow caster counts
-                    let casters = shadow_caster_query.iter().count();
-                    let culled = not_shadow_caster_query.iter().count();
-                    ui.horizontal(|ui| {
-                        ui.label("Shadow casters:");
-                        ui.monospace(format!("{}", casters));
-                    });
-                    ui.horizontal(|ui| {
-                        ui.label("Shadow culled:");
-                        ui.monospace(format!("{}", culled));
-                    });
-
-                    ui.separator();
-
-                    // Bloom
-                    ui.horizontal(|ui| {
-                        ui.label("Bloom:");
-                        if config.render.bloom_enabled {
-                            ui.colored_label(
-                                egui::Color32::from_rgb(100, 255, 100),
-                                format!("ON ({:.2})", config.render.bloom_intensity),
-                            );
-                        } else {
-                            ui.colored_label(
-                                egui::Color32::from_rgb(150, 150, 150),
-                                "OFF",
-                            );
-                        }
-                    });
-
-                    // Fog
-                    ui.horizontal(|ui| {
-                        ui.label("Fog:");
-                        if config.render.fog_enabled {
-                            ui.colored_label(
-                                egui::Color32::from_rgb(100, 255, 100),
-                                format!("ON ({:.0}..{:.0})", config.render.fog_start, config.render.fog_end),
-                            );
-                        } else {
-                            ui.colored_label(
-                                egui::Color32::from_rgb(150, 150, 150),
-                                "OFF",
-                            );
-                        }
-                    });
-
-                    // Tonemapping
-                    ui.horizontal(|ui| {
-                        ui.label("Tonemapping:");
-                        ui.monospace("ACES Fitted");
-                    });
-                });
-
-                ui.separator();
-            }
-
-            // Render settings
-            ui.collapsing("🎨 Render", |ui| {
-                ui.checkbox(&mut overlay_state.wireframe_enabled, "Wireframe mode");
-                ui.small("Note: Requires WireframePlugin");
-            });
-
-            ui.separator();
-
-            // Input state visualization
-            if overlay_state.show_input_state {
-                ui.collapsing("🎮 Input State", |ui| {
-                    if let Some(ref states) = action_states {
-                        let actions = [
-                            ("Forward", InputAction::MoveForward),
-                            ("Backward", InputAction::MoveBackward),
-                            ("Left", InputAction::MoveLeft),
-                            ("Right", InputAction::MoveRight),
-                            ("Jump", InputAction::Jump),
-                            ("Crouch", InputAction::Crouch),
-                            ("Sprint", InputAction::Sprint),
-                        ];
-                        
-                        ui.horizontal_wrapped(|ui| {
-                            for (name, action) in actions {
-                                let state = states.get(action);
-                                let (color, symbol) = match state {
-                                    ActionState::Pressed | ActionState::JustPressed => {
-                                        (egui::Color32::from_rgb(100, 255, 100), "●")
-                                    }
-                                    ActionState::JustReleased => {
-                                        (egui::Color32::from_rgb(255, 200, 100), "○")
-                                    }
-                                    ActionState::Released => {
-                                        (egui::Color32::from_rgb(100, 100, 100), "○")
-                                    }
-                                };
-                                ui.colored_label(color, format!("{} {}", symbol, name));
-                            }
-                        });
-                    } else {
-                        ui.label("Input system not available");
-                    }
-                });
-            }
-
-            ui.separator();
-
-            // Toggle buttons at bottom
-            ui.horizontal(|ui| {
-                ui.checkbox(&mut overlay_state.show_memory, "Memory");
-                ui.checkbox(&mut overlay_state.show_input_state, "Input");
-                ui.checkbox(&mut overlay_state.show_chunks, "Chunks");
-                ui.checkbox(&mut overlay_state.show_render, "Render");
-            });
-            
-            ui.small("F3 overlay | F7 shadows");
         });
+
+        ui.small("Green ≤16.7ms (60fps) | Yellow ≤33.3ms (30fps) | Red >33.3ms");
+    });
+
+    ui.separator();
+
+    // Memory estimation
+    if overlay_state.show_memory {
+        ui.collapsing("💾 Memory (estimated)", |ui| {
+            let (block_mb, mesh_mb, total_mb) = estimate_memory_usage(chunk_count);
+            ui.horizontal(|ui| { ui.label("Chunks loaded:"); ui.monospace(format!("{}", chunk_count)); });
+            ui.horizontal(|ui| { ui.label("Block data:"); ui.monospace(format!("{:.1} MB", block_mb)); });
+            ui.horizontal(|ui| { ui.label("Mesh data:"); ui.monospace(format!("~{:.1} MB", mesh_mb)); });
+            ui.horizontal(|ui| { ui.label("Total (est):"); ui.strong(format!("~{:.1} MB", total_mb)); });
+        });
+    }
+
+    ui.separator();
+
+    // Chunk statistics
+    if overlay_state.show_chunks {
+        ui.collapsing("📦 Chunk Statistics", |ui| {
+            let vertical_levels = 7;
+            let side = (2 * render_distance + 1) as usize;
+            let expected_chunks = side * side * vertical_levels;
+
+            let loaded_pct = if expected_chunks > 0 {
+                (chunk_count as f64 / expected_chunks as f64 * 100.0).min(100.0)
+            } else {
+                0.0
+            };
+            let pending = expected_chunks.saturating_sub(chunk_count);
+            let block_bytes = chunk_count * CHUNK_VOLUME * std::mem::size_of::<crate::world::BlockType>();
+            let block_mb = block_bytes as f64 / (1024.0 * 1024.0);
+
+            ui.horizontal(|ui| { ui.label("Loaded:"); ui.monospace(format!("{}", chunk_count)); });
+            ui.horizontal(|ui| { ui.label("Expected:"); ui.monospace(format!("{}", expected_chunks)); });
+            ui.horizontal(|ui| { ui.label("Pending:"); ui.monospace(format!("{}", pending)); });
+            ui.horizontal(|ui| { ui.label("Loaded %:"); ui.monospace(format!("{:.1}%", loaded_pct)); });
+            ui.horizontal(|ui| { ui.label("Render dist:"); ui.monospace(format!("{}", render_distance)); });
+            ui.horizontal(|ui| { ui.label("Block memory:"); ui.monospace(format!("{:.1} MB", block_mb)); });
+        });
+    }
+
+    ui.separator();
+
+    // Rendering debug panel (uses pre-computed data from overlay_state)
+    if overlay_state.show_render {
+        ui.collapsing("🌟 Rendering", |ui| {
+            ui.horizontal(|ui| { ui.label("Shadow map:"); ui.monospace(format!("{}px", overlay_state.shadow_map_size)); });
+            ui.horizontal(|ui| { ui.label("Cascades:"); ui.monospace(format!("{}", overlay_state.shadow_cascade_count)); });
+            ui.horizontal(|ui| {
+                ui.label("Shadows:");
+                if overlay_state.shadows_enabled {
+                    ui.colored_label(egui::Color32::from_rgb(100, 255, 100), "ON");
+                } else {
+                    ui.colored_label(egui::Color32::from_rgb(255, 100, 100), "OFF");
+                }
+                ui.small("(F7 toggle)");
+            });
+            ui.horizontal(|ui| { ui.label("Shadow casters:"); ui.monospace(format!("{}", overlay_state.shadow_caster_count)); });
+            ui.horizontal(|ui| { ui.label("Shadow culled:"); ui.monospace(format!("{}", overlay_state.shadow_culled_count)); });
+            ui.separator();
+            ui.horizontal(|ui| {
+                ui.label("Bloom:");
+                if overlay_state.bloom_enabled {
+                    ui.colored_label(egui::Color32::from_rgb(100, 255, 100), format!("ON ({:.2})", overlay_state.bloom_intensity));
+                } else {
+                    ui.colored_label(egui::Color32::from_rgb(150, 150, 150), "OFF");
+                }
+            });
+            ui.horizontal(|ui| {
+                ui.label("Fog:");
+                if overlay_state.fog_enabled {
+                    ui.colored_label(egui::Color32::from_rgb(100, 255, 100), format!("ON ({:.0}..{:.0})", overlay_state.fog_start, overlay_state.fog_end));
+                } else {
+                    ui.colored_label(egui::Color32::from_rgb(150, 150, 150), "OFF");
+                }
+            });
+            ui.horizontal(|ui| { ui.label("Tonemapping:"); ui.monospace("ACES Fitted"); });
+        });
+        ui.separator();
+    }
+
+    // Render options
+    ui.collapsing("🎨 Render Options", |ui| {
+        ui.checkbox(&mut overlay_state.wireframe_enabled, "Wireframe mode");
+        ui.small("Note: Requires WireframePlugin");
+    });
+
+    ui.separator();
+
+    // Input state visualization
+    if overlay_state.show_input_state {
+        ui.collapsing("🎮 Input State", |ui| {
+            if let Some(states) = action_states {
+                let actions = [
+                    ("Forward", InputAction::MoveForward),
+                    ("Backward", InputAction::MoveBackward),
+                    ("Left", InputAction::MoveLeft),
+                    ("Right", InputAction::MoveRight),
+                    ("Jump", InputAction::Jump),
+                    ("Crouch", InputAction::Crouch),
+                    ("Sprint", InputAction::Sprint),
+                ];
+                ui.horizontal_wrapped(|ui| {
+                    for (name, action) in actions {
+                        let state = states.get(action);
+                        let (color, symbol) = match state {
+                            ActionState::Pressed | ActionState::JustPressed => {
+                                (egui::Color32::from_rgb(100, 255, 100), "●")
+                            }
+                            ActionState::JustReleased => {
+                                (egui::Color32::from_rgb(255, 200, 100), "○")
+                            }
+                            ActionState::Released => {
+                                (egui::Color32::from_rgb(100, 100, 100), "○")
+                            }
+                        };
+                        ui.colored_label(color, format!("{} {}", symbol, name));
+                    }
+                });
+            } else {
+                ui.label("Input system not available");
+            }
+        });
+    }
+
+    ui.separator();
+
+    // Section toggle buttons at bottom
+    ui.horizontal(|ui| {
+        ui.checkbox(&mut overlay_state.show_memory, "Memory");
+        ui.checkbox(&mut overlay_state.show_input_state, "Input");
+        ui.checkbox(&mut overlay_state.show_chunks, "Chunks");
+        ui.checkbox(&mut overlay_state.show_render, "Render");
+    });
+
+    ui.small("F3 toggle debug | F7 toggle shadows");
 }
 
-/// Plugin to add debug overlay functionality
+/// Plugin to add debug overlay functionality.
+///
+/// The debug UI itself is rendered by the inspector panel in [`super::EditorPlugin`].
+/// This plugin only registers the data-gathering systems and keyboard shortcuts.
 pub struct DebugOverlayPlugin;
 
 impl Plugin for DebugOverlayPlugin {
@@ -757,7 +636,8 @@ impl Plugin for DebugOverlayPlugin {
                 Update,
                 (
                     update_frame_time_history,
-                    debug_overlay_ui,
+                    update_debug_render_data,
+                    debug_keyboard_input,
                     toggle_wireframe,
                 )
                     .chain(),
