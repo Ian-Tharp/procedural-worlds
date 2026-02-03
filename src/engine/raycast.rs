@@ -245,7 +245,7 @@ pub fn voxel_raycast(
 ///
 /// Reads the camera's world-space transform to get the ray origin and direction,
 /// then performs a DDA raycast and stores the result in [`CurrentTarget`].
-fn update_raycast_target(
+pub fn update_raycast_target(
     camera_query: Query<&GlobalTransform, With<CameraController>>,
     chunk_manager: Res<ChunkManager>,
     chunks: Query<&Chunk>,

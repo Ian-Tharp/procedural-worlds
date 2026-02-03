@@ -18,6 +18,7 @@ use serde::{Deserialize, Serialize};
 use crate::generation::{generate_cacti, generate_caves, generate_chunk_terrain, generate_trees, TerrainConfig};
 
 pub mod atlas_material;
+pub mod interaction;
 pub mod meshing;
 pub mod persistence;
 pub mod save;
@@ -414,6 +415,8 @@ impl Plugin for WorldPlugin {
             .add_plugins(atlas_material::BlockAtlasMaterialPlugin)
             // Save system plugin (auto-save, manual save, load on startup)
             .add_plugins(save::SavePlugin)
+            // Block interaction (place, break, selected block cycling)
+            .add_plugins(interaction::BlockInteractionPlugin)
             .configure_sets(
                 Update,
                 (
@@ -496,11 +499,12 @@ fn setup_chunk_material(
         }
     }
 
-    // Fallback: plain white StandardMaterial
+    // Fallback: plain white StandardMaterial with alpha blending for water transparency
     let material = materials.add(StandardMaterial {
         base_color: Color::WHITE,
         perceptual_roughness: 0.9,
         metallic: 0.0,
+        alpha_mode: AlphaMode::Blend,
         ..default()
     });
     chunk_material.handle = Some(ChunkMaterialHandle::Standard(material));
