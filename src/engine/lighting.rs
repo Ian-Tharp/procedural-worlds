@@ -155,6 +155,9 @@ fn spawn_sun(mut commands: Commands, config: Res<EngineConfig>) {
         brightness: 200.0,
     });
 
+    // Sky color — will be updated dynamically by apply_lighting
+    commands.insert_resource(ClearColor(Color::srgb(0.53, 0.71, 0.92)));
+
     info!("Day/night cycle: sun and ambient light spawned (shadow map {}px, {} cascades, max dist {:.0})",
         config.render.shadow_map_resolution,
         config.render.shadow_cascade_count,
@@ -187,15 +190,17 @@ fn update_day_night_cycle(time: Res<Time>, mut cycle: ResMut<DayNightCycle>) {
     cycle.time_of_day = (cycle.time_of_day + delta) % 1.0;
 }
 
-/// Set the sun transform, color, illuminance, and ambient light based on time of day.
+/// Set the sun transform, color, illuminance, ambient light, and sky color based on time of day.
 fn apply_lighting(
     cycle: Res<DayNightCycle>,
     mut sun_query: Query<(&mut DirectionalLight, &mut Transform), With<Sun>>,
     mut ambient: ResMut<AmbientLight>,
+    mut clear_color: ResMut<ClearColor>,
 ) {
     let t = cycle.time_of_day;
 
     // --- Sun transform, color, illuminance ---
+    let elevation = sun_elevation(t);
     for (mut light, mut transform) in &mut sun_query {
         let dir = sun_direction(t);
         let rotation = Quat::from_rotation_arc(Vec3::NEG_Z, dir);
@@ -206,7 +211,6 @@ fn apply_lighting(
         light.illuminance = illuminance;
 
         // Disable shadows when sun is below the horizon
-        let elevation = sun_elevation(t);
         light.shadows_enabled = elevation > -0.05;
     }
 
@@ -214,6 +218,9 @@ fn apply_lighting(
     let (ambient_color, ambient_brightness) = ambient_settings(t);
     ambient.color = ambient_color;
     ambient.brightness = ambient_brightness;
+
+    // --- Dynamic sky color ---
+    clear_color.0 = sky_color(elevation);
 }
 
 // ============================================================================
@@ -283,17 +290,17 @@ fn ambient_settings(time_of_day: f32) -> (Color, f32) {
     let elevation = sun_elevation(time_of_day);
 
     if elevation < -0.1 {
-        // Deep night — dim blue
-        (Color::srgb(0.05, 0.05, 0.15), 30.0)
+        // Deep night — slightly brighter blue so shadow faces aren't pitch black
+        (Color::srgb(0.08, 0.08, 0.18), 80.0)
     } else if elevation < 0.0 {
         // Twilight transition
         let t = (elevation + 0.1) / 0.1;
         let color = Color::srgb(
-            lerp(0.05, 0.25, t),
-            lerp(0.05, 0.18, t),
-            lerp(0.15, 0.22, t),
+            lerp(0.08, 0.25, t),
+            lerp(0.08, 0.18, t),
+            lerp(0.18, 0.22, t),
         );
-        (color, lerp(30.0, 100.0, t))
+        (color, lerp(80.0, 100.0, t))
     } else {
         // Daytime — brighter, neutral ambient
         let day = elevation.min(1.0);
@@ -303,6 +310,37 @@ fn ambient_settings(time_of_day: f32) -> (Color, f32) {
             lerp(0.22, 0.5, day),
         );
         (color, lerp(100.0, 250.0, day))
+    }
+}
+
+/// Compute the sky (clear) color based on sun elevation.
+///
+/// - Deep night: dark blue
+/// - Dawn/Dusk (twilight): warm orange-pink gradient
+/// - Day: light blue
+fn sky_color(elevation: f32) -> Color {
+    if elevation < -0.1 {
+        // Night
+        Color::srgb(0.02, 0.02, 0.08)
+    } else if elevation < 0.0 {
+        // Twilight — warm orange-pink
+        let t = (elevation + 0.1) / 0.1; // 0 at deep night edge → 1 at horizon
+        Color::srgb(
+            lerp(0.02, 0.8, t),
+            lerp(0.02, 0.45, t),
+            lerp(0.08, 0.35, t),
+        )
+    } else if elevation < 0.3 {
+        // Dawn/dusk above horizon — transition from warm to blue
+        let t = elevation / 0.3; // 0 at horizon → 1 at 0.3 elevation
+        Color::srgb(
+            lerp(0.8, 0.53, t),
+            lerp(0.45, 0.71, t),
+            lerp(0.35, 0.92, t),
+        )
+    } else {
+        // Full day — light sky blue
+        Color::srgb(0.53, 0.71, 0.92)
     }
 }
 
@@ -465,7 +503,7 @@ mod tests {
     #[test]
     fn test_ambient_dim_at_night() {
         let (_color, brightness) = ambient_settings(0.0);
-        assert!(brightness < 50.0, "Night ambient should be dim, got {}", brightness);
+        assert!(brightness <= 80.0, "Night ambient should be dim, got {}", brightness);
     }
 
     #[test]

@@ -410,6 +410,8 @@ impl Plugin for WorldPlugin {
             .init_resource::<ChunkStorage>()
             .init_resource::<unloading::UnloadConfig>()
             .init_resource::<ChunkLoadMetrics>()
+            // Custom atlas material pipeline (shader + material type registration)
+            .add_plugins(atlas_material::BlockAtlasMaterialPlugin)
             // Save system plugin (auto-save, manual save, load on startup)
             .add_plugins(save::SavePlugin)
             .configure_sets(
@@ -454,39 +456,56 @@ impl Plugin for WorldPlugin {
     }
 }
 
+/// Enum to hold either a standard or atlas material handle.
+pub enum ChunkMaterialHandle {
+    Standard(Handle<StandardMaterial>),
+    Atlas(Handle<atlas_material::BlockAtlasMaterial>),
+}
+
 /// Resource holding the shared material for chunk meshes
 #[derive(Resource, Default)]
 pub struct ChunkMaterial {
-    pub handle: Option<Handle<StandardMaterial>>,
+    pub handle: Option<ChunkMaterialHandle>,
 }
 
 /// Setup the shared material for all chunk meshes.
 ///
 /// When `use_textures` is enabled and the `BlockTextureAtlas` resource exists,
-/// the material uses the atlas image as `base_color_texture`. Otherwise it falls
-/// back to a plain white material (vertex colors provide the block color).
+/// the material uses the custom [`BlockAtlasMaterial`] for per-block UV tiling
+/// via the atlas shader. Otherwise it falls back to a plain white
+/// `StandardMaterial` (vertex colors provide the block color).
 fn setup_chunk_material(
     mut materials: ResMut<Assets<StandardMaterial>>,
+    mut atlas_materials: ResMut<Assets<atlas_material::BlockAtlasMaterial>>,
     mut chunk_material: ResMut<ChunkMaterial>,
     config: Res<crate::config::EngineConfig>,
     atlas: Option<Res<texture_atlas::BlockTextureAtlas>>,
 ) {
-    let base_color_texture = if config.render.use_textures {
-        atlas.as_ref().map(|a| a.texture.clone())
-    } else {
-        None
-    };
+    if config.render.use_textures {
+        if let Some(ref atlas_res) = atlas {
+            // Try to create the custom atlas material (shader-driven tiling)
+            if let Some(handle) = atlas_material::create_block_atlas_material(
+                &mut atlas_materials,
+                atlas_res,
+            ) {
+                chunk_material.handle = Some(ChunkMaterialHandle::Atlas(handle));
+                info!("Chunk material initialized: BlockAtlasMaterial (custom shader)");
+                return;
+            }
+            warn!("BlockAtlasMaterial creation failed, falling back to StandardMaterial");
+        }
+    }
 
+    // Fallback: plain white StandardMaterial
     let material = materials.add(StandardMaterial {
-        base_color: Color::WHITE, // Vertex colors (AO) will modulate this
-        base_color_texture,
+        base_color: Color::WHITE,
         perceptual_roughness: 0.9,
         metallic: 0.0,
         ..default()
     });
-    chunk_material.handle = Some(material);
+    chunk_material.handle = Some(ChunkMaterialHandle::Standard(material));
     info!(
-        "Chunk material initialized (textures: {})",
+        "Chunk material initialized: StandardMaterial (textures: {})",
         config.render.use_textures && atlas.is_some()
     );
 }
@@ -704,7 +723,7 @@ fn poll_pending_meshes(
     chunk_material: Res<ChunkMaterial>,
     mut pending_query: Query<(Entity, &Chunk, &mut PendingMesh)>,
 ) {
-    let Some(material_handle) = &chunk_material.handle else {
+    let Some(mat) = &chunk_material.handle else {
         return;
     };
 
@@ -713,12 +732,22 @@ fn poll_pending_meshes(
             let mesh_handle = meshes.add(mesh);
             let world_pos = chunk_to_world_pos(chunk.position);
 
+            // Insert shared components (mesh, transform, visibility, marker)
             commands.entity(entity).insert((
                 Mesh3d(mesh_handle),
-                MeshMaterial3d(material_handle.clone()),
                 Transform::from_translation(world_pos),
                 ChunkMesh,
             )).remove::<PendingMesh>();
+
+            // Insert the correct material type based on the enum
+            match mat {
+                ChunkMaterialHandle::Atlas(h) => {
+                    commands.entity(entity).insert(MeshMaterial3d(h.clone()));
+                }
+                ChunkMaterialHandle::Standard(h) => {
+                    commands.entity(entity).insert(MeshMaterial3d(h.clone()));
+                }
+            }
         }
     }
 }
