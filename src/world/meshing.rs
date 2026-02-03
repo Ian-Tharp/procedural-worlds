@@ -93,6 +93,7 @@ fn add_face(
     normals: &mut Vec<[f32; 3]>,
     colors: &mut Vec<[f32; 4]>,
     uvs: &mut Vec<[f32; 2]>,
+    uv1s: &mut Vec<[f32; 2]>,
     indices: &mut Vec<u32>,
     x: f32,
     y: f32,
@@ -165,11 +166,22 @@ fn add_face(
         color
     };
 
+    // Tile grid coordinates for UV1 (used by the atlas shader).
+    // When atlas is None, we still push [0,0] to keep vectors aligned;
+    // the attribute just won't be added to the mesh.
+    let tile_xy = if let Some(ac) = atlas {
+        let tile = texture_atlas::block_face_texture(block_type, face);
+        super::atlas_material::tile_grid_coords(tile, ac.tiles_per_row)
+    } else {
+        [0.0, 0.0]
+    };
+
     for (i, vert) in verts.iter().enumerate() {
         positions.push(*vert);
         normals.push(normal);
         colors.push(apply_ao(vert_color, ao[i]));
         uvs.push(face_uvs[i]);
+        uv1s.push(tile_xy);
     }
 
     // Flip the quad diagonal when AO creates asymmetry.
@@ -213,6 +225,7 @@ fn add_greedy_face(
     normals: &mut Vec<[f32; 3]>,
     colors: &mut Vec<[f32; 4]>,
     uvs: &mut Vec<[f32; 2]>,
+    uv1s: &mut Vec<[f32; 2]>,
     indices: &mut Vec<u32>,
     x: f32,
     y: f32,
@@ -286,11 +299,20 @@ fn add_greedy_face(
         color
     };
 
+    // Tile grid coordinates for UV1 (used by the atlas shader).
+    let tile_xy = if let Some(ac) = atlas {
+        let tile = texture_atlas::block_face_texture(block_type, face);
+        super::atlas_material::tile_grid_coords(tile, ac.tiles_per_row)
+    } else {
+        [0.0, 0.0]
+    };
+
     for (i, vert) in verts.iter().enumerate() {
         positions.push(*vert);
         normals.push(normal);
         colors.push(apply_ao(vert_color, ao[i]));
         uvs.push(face_uvs[i]);
+        uv1s.push(tile_xy);
     }
 
     // Flip diagonal when AO is asymmetric (same logic as add_face)
@@ -450,6 +472,7 @@ fn build_chunk_mesh_inner(chunk: &Chunk, atlas: Option<AtlasConfig>) -> Mesh {
     let mut normals: Vec<[f32; 3]> = Vec::new();
     let mut colors: Vec<[f32; 4]> = Vec::new();
     let mut uvs: Vec<[f32; 2]> = Vec::new();
+    let mut uv1s: Vec<[f32; 2]> = Vec::new();
     let mut indices: Vec<u32> = Vec::new();
 
     let faces = [
@@ -553,6 +576,7 @@ fn build_chunk_mesh_inner(chunk: &Chunk, atlas: Option<AtlasConfig>) -> Mesh {
                         &mut normals,
                         &mut colors,
                         &mut uvs,
+                        &mut uv1s,
                         &mut indices,
                         x as f32,
                         y as f32,
@@ -577,6 +601,14 @@ fn build_chunk_mesh_inner(chunk: &Chunk, atlas: Option<AtlasConfig>) -> Mesh {
     mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, normals);
     mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, colors);
     mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, uvs);
+
+    // UV1 carries tile grid coordinates for the atlas shader.
+    // Only added when atlas mode is active — the shader checks
+    // `#ifdef VERTEX_UVS_B` which Bevy enables when UV1 is present.
+    if atlas.is_some() {
+        mesh.insert_attribute(Mesh::ATTRIBUTE_UV_1, uv1s);
+    }
+
     mesh.insert_indices(Indices::U32(indices));
 
     mesh
@@ -602,6 +634,7 @@ fn build_chunk_mesh_naive_inner(chunk: &Chunk, atlas: Option<AtlasConfig>) -> Me
     let mut normals: Vec<[f32; 3]> = Vec::new();
     let mut colors: Vec<[f32; 4]> = Vec::new();
     let mut uvs: Vec<[f32; 2]> = Vec::new();
+    let mut uv1s: Vec<[f32; 2]> = Vec::new();
     let mut indices: Vec<u32> = Vec::new();
 
     let faces = [
@@ -643,6 +676,7 @@ fn build_chunk_mesh_naive_inner(chunk: &Chunk, atlas: Option<AtlasConfig>) -> Me
                             &mut normals,
                             &mut colors,
                             &mut uvs,
+                            &mut uv1s,
                             &mut indices,
                             fx,
                             fy,
@@ -666,6 +700,11 @@ fn build_chunk_mesh_naive_inner(chunk: &Chunk, atlas: Option<AtlasConfig>) -> Me
     mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, normals);
     mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, colors);
     mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, uvs);
+
+    if atlas.is_some() {
+        mesh.insert_attribute(Mesh::ATTRIBUTE_UV_1, uv1s);
+    }
+
     mesh.insert_indices(Indices::U32(indices));
 
     mesh
@@ -1276,6 +1315,197 @@ mod tests {
             );
         } else {
             panic!("UV_0 attribute missing");
+        }
+    }
+
+    // ==================================================================
+    //  UV1 (tile coordinate) tests
+    // ==================================================================
+
+    #[test]
+    fn test_atlas_mesh_has_uv1() {
+        // When atlas is enabled, the mesh should have UV_1 for tile coordinates.
+        let mut chunk = Chunk::new(IVec3::ZERO);
+        chunk.set_block(8, 8, 8, BlockType::Stone);
+
+        let atlas_cfg = AtlasConfig {
+            tiles_per_row: 16,
+            tile_size: 16,
+            atlas_size: 256,
+        };
+        let mesh = build_chunk_mesh_with_atlas(&chunk, Some(atlas_cfg));
+
+        let uv1_attr = mesh
+            .attribute(Mesh::ATTRIBUTE_UV_1)
+            .expect("atlas mesh should have UV_1 attribute for tile coordinates");
+        assert_eq!(
+            uv1_attr.len(),
+            mesh_vertex_count(&mesh),
+            "UV1 count must equal vertex count"
+        );
+    }
+
+    #[test]
+    fn test_no_atlas_mesh_lacks_uv1() {
+        // When atlas is disabled (None), the mesh should NOT have UV_1.
+        let mut chunk = Chunk::new(IVec3::ZERO);
+        chunk.set_block(8, 8, 8, BlockType::Stone);
+
+        let mesh = build_chunk_mesh_with_atlas(&chunk, None);
+        assert!(
+            mesh.attribute(Mesh::ATTRIBUTE_UV_1).is_none(),
+            "non-atlas mesh should not have UV_1"
+        );
+    }
+
+    #[test]
+    fn test_uv1_contains_correct_tile_coordinates() {
+        // Stone uses tile 0 for all faces → tile_xy should be (0, 0)
+        let mut chunk = Chunk::new(IVec3::ZERO);
+        chunk.set_block(8, 8, 8, BlockType::Stone);
+
+        let atlas_cfg = AtlasConfig {
+            tiles_per_row: 16,
+            tile_size: 16,
+            atlas_size: 256,
+        };
+        let mesh = build_chunk_mesh_with_atlas(&chunk, Some(atlas_cfg));
+
+        if let Some(bevy::render::mesh::VertexAttributeValues::Float32x2(uv1_data)) =
+            mesh.attribute(Mesh::ATTRIBUTE_UV_1)
+        {
+            for uv1 in uv1_data {
+                // Stone tile 0 → grid coords (0, 0)
+                assert_eq!(*uv1, [0.0, 0.0], "Stone tile 0 should have UV1 = (0, 0)");
+            }
+        } else {
+            panic!("UV_1 attribute missing or wrong type");
+        }
+    }
+
+    #[test]
+    fn test_uv1_grass_has_different_top_and_side_tiles() {
+        // Grass has different tile indices for top (tile 2) and side (tile 3).
+        // The UV1 values should reflect the correct tile grid coordinates.
+        let mut chunk = Chunk::new(IVec3::ZERO);
+        chunk.set_block(8, 8, 8, BlockType::Grass);
+
+        let atlas_cfg = AtlasConfig {
+            tiles_per_row: 16,
+            tile_size: 16,
+            atlas_size: 256,
+        };
+        let mesh = build_chunk_mesh_naive_with_atlas(&chunk, Some(atlas_cfg));
+
+        if let Some(bevy::render::mesh::VertexAttributeValues::Float32x2(uv1_data)) =
+            mesh.attribute(Mesh::ATTRIBUTE_UV_1)
+        {
+            // Collect unique UV1 values
+            let mut unique: Vec<[f32; 2]> = Vec::new();
+            for uv1 in uv1_data {
+                if !unique.iter().any(|u| (u[0] - uv1[0]).abs() < 1e-6 && (u[1] - uv1[1]).abs() < 1e-6) {
+                    unique.push(*uv1);
+                }
+            }
+
+            // Grass should have at least 2 different tile coordinates:
+            // top (tile 2), bottom/dirt (tile 1), side (tile 3)
+            assert!(
+                unique.len() >= 2,
+                "Grass should have multiple tile coordinates, got {:?}",
+                unique
+            );
+
+            // Grass top = tile 2 → (2, 0)
+            assert!(
+                unique.iter().any(|u| (u[0] - 2.0).abs() < 1e-6 && u[1].abs() < 1e-6),
+                "Grass should have tile (2, 0) for top face, unique tiles: {:?}",
+                unique
+            );
+
+            // Grass side = tile 3 → (3, 0)
+            assert!(
+                unique.iter().any(|u| (u[0] - 3.0).abs() < 1e-6 && u[1].abs() < 1e-6),
+                "Grass should have tile (3, 0) for side faces, unique tiles: {:?}",
+                unique
+            );
+        } else {
+            panic!("UV_1 attribute missing or wrong type");
+        }
+    }
+
+    #[test]
+    fn test_uv1_greedy_mesh_has_consistent_tile_coords() {
+        // In a filled chunk of one block type (greedy-merged), all UV1 values
+        // should be the same tile coordinate for faces of the same type.
+        let mut chunk = Chunk::new(IVec3::ZERO);
+        chunk.fill(BlockType::Dirt);
+
+        let atlas_cfg = AtlasConfig {
+            tiles_per_row: 16,
+            tile_size: 16,
+            atlas_size: 256,
+        };
+        let mesh = build_chunk_mesh_with_atlas(&chunk, Some(atlas_cfg));
+
+        if let Some(bevy::render::mesh::VertexAttributeValues::Float32x2(uv1_data)) =
+            mesh.attribute(Mesh::ATTRIBUTE_UV_1)
+        {
+            // Dirt = tile 1 for all faces → grid coords (1, 0)
+            for uv1 in uv1_data {
+                assert_eq!(
+                    *uv1,
+                    [1.0, 0.0],
+                    "All Dirt vertices should have UV1 = (1, 0)"
+                );
+            }
+        } else {
+            panic!("UV_1 attribute missing or wrong type");
+        }
+    }
+
+    #[test]
+    fn test_atlas_uv_inset_prevents_boundary_sampling() {
+        // Verify that the full-texel inset in face_uvs_atlas keeps UVs strictly
+        // inside the tile region, never touching the exact tile boundary.
+        let atlas_cfg = AtlasConfig {
+            tiles_per_row: 16,
+            tile_size: 16,
+            atlas_size: 256,
+        };
+
+        // Check every tile that's actually used
+        for tile_idx in 0..=texture_atlas::MAX_TILE_INDEX {
+            let uvs = texture_atlas::face_uvs_atlas(
+                tile_idx,
+                atlas_cfg.tiles_per_row,
+                atlas_cfg.tile_size,
+                atlas_cfg.atlas_size,
+                1.0,
+                1.0,
+            );
+            let (u_min, v_min, u_size, v_size) = texture_atlas::atlas_uv(
+                tile_idx,
+                atlas_cfg.tiles_per_row,
+                atlas_cfg.tile_size,
+                atlas_cfg.atlas_size,
+            );
+            let u_max = u_min + u_size;
+            let v_max = v_min + v_size;
+
+            for uv in &uvs {
+                // UVs must be strictly inside the tile (not on the boundary)
+                assert!(
+                    uv[0] > u_min && uv[0] < u_max,
+                    "Tile {tile_idx}: U={} is on or outside tile boundary [{u_min}, {u_max}]",
+                    uv[0]
+                );
+                assert!(
+                    uv[1] > v_min && uv[1] < v_max,
+                    "Tile {tile_idx}: V={} is on or outside tile boundary [{v_min}, {v_max}]",
+                    uv[1]
+                );
+            }
         }
     }
 }
