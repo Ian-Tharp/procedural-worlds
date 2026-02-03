@@ -7,10 +7,12 @@ pub use debug_overlay::DebugOverlayPlugin;
 pub use hud::HudPlugin;
 
 use bevy::prelude::*;
-use bevy::diagnostic::{DiagnosticsStore, FrameTimeDiagnosticsPlugin};
+use bevy::diagnostic::FrameTimeDiagnosticsPlugin;
 use bevy_egui::{egui, EguiContexts};
 
 use crate::actors::{Movement, Player};
+use crate::engine::input::ActionStates;
+use crate::engine::lighting::DayNightCycle;
 use crate::engine::raycast::CurrentTarget;
 
 /// System set for editor UI (runs in Update).
@@ -27,12 +29,9 @@ impl Plugin for EditorPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins(FrameTimeDiagnosticsPlugin::default())
             .init_resource::<EditorState>()
-            .init_resource::<PerformanceMetrics>()
             .add_systems(
                 Update,
-                (update_performance_metrics, editor_ui_system)
-                    .chain()
-                    .in_set(EditorUiSet),
+                editor_ui_system.in_set(EditorUiSet),
             );
     }
 }
@@ -44,8 +43,6 @@ pub struct EditorState {
     pub show_inspector: bool,
     /// Show the world settings panel
     pub show_world_settings: bool,
-    /// Show debug info
-    pub show_debug: bool,
     /// Player world position for display (feet position)
     pub player_position: Vec3,
     /// Camera world position for display (eye position)
@@ -61,7 +58,6 @@ impl Default for EditorState {
         Self {
             show_inspector: true,
             show_world_settings: false,
-            show_debug: true,
             player_position: Vec3::ZERO,
             camera_position: Vec3::ZERO,
             camera_yaw: 0.0,
@@ -96,68 +92,19 @@ fn yaw_to_cardinal(yaw: f32) -> &'static str {
     }
 }
 
-/// Smoothed performance metrics for stable display
-#[derive(Resource)]
-pub struct PerformanceMetrics {
-    /// Smoothed FPS value
-    fps: f64,
-    /// Smoothed frame time in ms
-    frame_time_ms: f64,
-    /// Frame count since start
-    frame_count: u64,
-    /// Time since last metrics update
-    update_timer: f32,
-}
-
-impl Default for PerformanceMetrics {
-    fn default() -> Self {
-        Self {
-            fps: 0.0,
-            frame_time_ms: 0.0,
-            frame_count: 0,
-            update_timer: 0.0,
-        }
-    }
-}
-
-/// Update performance metrics using Bevy's built-in diagnostics
-fn update_performance_metrics(
-    diagnostics: Res<DiagnosticsStore>,
-    mut metrics: ResMut<PerformanceMetrics>,
-    time: Res<Time>,
-) {
-    metrics.frame_count += 1;
-    metrics.update_timer += time.delta_secs();
-
-    // Update metrics every 0.1 seconds for stable display
-    if metrics.update_timer >= 0.1 {
-        metrics.update_timer = 0.0;
-
-        // Get smoothed FPS from Bevy's diagnostics
-        if let Some(fps_diagnostic) = diagnostics.get(&bevy::diagnostic::FrameTimeDiagnosticsPlugin::FPS) {
-            if let Some(fps) = fps_diagnostic.smoothed() {
-                metrics.fps = fps;
-            }
-        }
-
-        // Calculate frame time from FPS (more reliable than the diagnostic)
-        if metrics.fps > 0.0 {
-            metrics.frame_time_ms = 1000.0 / metrics.fps;
-        }
-    }
-}
-
 /// Main editor UI system
 fn editor_ui_system(
     mut contexts: EguiContexts,
     mut editor_state: ResMut<EditorState>,
+    mut overlay_state: ResMut<debug_overlay::DebugOverlayState>,
     camera_query: Query<&GlobalTransform, With<Camera3d>>,
-    metrics: Res<PerformanceMetrics>,
     mut chunk_manager: Option<ResMut<crate::world::ChunkManager>>,
     physics: Option<Res<crate::physics::PlayerPhysics>>,
     player_transform_query: Query<&GlobalTransform, With<Player>>,
     mut player_query: Query<&mut Movement, With<Player>>,
     current_target: Option<Res<CurrentTarget>>,
+    day_night: Option<Res<DayNightCycle>>,
+    action_states: Option<Res<ActionStates>>,
 ) {
     // Update player position for display (world-space, robust to parenting)
     if let Ok(player_global) = player_transform_query.get_single() {
@@ -205,7 +152,8 @@ fn editor_ui_system(
             ui.menu_button("View", |ui| {
                 ui.checkbox(&mut editor_state.show_inspector, "Inspector");
                 ui.checkbox(&mut editor_state.show_world_settings, "World Settings");
-                ui.checkbox(&mut editor_state.show_debug, "Debug Info");
+                ui.separator();
+                ui.checkbox(&mut overlay_state.visible, "Debug (F3)");
             });
 
             ui.menu_button("Help", |ui| {
@@ -215,109 +163,133 @@ fn editor_ui_system(
                 }
             });
 
-            // Right-aligned FPS counter (smoothed)
+            // Right-aligned FPS counter (smoothed, from debug overlay state)
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                // Color code FPS: green >= 60, yellow >= 30, red < 30
-                let fps_color = if metrics.fps >= 60.0 {
+                let fps = overlay_state.cached_fps;
+                let fps_color = if fps >= 60.0 {
                     egui::Color32::from_rgb(100, 255, 100)
-                } else if metrics.fps >= 30.0 {
+                } else if fps >= 30.0 {
                     egui::Color32::from_rgb(255, 255, 100)
                 } else {
                     egui::Color32::from_rgb(255, 100, 100)
                 };
-                ui.colored_label(fps_color, format!("{:.0} FPS", metrics.fps));
+                ui.colored_label(fps_color, format!("{:.0} FPS", fps));
             });
         });
     });
 
-    // Left panel - Inspector
+    // Left panel - Inspector (includes debug sections when enabled)
     if editor_state.show_inspector {
         egui::SidePanel::left("inspector")
-            .default_width(250.0)
+            .default_width(280.0)
             .show(contexts.ctx_mut(), |ui| {
-                ui.heading("Inspector");
-                ui.separator();
+                // Use a scroll area so the panel is scrollable when content overflows
+                egui::ScrollArea::vertical().show(ui, |ui| {
+                    ui.heading("Inspector");
+                    ui.separator();
 
-                egui::CollapsingHeader::new("Player")
-                    .default_open(true)
-                    .show(ui, |ui| {
-                        let pos = editor_state.player_position;
-                        ui.label(format!(
-                            "Feet: ({:.1}, {:.1}, {:.1})",
-                            pos.x, pos.y, pos.z
-                        ));
-                        let cam = editor_state.camera_position;
-                        ui.label(format!(
-                            "Camera: ({:.1}, {:.1}, {:.1})",
-                            cam.x, cam.y, cam.z
-                        ));
+                    egui::CollapsingHeader::new("Player")
+                        .default_open(true)
+                        .show(ui, |ui| {
+                            let pos = editor_state.player_position;
+                            ui.label(format!(
+                                "Feet: ({:.1}, {:.1}, {:.1})",
+                                pos.x, pos.y, pos.z
+                            ));
+                            let cam = editor_state.camera_position;
+                            ui.label(format!(
+                                "Camera: ({:.1}, {:.1}, {:.1})",
+                                cam.x, cam.y, cam.z
+                            ));
 
-                        // Compass direction
-                        let cardinal = yaw_to_cardinal(editor_state.camera_yaw);
-                        ui.horizontal(|ui| {
-                            ui.label("Facing:");
-                            ui.label(
-                                egui::RichText::new(cardinal)
-                                    .strong()
-                                    .color(egui::Color32::from_rgb(100, 200, 255))
-                            );
-                            ui.label(format!("({:.0}°)", editor_state.camera_yaw));
+                            // Compass direction
+                            let cardinal = yaw_to_cardinal(editor_state.camera_yaw);
+                            ui.horizontal(|ui| {
+                                ui.label("Facing:");
+                                ui.label(
+                                    egui::RichText::new(cardinal)
+                                        .strong()
+                                        .color(egui::Color32::from_rgb(100, 200, 255))
+                                );
+                                ui.label(format!("({:.0}°)", editor_state.camera_yaw));
+                            });
+
+                            ui.separator();
+
+                            // Physics mode toggles - modify Movement component directly
+                            if let Ok(mut movement) = player_query.get_single_mut() {
+                                ui.horizontal(|ui| {
+                                    let flying_text = if movement.flying {
+                                        egui::RichText::new("Flying").color(egui::Color32::from_rgb(100, 255, 100))
+                                    } else {
+                                        egui::RichText::new("Walking").color(egui::Color32::from_rgb(255, 200, 100))
+                                    };
+                                    ui.checkbox(&mut movement.flying, flying_text);
+                                });
+                                ui.horizontal(|ui| {
+                                    let noclip_text = if movement.noclip {
+                                        egui::RichText::new("Noclip").color(egui::Color32::from_rgb(255, 100, 100))
+                                    } else {
+                                        egui::RichText::new("Collision").color(egui::Color32::from_rgb(150, 150, 150))
+                                    };
+                                    ui.checkbox(&mut movement.noclip, noclip_text);
+                                });
+                                ui.separator();
+                            }
+
+                            ui.label("Controls:");
+                            ui.label("  WASD - Move");
+                            if let Some(ref phys) = physics {
+                                if phys.flying {
+                                    ui.label("  Space/Ctrl - Up/Down");
+                                } else {
+                                    ui.label("  Space - Jump");
+                                }
+                            } else if let Ok(movement) = player_query.get_single() {
+                                if movement.flying {
+                                    ui.label("  Space/Ctrl - Up/Down");
+                                } else {
+                                    ui.label("  Space - Jump");
+                                }
+                            }
+                            ui.label("  Right-click + Mouse - Look");
+                            ui.label("  Shift - Sprint");
+                            ui.separator();
+                            ui.label("  F - Toggle flying");
+                            ui.label("  N - Toggle noclip");
                         });
 
+                    egui::CollapsingHeader::new("Selection")
+                        .default_open(true)
+                        .show(ui, |ui| {
+                            ui.label("No selection");
+                        });
+
+                    // ── Debug sections (toggled via F3 or View menu) ──
+                    if overlay_state.visible {
+                        ui.separator();
+                        ui.heading("Debug");
                         ui.separator();
 
-                        // Physics mode toggles - modify Movement component directly
-                        if let Ok(mut movement) = player_query.get_single_mut() {
-                            ui.horizontal(|ui| {
-                                let flying_text = if movement.flying {
-                                    egui::RichText::new("Flying").color(egui::Color32::from_rgb(100, 255, 100))
-                                } else {
-                                    egui::RichText::new("Walking").color(egui::Color32::from_rgb(255, 200, 100))
-                                };
-                                ui.checkbox(&mut movement.flying, flying_text);
-                            });
-                            ui.horizontal(|ui| {
-                                let noclip_text = if movement.noclip {
-                                    egui::RichText::new("Noclip").color(egui::Color32::from_rgb(255, 100, 100))
-                                } else {
-                                    egui::RichText::new("Collision").color(egui::Color32::from_rgb(150, 150, 150))
-                                };
-                                ui.checkbox(&mut movement.noclip, noclip_text);
-                            });
-                            ui.separator();
-                        }
+                        let chunk_count = chunk_manager.as_ref().map(|cm| cm.chunks.len()).unwrap_or(0);
+                        let render_distance = chunk_manager.as_ref().map(|cm| cm.render_distance as u32).unwrap_or(0);
 
-                        ui.label("Controls:");
-                        ui.label("  WASD - Move");
-                        if let Some(ref phys) = physics {
-                            if phys.flying {
-                                ui.label("  Space/Ctrl - Up/Down");
-                            } else {
-                                ui.label("  Space - Jump");
-                            }
-                        } else if let Ok(movement) = player_query.get_single() {
-                            if movement.flying {
-                                ui.label("  Space/Ctrl - Up/Down");
-                            } else {
-                                ui.label("  Space - Jump");
-                            }
-                        }
-                        ui.label("  Right-click + Mouse - Look");
-                        ui.label("  Shift - Sprint");
-                        ui.separator();
-                        ui.label("  F - Toggle flying");
-                        ui.label("  N - Toggle noclip");
-                    });
-
-                egui::CollapsingHeader::new("Selection")
-                    .default_open(true)
-                    .show(ui, |ui| {
-                        ui.label("No selection");
-                    });
+                        debug_overlay::draw_debug_ui(
+                            ui,
+                            &mut overlay_state,
+                            editor_state.player_position,
+                            chunk_count,
+                            render_distance,
+                            current_target.as_deref(),
+                            day_night.as_deref(),
+                            action_states.as_deref(),
+                        );
+                    }
+                });
             });
     }
 
-    // Right panel - World Settings
+    // Right panel - World Settings (no bottom debug bar — all debug info is in the inspector now)
     if editor_state.show_world_settings {
         egui::SidePanel::right("world_settings")
             .default_width(250.0)
@@ -359,118 +331,4 @@ fn editor_ui_system(
             });
     }
 
-    // Bottom panel - Debug info
-    if editor_state.show_debug {
-        egui::TopBottomPanel::bottom("debug_panel")
-            .default_height(80.0)
-            .show(contexts.ctx_mut(), |ui| {
-                ui.horizontal(|ui| {
-                    ui.label(
-                        egui::RichText::new("Performance")
-                            .strong()
-                            .color(egui::Color32::from_rgb(150, 150, 255))
-                    );
-                    ui.separator();
-                    ui.label(format!("FPS: {:.1}", metrics.fps));
-                    ui.label(format!("Frame: {:.2}ms", metrics.frame_time_ms));
-                    ui.label(format!("Frames: {}", metrics.frame_count));
-
-                    ui.separator();
-
-                    ui.label(
-                        egui::RichText::new("Player")
-                            .strong()
-                            .color(egui::Color32::from_rgb(150, 255, 150))
-                    );
-                    let pos = editor_state.player_position;
-                    ui.label(format!(
-                        "X:{:.1} Y:{:.1} Z:{:.1}",
-                        pos.x, pos.y, pos.z
-                    ));
-                    let cardinal = yaw_to_cardinal(editor_state.camera_yaw);
-                    ui.label(format!("Facing: {} ({:.0}°)", cardinal, editor_state.camera_yaw));
-
-                    ui.separator();
-
-                    ui.label(
-                        egui::RichText::new("Mode")
-                            .strong()
-                            .color(egui::Color32::from_rgb(255, 150, 200))
-                    );
-                    if let Some(ref phys) = physics {
-                        let mode = if phys.noclip {
-                            "Noclip"
-                        } else if phys.flying {
-                            "Flying"
-                        } else if phys.grounded {
-                            "Grounded"
-                        } else {
-                            "Falling"
-                        };
-                        ui.label(mode);
-                    }
-
-                    ui.separator();
-
-                    ui.label(
-                        egui::RichText::new("World")
-                            .strong()
-                            .color(egui::Color32::from_rgb(255, 200, 100))
-                    );
-
-                    // Show loading progress
-                    if let Some(ref cm) = chunk_manager {
-                        let rd = cm.render_distance;
-                        // Horizontal: (2*rd+1)^2, Vertical: 7 layers (-2 to +4)
-                        let expected = ((2 * rd + 1) * (2 * rd + 1) * 7) as usize;
-                        let loaded = cm.chunks.len();
-
-                        if loaded < expected {
-                            // Still loading
-                            let pct = (loaded as f32 / expected as f32 * 100.0) as u32;
-                            ui.label(
-                                egui::RichText::new(format!("Loading {}% ({}/{})", pct, loaded, expected))
-                                    .color(egui::Color32::from_rgb(255, 255, 100))
-                            );
-                        } else {
-                            ui.label(format!("Chunks: {}", loaded));
-                        }
-                    } else {
-                        ui.label(format!("Chunks: {}", editor_state.chunk_count));
-                    }
-
-                    ui.separator();
-
-                    ui.label(
-                        egui::RichText::new("Target")
-                            .strong()
-                            .color(egui::Color32::from_rgb(255, 150, 150))
-                    );
-                    if let Some(ref target_res) = current_target {
-                        if let Some(ref result) = target_res.0 {
-                            ui.label(format!(
-                                "{:?} ({},{},{}) {:.1}m",
-                                result.block_type,
-                                result.block_pos.x, result.block_pos.y, result.block_pos.z,
-                                result.distance
-                            ));
-                        } else {
-                            ui.colored_label(
-                                egui::Color32::from_rgb(100, 100, 100),
-                                "None",
-                            );
-                        }
-                    }
-
-                    ui.separator();
-
-                    ui.label(
-                        egui::RichText::new("Engine")
-                            .strong()
-                            .color(egui::Color32::from_rgb(200, 150, 255))
-                    );
-                    ui.label("Bevy 0.15 | wgpu | Vulkan");
-                });
-            });
-    }
 }
