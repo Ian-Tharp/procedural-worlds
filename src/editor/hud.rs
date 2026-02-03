@@ -12,6 +12,7 @@ use bevy_egui::{egui, EguiContexts};
 
 use crate::engine::controller::CursorState;
 use crate::engine::raycast::CurrentTarget;
+use crate::world::interaction::SelectedBlock;
 
 /// Plugin that adds the crosshair overlay and block target HUD.
 ///
@@ -37,6 +38,7 @@ fn hud_system(
     mut contexts: EguiContexts,
     cursor_state: Res<CursorState>,
     current_target: Option<Res<CurrentTarget>>,
+    selected_block: Option<Res<SelectedBlock>>,
 ) {
     // Only show HUD elements when the cursor is grabbed (FPS mode)
     if !cursor_state.grabbed {
@@ -107,39 +109,62 @@ fn hud_system(
         None => None,
     };
 
-    let Some(result) = target_res else {
-        return;
-    };
+    if let Some(result) = target_res {
+        let label_text = format!(
+            "{} ({}, {}, {})",
+            result.block_type.display_name(),
+            result.block_pos.x,
+            result.block_pos.y,
+            result.block_pos.z,
+        );
 
-    let label_text = format!(
-        "{} ({}, {}, {})",
-        result.block_type.display_name(),
-        result.block_pos.x,
-        result.block_pos.y,
-        result.block_pos.z,
-    );
+        // Position the tooltip just below the crosshair
+        let tooltip_offset_y = half_size + 8.0;
 
-    // Position the tooltip just below the crosshair
-    let tooltip_offset_y = half_size + 8.0;
+        egui::Area::new(egui::Id::new("hud_block_info"))
+            .fixed_pos(egui::pos2(center.x, center.y + tooltip_offset_y))
+            .anchor(egui::Align2::CENTER_TOP, egui::vec2(0.0, 0.0))
+            .order(egui::Order::Foreground)
+            .interactable(false)
+            .show(ctx, |ui| {
+                egui::Frame::none()
+                    .fill(egui::Color32::from_rgba_premultiplied(0, 0, 0, 160))
+                    .rounding(egui::Rounding::same(4.0))
+                    .inner_margin(egui::Margin::symmetric(6.0, 3.0))
+                    .show(ui, |ui| {
+                        ui.label(
+                            egui::RichText::new(label_text)
+                                .color(egui::Color32::from_rgb(220, 220, 220))
+                                .size(13.0),
+                        );
+                    });
+            });
+    }
 
-    egui::Area::new(egui::Id::new("hud_block_info"))
-        .fixed_pos(egui::pos2(center.x, center.y + tooltip_offset_y))
-        .anchor(egui::Align2::CENTER_TOP, egui::vec2(0.0, 0.0))
-        .order(egui::Order::Foreground)
-        .interactable(false)
-        .show(ctx, |ui| {
-            egui::Frame::none()
-                .fill(egui::Color32::from_rgba_premultiplied(0, 0, 0, 160))
-                .rounding(egui::Rounding::same(4.0))
-                .inner_margin(egui::Margin::symmetric(6.0, 3.0))
-                .show(ui, |ui| {
-                    ui.label(
-                        egui::RichText::new(label_text)
-                            .color(egui::Color32::from_rgb(220, 220, 220))
-                            .size(13.0),
-                    );
-                });
-        });
+    // ── Selected Block Indicator ────────────────────────────────────────
+    if let Some(ref sel) = selected_block {
+        let sel_text = format!("Selected: {}", sel.block_type.display_name());
+
+        egui::Area::new(egui::Id::new("hud_selected_block"))
+            .fixed_pos(egui::pos2(center.x, screen_rect.max.y - 40.0))
+            .anchor(egui::Align2::CENTER_BOTTOM, egui::vec2(0.0, 0.0))
+            .order(egui::Order::Foreground)
+            .interactable(false)
+            .show(ctx, |ui| {
+                egui::Frame::none()
+                    .fill(egui::Color32::from_rgba_premultiplied(0, 0, 0, 180))
+                    .rounding(egui::Rounding::same(4.0))
+                    .inner_margin(egui::Margin::symmetric(10.0, 5.0))
+                    .show(ui, |ui| {
+                        ui.label(
+                            egui::RichText::new(sel_text)
+                                .color(egui::Color32::from_rgb(255, 255, 200))
+                                .size(15.0)
+                                .strong(),
+                        );
+                    });
+            });
+    }
 }
 
 #[cfg(test)]
