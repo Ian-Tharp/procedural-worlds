@@ -168,15 +168,22 @@ pub fn load_chunk(position: IVec3, storage: &ChunkStorage) -> Result<Chunk, io::
 mod tests {
     use super::*;
     use std::path::Path;
+    use std::sync::atomic::{AtomicU64, Ordering};
 
     /// Create a temporary storage directory for testing
     fn temp_storage() -> ChunkStorage {
+        // Tests run in parallel; timestamps alone can collide on some platforms.
+        // Add a monotonic counter to guarantee uniqueness.
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
+        let unique = COUNTER.fetch_add(1, Ordering::Relaxed);
+
         let dir = std::env::temp_dir().join(format!(
-            "procedural_worlds_test_{}",
+            "procedural_worlds_test_{}_{}",
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
-                .as_nanos()
+                .as_nanos(),
+            unique,
         ));
         ChunkStorage::new(dir)
     }
