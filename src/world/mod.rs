@@ -132,7 +132,7 @@ pub struct Chunk {
     /// (e.g., by player block placement). Modified chunks are saved to
     /// disk before unloading; unmodified chunks can be regenerated.
     ///
-    /// **Not set automatically** by `set_block` — callers (e.g., block
+    /// **Not set automatically** by `set_block` â€” callers (e.g., block
     /// placement systems) should set `chunk.modified = true` explicitly
     /// when making player-driven changes. This avoids terrain generation
     /// routines (which also use `set_block`) from marking chunks as modified.
@@ -516,7 +516,7 @@ fn setup_chunk_material(
 
 /// Update the player's current chunk position based on camera
 ///
-/// Uses `GlobalTransform` because the camera is a child entity of the player —
+/// Uses `GlobalTransform` because the camera is a child entity of the player â€”
 /// its local `Transform` is just the eye-height offset, not the world position.
 fn update_player_chunk_position(
     camera_query: Query<&GlobalTransform, With<Camera3d>>,
@@ -593,7 +593,7 @@ fn chunk_streaming_system(
                         if let Ok(chunk) = persistence::load_chunk(chunk_pos, &storage) {
                             return chunk;
                         }
-                        // Not on disk — generate new terrain
+                        // Not on disk â€” generate new terrain
                         let mut chunk = Chunk::new(chunk_pos);
                         generate_chunk_terrain(&mut chunk, &config);
                         generate_caves(&mut chunk, &config);
@@ -662,21 +662,27 @@ fn update_chunk_load_metrics(
 /// Maximum mesh-generation tasks to spawn per frame (prevents GPU upload stutter)
 const MAX_MESH_TASKS_PER_FRAME: usize = 6;
 
+/// Extract flat block data from a chunk using Chunk-native indexing.
+fn extract_block_data(chunk: &Chunk) -> Vec<BlockType> {
+    chunk.blocks().to_vec()
+}
+
 /// Spawn async mesh-generation tasks for dirty chunks.
 ///
-/// Instead of building meshes synchronously, we clone the chunk data and
-/// dispatch `build_chunk_mesh` to `AsyncComputeTaskPool`. The entity gets a
-/// `PendingMesh` component while the task is in flight.
+/// For each dirty chunk, the 6 face-neighbor chunks' block data is collected
+/// and passed as `ChunkNeighbors` so that cross-chunk face culling and AO
+/// can sample into adjacent chunks.
 fn mesh_dirty_chunks(
     mut commands: Commands,
     chunk_manager: Res<ChunkManager>,
-    mut chunk_query: Query<(Entity, &mut Chunk), (Without<ChunkMesh>, Without<PendingMesh>)>,
+    mut param_set: ParamSet<(
+        Query<(Entity, &mut Chunk), (Without<ChunkMesh>, Without<PendingMesh>)>,
+        Query<&Chunk>,
+    )>,
     config: Res<crate::config::EngineConfig>,
 ) {
     let player_chunk = chunk_manager.player_chunk;
-    let mut tasks_spawned = 0;
 
-    // Build atlas config for meshing (or None for legacy vertex colors)
     let atlas_cfg = if config.render.use_textures {
         Some(meshing::AtlasConfig {
             tiles_per_row: config.render.atlas_grid_size,
@@ -687,38 +693,74 @@ fn mesh_dirty_chunks(
         None
     };
 
-    // Collect and sort chunks by distance to player (closest first)
-    let mut dirty_chunks: Vec<_> = chunk_query
-        .iter_mut()
-        .filter(|(_, chunk)| chunk.dirty)
-        .collect();
+    // Phase 1: Collect all chunk block data for neighbor lookups (read-only).
+    let all_chunk_data: HashMap<IVec3, Vec<BlockType>> = {
+        let all_chunks = param_set.p1();
+        all_chunks.iter()
+            .map(|chunk| (chunk.position, extract_block_data(chunk)))
+            .collect()
+    };
 
-    dirty_chunks.sort_by_key(|(_, chunk)| {
-        let diff = chunk.position - player_chunk;
-        diff.x.abs() + diff.y.abs() + diff.z.abs() // Manhattan distance
+    // Phase 2: Identify dirty chunks and their positions.
+    let mut dirty_chunks: Vec<_> = {
+        let p0 = param_set.p0();
+        p0.iter()
+            .filter(|(_, chunk)| chunk.dirty)
+            .map(|(entity, chunk)| (entity, chunk.position))
+            .collect()
+    };
+
+    dirty_chunks.sort_by_key(|&(_, pos)| {
+        let diff = pos - player_chunk;
+        diff.x.abs() + diff.y.abs() + diff.z.abs()
     });
 
     let task_pool = AsyncComputeTaskPool::get();
+    let mut tasks_spawned = 0;
+    let mut to_mesh: Vec<Entity> = Vec::new();
 
-    for (entity, mut chunk) in dirty_chunks {
+    for (entity, pos) in dirty_chunks {
         if tasks_spawned >= MAX_MESH_TASKS_PER_FRAME {
             break;
         }
 
-        // Clone chunk data for the background task (Chunk derives Clone)
-        let chunk_data = chunk.clone();
+        // Build cross-chunk neighbor data (Chunk-native flat arrays)
+        let neighbors = meshing::ChunkNeighbors {
+            pos_x: all_chunk_data.get(&(pos + IVec3::X)).cloned(),
+            neg_x: all_chunk_data.get(&(pos + IVec3::NEG_X)).cloned(),
+            pos_y: all_chunk_data.get(&(pos + IVec3::Y)).cloned(),
+            neg_y: all_chunk_data.get(&(pos + IVec3::NEG_Y)).cloned(),
+            pos_z: all_chunk_data.get(&(pos + IVec3::Z)).cloned(),
+            neg_z: all_chunk_data.get(&(pos + IVec3::NEG_Z)).cloned(),
+        };
 
-        let task = task_pool.spawn(async move {
-            meshing::build_chunk_mesh_with_atlas(&chunk_data, atlas_cfg)
+        let Some(block_data) = all_chunk_data.get(&pos) else { continue; };
+        let chunk_data = Chunk::from_blocks(pos, {
+            let mut blocks = [BlockType::Air; CHUNK_VOLUME];
+            blocks.copy_from_slice(block_data);
+            blocks
         });
 
-        // Clear dirty flag now — we've committed to meshing this chunk
-        chunk.dirty = false;
+        let task = task_pool.spawn(async move {
+            meshing::build_chunk_mesh_with_neighbors(&chunk_data, atlas_cfg, &neighbors)
+        });
 
         commands.entity(entity).insert(PendingMesh { task });
+        to_mesh.push(entity);
         tasks_spawned += 1;
     }
+
+    // Phase 3: Clear dirty flags.
+    if !to_mesh.is_empty() {
+        let mut p0 = param_set.p0();
+        for entity in to_mesh {
+            if let Ok((_, mut chunk)) = p0.get_mut(entity) {
+                chunk.dirty = false;
+            }
+        }
+    }
 }
+
 
 /// Poll completed mesh-generation tasks and insert the resulting render components.
 fn poll_pending_meshes(
@@ -757,7 +799,7 @@ fn poll_pending_meshes(
 }
 
 // Chunk unloading is now handled by `unloading::chunk_unloading_system` and
-// `unloading::poll_pending_saves` — see `src/world/unloading.rs`.
+// `unloading::poll_pending_saves` â€” see `src/world/unloading.rs`.
 
 // ============================================================================
 // BLOCK QUERIES - For collision and gameplay
@@ -1073,7 +1115,7 @@ mod tests {
     // ========================================================================
 
     /// Ensure `AsyncComputeTaskPool` is initialised for tests that use it.
-    /// Calling `get_or_init` more than once is safe — subsequent calls are no-ops.
+    /// Calling `get_or_init` more than once is safe â€” subsequent calls are no-ops.
     fn init_task_pool() {
         AsyncComputeTaskPool::get_or_init(|| {
             bevy::tasks::TaskPool::new()
@@ -1364,7 +1406,7 @@ mod tests {
                     assert_eq!(
                         result.get_block(x, y, z),
                         reference.get_block(x, y, z),
-                        "Block mismatch at ({x}, {y}, {z}) — disk fallback should generate identically"
+                        "Block mismatch at ({x}, {y}, {z}) â€” disk fallback should generate identically"
                     );
                 }
             }
@@ -1448,7 +1490,7 @@ mod tests {
         assert_eq!(metrics.total_chunks_loaded, 5);
         assert_eq!(metrics.chunks_loaded_since_last, 5);
 
-        // Refresh at t=2.0s — all 5 loads within the 2s window
+        // Refresh at t=2.0s â€” all 5 loads within the 2s window
         metrics.refresh(2.0);
         assert_eq!(metrics.chunks_loaded_since_last, 0); // reset by refresh
         assert!((metrics.avg_load_time_ms - 50.0).abs() < 0.01); // 0.05s = 50ms
@@ -1464,7 +1506,7 @@ mod tests {
             metrics.record_load(0.01, 1.0);
         }
 
-        // Refresh at t=5.0 — all loads older than 2s window → 0 chunks/sec
+        // Refresh at t=5.0 â€” all loads older than 2s window â†’ 0 chunks/sec
         metrics.refresh(5.0);
         assert_eq!(metrics.chunks_per_second, 0.0);
         // avg_load_time_ms still valid (rolling buffer)
