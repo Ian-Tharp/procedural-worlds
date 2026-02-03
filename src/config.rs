@@ -321,7 +321,7 @@ impl Default for RenderConfig {
             fog_enabled: true,
             fog_start: 100.0,
             fog_end: 250.0,
-            atlas_tile_size: 16,
+            atlas_tile_size: 64,
             atlas_grid_size: 16,
             use_textures: true,
         }

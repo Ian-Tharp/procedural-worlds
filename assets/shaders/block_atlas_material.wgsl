@@ -46,6 +46,22 @@ fn hash3(p: vec3<i32>, face_id: u32) -> u32 {
   return hash_u32(x ^ (y * 0x9e3779b9u) ^ (z * 0x85ebca6bu) ^ (face_id * 0xc2b2ae35u));
 }
 
+/// Check if a tile has directional texture that needs vertical orientation preserved.
+/// Returns true for grass side (3,0), bark (7,0), sandstone (9,0), cactus side (15,0).
+fn is_directional_tile(tile_xy: vec2<f32>) -> bool {
+  let col = tile_xy.x;
+  let row = tile_xy.y;
+  // All directional tiles are in row 0
+  if (row > 0.5) {
+    return false;
+  }
+  // Grass side=3, Bark=7, Sandstone=9, Cactus side=15
+  if (abs(col - 3.0) < 0.5 || abs(col - 7.0) < 0.5 || abs(col - 9.0) < 0.5 || abs(col - 15.0) < 0.5) {
+    return true;
+  }
+  return false;
+}
+
 fn rotate_flip_uv(uv: vec2<f32>, variant: u32) -> vec2<f32> {
   // variant: 0..7 => 4 rotations * optional X flip
   var out = uv;
@@ -136,6 +152,9 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
   let h = hash3(block_pos, face_id);
   let variant = h & 7u;
 
+  // Determine if this is a side face (not top/bottom)
+  let is_side_face: bool = !(an.y >= an.x && an.y >= an.z);
+
   // Local UV in the face plane from world position, ensuring world-stable mapping.
   // Top/bottom:  (x,z), North/south: (x,y), East/west: (z,y)
   var uv_raw: vec2<f32> = vec2<f32>(0.0, 0.0);
@@ -147,6 +166,13 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     uv_raw = vec2<f32>(fract(pos.x), fract(pos.y));
   }
 
+  // Flip V for side faces: fract(pos.y) goes 0→1 from block bottom to top,
+  // but texture V=0 is the image top. Flipping ensures that world Y=1 (block top)
+  // maps to texture V=0 (top of image, e.g. the green strip on grass side).
+  if (is_side_face) {
+    uv_raw.y = 1.0 - uv_raw.y;
+  }
+
   // Clamp fract() results to a safe interior range [epsilon, 1-epsilon].
   // This prevents sampling at exact tile edges where fract() returns 0.0
   // (which maps to the tile's left/bottom border) or values extremely
@@ -154,7 +180,19 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
   let eps: f32 = 0.001;
   var uv01: vec2<f32> = clamp(uv_raw, vec2<f32>(eps), vec2<f32>(1.0 - eps));
 
-  uv01 = rotate_flip_uv(uv01, variant);
+  // For directional textures, restrict the variant to avoid 90°/270° rotations
+  // which would rotate vertically-oriented features (grass strips, bark lines)
+  // sideways. Only allow no rotation (0) or horizontal flip (4).
+  var effective_variant: u32 = variant;
+  #ifdef VERTEX_UVS
+    #ifdef VERTEX_UVS_B
+      if (is_directional_tile(in.uv_b)) {
+        effective_variant = variant & 4u; // keep flip bit, zero rotation bits
+      }
+    #endif
+  #endif
+
+  uv01 = rotate_flip_uv(uv01, effective_variant);
 
   #ifdef VERTEX_UVS
     #ifdef VERTEX_UVS_B

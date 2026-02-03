@@ -116,7 +116,7 @@ pub fn biome_grass_tint(world_x: f32, world_z: f32) -> [f32; 3] {
 
     // Per-block noise for subtle variation so adjacent blocks differ
     let noise = tint_noise(world_x.floor() as i32, world_z.floor() as i32, 54321);
-    let variation = noise * 0.16 - 0.08; // ±8%
+    let variation = noise * 0.36 - 0.18; // ±18%
 
     [
         (r + variation).max(0.0),
@@ -1229,8 +1229,8 @@ mod tests {
         // Use a plausible atlas config (16x16 tiles, 16px per tile => 256px atlas).
         let ac = AtlasConfig {
             tiles_per_row: 16,
-            tile_size: 16,
-            atlas_size: 256,
+            tile_size: 64,
+            atlas_size: 1024,
         };
 
         // Act
@@ -1326,8 +1326,8 @@ mod tests {
         // With atlas=Some, vertex colors should be white * AO instead
         let atlas_cfg = AtlasConfig {
             tiles_per_row: 16,
-            tile_size: 16,
-            atlas_size: 256,
+            tile_size: 64,
+            atlas_size: 1024,
         };
         let textured = build_chunk_mesh_with_atlas(&chunk, Some(atlas_cfg));
 
@@ -1351,8 +1351,8 @@ mod tests {
 
         let atlas_cfg = AtlasConfig {
             tiles_per_row: 16,
-            tile_size: 16,
-            atlas_size: 256,
+            tile_size: 64,
+            atlas_size: 1024,
         };
         let mesh = build_chunk_mesh_with_atlas(&chunk, Some(atlas_cfg));
 
@@ -1383,8 +1383,8 @@ mod tests {
 
         let atlas_cfg = AtlasConfig {
             tiles_per_row: 16,
-            tile_size: 16,
-            atlas_size: 256,
+            tile_size: 64,
+            atlas_size: 1024,
         };
         let mesh = build_chunk_mesh_with_atlas(&chunk, Some(atlas_cfg));
 
@@ -1422,8 +1422,8 @@ mod tests {
 
         let atlas_cfg = AtlasConfig {
             tiles_per_row: 16,
-            tile_size: 16,
-            atlas_size: 256,
+            tile_size: 64,
+            atlas_size: 1024,
         };
         let mesh = build_chunk_mesh_with_atlas(&chunk, Some(atlas_cfg));
 
@@ -1458,8 +1458,8 @@ mod tests {
 
         let atlas_cfg = AtlasConfig {
             tiles_per_row: 16,
-            tile_size: 16,
-            atlas_size: 256,
+            tile_size: 64,
+            atlas_size: 1024,
         };
         let mesh = build_chunk_mesh_with_atlas(&chunk, Some(atlas_cfg));
 
@@ -1484,8 +1484,8 @@ mod tests {
 
         let atlas_cfg = AtlasConfig {
             tiles_per_row: 16,
-            tile_size: 16,
-            atlas_size: 256,
+            tile_size: 64,
+            atlas_size: 1024,
         };
         let mesh = build_chunk_mesh_naive_with_atlas(&chunk, Some(atlas_cfg));
 
@@ -1535,8 +1535,8 @@ mod tests {
 
         let atlas_cfg = AtlasConfig {
             tiles_per_row: 16,
-            tile_size: 16,
-            atlas_size: 256,
+            tile_size: 64,
+            atlas_size: 1024,
         };
         let mesh = build_chunk_mesh_with_atlas(&chunk, Some(atlas_cfg));
 
@@ -1562,8 +1562,8 @@ mod tests {
         // inside the tile region, never touching the exact tile boundary.
         let atlas_cfg = AtlasConfig {
             tiles_per_row: 16,
-            tile_size: 16,
-            atlas_size: 256,
+            tile_size: 64,
+            atlas_size: 1024,
         };
 
         // Check every tile that's actually used
