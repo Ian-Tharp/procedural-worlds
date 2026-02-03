@@ -133,6 +133,19 @@ pub fn atlas_uv(tile_index: u32, tiles_per_row: u32, tile_size: u32, atlas_size:
 /// `quad_w` and `quad_h` are currently **not used** for atlas UVs (see note in
 /// [`atlas_uv`]). We keep them in the signature for forward compatibility if
 /// we later add a custom material/shader that supports per-tile repeating.
+///
+/// ## Edge Bleeding Prevention
+///
+/// UVs are inset by a full texel (not half) from each tile edge. While
+/// half-texel is the theoretical minimum for nearest filtering, a full-texel
+/// inset provides robustness against:
+/// - Bilinear filtering bleed if the sampler mode is changed
+/// - Mip-map level sampling that may straddle tile boundaries
+/// - GPU driver rounding differences across hardware
+/// - Floating-point accumulation errors in interpolated UVs
+///
+/// The inset is clamped to at most 25% of the tile UV size to ensure the
+/// UV rectangle never collapses or inverts, even for very small tiles.
 pub fn face_uvs_atlas(
     tile_index: u32,
     tiles_per_row: u32,
@@ -146,11 +159,11 @@ pub fn face_uvs_atlas(
     let (u_min, v_min, u_size, v_size) =
         atlas_uv(tile_index, tiles_per_row, tile_size, atlas_size);
 
-    // Guard against sampling outside the tile due to float precision.
-    // With nearest filtering, sampling exactly on tile borders can still pick
-    // a neighboring texel; insetting by half a texel avoids seams/bleed.
+    // Full-texel inset from tile edges to prevent edge bleeding.
+    // This matches the shader's `remap_atlas_uv` inset strategy for
+    // consistency between CPU-mapped and shader-mapped UV paths.
     let texel = 1.0 / atlas_size.max(1) as f32;
-    let mut inset = 0.5 * texel;
+    let mut inset = texel; // full texel, not half
     // Ensure inset can't invert the UV rectangle even for tiny tiles/configs.
     inset = inset.min(u_size * 0.25).min(v_size * 0.25);
 
@@ -771,13 +784,14 @@ mod tests {
     fn test_greedy_face_uv_tiling() {
         // Packed atlas UVs must stay within a tile rectangle. We deliberately do NOT
         // scale UVs with greedy quad size here (StandardMaterial can't repeat within
-        // a tile). We also inset by half a texel to avoid edge sampling bleed.
+        // a tile). We inset by a full texel to robustly prevent edge sampling bleed.
         let uvs = face_uvs_atlas(0, 16, 16, 256, 3.0, 2.0);
         let u_tile = 1.0 / 16.0_f32;
         let v_tile = 1.0 / 16.0_f32;
 
+        // Full-texel inset (matches shader strategy)
         let texel = 1.0 / 256.0_f32;
-        let mut inset = 0.5 * texel;
+        let mut inset = texel; // full texel
         inset = inset.min(u_tile * 0.25).min(v_tile * 0.25);
 
         let u0 = inset;

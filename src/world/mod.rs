@@ -17,6 +17,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::generation::{generate_cacti, generate_caves, generate_chunk_terrain, generate_trees, TerrainConfig};
 
+pub mod atlas_material;
 pub mod meshing;
 pub mod persistence;
 pub mod texture_atlas;
