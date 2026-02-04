@@ -28,6 +28,8 @@
 //! 3. Apply it in `apply_config_to_resources` or `apply_config_to_entities`
 
 pub mod audio;
+pub mod events;
+pub mod validation;
 
 use bevy::prelude::*;
 use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
@@ -771,7 +773,10 @@ pub struct ConfigPlugin;
 
 impl Plugin for ConfigPlugin {
     fn build(&self, app: &mut App) {
-        // Apply config once at startup
+        // Register the config change event
+        app.add_event::<events::ConfigChanged>();
+
+        // Apply config once at startup (with validation)
         app.add_systems(
             PostStartup,
             (apply_config_to_resources, apply_config_to_entities).chain(),
@@ -955,15 +960,18 @@ fn apply_config_to_entities(
 ///
 /// Runs every frame in `Update`. The `mpsc::Receiver::try_recv` is non-blocking,
 /// so this has near-zero cost when no changes occur. When a modify event is
-/// detected, the config is re-read from disk and all resource/entity settings
-/// are re-applied.
+/// detected, the config is re-read from disk, validated, and only
+/// hot-reloadable sections are re-applied. Terrain and window settings are
+/// skipped with a warning (they require a restart).
+///
+/// A [`ConfigChanged`](events::ConfigChanged) event is emitted after
+/// successful reload so other systems can react to specific changes.
 #[allow(clippy::too_many_arguments)]
 fn poll_config_changes(
     watcher: Res<ConfigWatcher>,
     mut config: ResMut<EngineConfig>,
     mut input_map: ResMut<InputMap>,
     mut chunk_manager: ResMut<ChunkManager>,
-    mut terrain_config: ResMut<TerrainConfig>,
     mut debug_state: ResMut<DebugOverlayState>,
     mut unload_config: ResMut<UnloadConfig>,
     mut audio_config: ResMut<audio::AudioConfig>,
@@ -972,6 +980,7 @@ fn poll_config_changes(
     mut streaming_config: ResMut<StreamingConfig>,
     mut camera_query: Query<(&mut CameraController, &mut Projection), With<Camera3d>>,
     mut player_query: Query<&mut Movement, With<Player>>,
+    mut config_events: EventWriter<events::ConfigChanged>,
 ) {
     let mut should_reload = false;
 
@@ -1004,7 +1013,7 @@ fn poll_config_changes(
 
     // Re-read config from disk
     let path = std::path::Path::new(CONFIG_FILE);
-    let new_config = match fs::read_to_string(path) {
+    let raw_config = match fs::read_to_string(path) {
         Ok(contents) => match serde_json::from_str::<EngineConfig>(&contents) {
             Ok(c) => c,
             Err(e) => {
@@ -1018,84 +1027,164 @@ fn poll_config_changes(
         }
     };
 
-    info!("Hot-reload: config.json changed — applying new settings");
+    // Validate the new config before applying
+    let validation = validation::validate_config(raw_config);
+    for issue in &validation.issues {
+        match issue.severity {
+            validation::Severity::Error => {
+                warn!(
+                    "Hot-reload validation error [{}.{}]: {}",
+                    issue.section, issue.field, issue.message
+                );
+            }
+            validation::Severity::Warning => {
+                info!(
+                    "Hot-reload validation warning [{}.{}]: {}",
+                    issue.section, issue.field, issue.message
+                );
+            }
+        }
+    }
+    let new_config = validation.config;
 
-    // Update the stored config resource
+    // Detect which sections changed
+    let changed_sections = events::detect_changes(&config, &new_config);
+
+    if changed_sections.is_empty() {
+        info!("Hot-reload: config.json changed on disk but no effective setting changes detected");
+        return;
+    }
+
+    // Check for non-reloadable changes and warn
+    let had_non_reloadable = changed_sections.iter().any(|s| !s.hot_reloadable());
+    if had_non_reloadable {
+        let non_reloadable: Vec<_> = changed_sections
+            .iter()
+            .filter(|s| !s.hot_reloadable())
+            .collect();
+        warn!(
+            "Hot-reload: {:?} settings changed but require a restart to take effect. Skipping.",
+            non_reloadable
+        );
+    }
+
+    let reloadable: Vec<_> = changed_sections
+        .iter()
+        .filter(|s| s.hot_reloadable())
+        .copied()
+        .collect();
+
+    if reloadable.is_empty() {
+        info!("Hot-reload: only non-reloadable settings changed — no runtime updates applied");
+        // Still emit event so systems know something was attempted
+        config_events.send(events::ConfigChanged {
+            changed_sections,
+            validation_issues: validation.issues.len(),
+            had_non_reloadable_changes: true,
+        });
+        return;
+    }
+
+    info!(
+        "Hot-reload: config.json changed — applying {} section(s): {:?}",
+        reloadable.len(),
+        reloadable
+    );
+
+    // Update the stored config resource with validated values.
+    // Preserve terrain and window from the OLD config since those aren't hot-reloadable.
+    let old_terrain = config.terrain.clone();
+    let old_window = config.window.clone();
     *config = new_config;
+    config.terrain = old_terrain;
+    config.window = old_window;
 
-    // --- Re-apply to resources (mirrors apply_config_to_resources) ---
+    // --- Re-apply only hot-reloadable sections ---
 
-    chunk_manager.render_distance = config.render.render_distance;
-    chunk_manager.max_chunks_per_frame = config.render.max_chunks_per_frame;
-
-    terrain_config.seed = config.terrain.seed;
-    terrain_config.base_height = config.terrain.base_height;
-    terrain_config.height_scale = config.terrain.height_scale;
-    terrain_config.frequency = config.terrain.frequency;
-    terrain_config.octaves = config.terrain.octaves;
-    terrain_config.biome_scale = config.terrain.biome_scale;
-    terrain_config.blend_enabled = config.terrain.biome_blend_enabled;
-    terrain_config.blend_distance = config.terrain.biome_blend_distance;
-    terrain_config.transition_noise_scale = config.terrain.transition_noise_scale;
-    terrain_config.transition_noise_amplitude = config.terrain.transition_noise_amplitude;
-
-    debug_state.visible = config.debug.overlay_visible;
-    debug_state.show_memory = config.debug.show_memory;
-    debug_state.show_input_state = config.debug.show_input;
-    debug_state.show_chunks = config.debug.show_chunks;
-    debug_state.show_render = config.debug.show_render;
-
-    load_metrics.enabled = config.debug.collect_chunk_metrics;
-
-    unload_config.unload_distance = config.unload.unload_distance;
-    unload_config.save_on_unload = config.unload.save_on_unload;
-    unload_config.memory_threshold_bytes = config.unload.memory_threshold_mb * 1024 * 1024;
-    unload_config.memory_pressure_reduction = config.unload.memory_pressure_reduction;
-    unload_config.max_saves_per_frame = config.unload.max_saves_per_frame;
-
-    save_system.save_dir = std::path::PathBuf::from(&config.save.save_dir);
-    save_system.auto_save_interval = config.save.auto_save_interval;
-    save_system.set_chunk_format_from_str(&config.save.chunk_format);
-
-    streaming_config.lookahead_chunks = config.streaming.lookahead_chunks;
-    streaming_config.velocity_smoothing = config.streaming.velocity_smoothing;
-    streaming_config.min_speed_threshold = config.streaming.min_speed_threshold;
-    streaming_config.max_predictive_per_frame = config.streaming.max_predictive_per_frame;
-
-    input_map.clear();
-    bind_from_config(&mut input_map, InputAction::MoveForward, &config.controls.move_forward);
-    bind_from_config(&mut input_map, InputAction::MoveBackward, &config.controls.move_backward);
-    bind_from_config(&mut input_map, InputAction::MoveLeft, &config.controls.move_left);
-    bind_from_config(&mut input_map, InputAction::MoveRight, &config.controls.move_right);
-    bind_from_config(&mut input_map, InputAction::Jump, &config.controls.jump);
-    bind_from_config(&mut input_map, InputAction::Crouch, &config.controls.crouch);
-    bind_from_config(&mut input_map, InputAction::Sprint, &config.controls.sprint);
-    bind_from_config(&mut input_map, InputAction::ToggleFly, &config.controls.toggle_fly);
-    bind_from_config(&mut input_map, InputAction::ToggleNoclip, &config.controls.toggle_noclip);
-    bind_from_config(&mut input_map, InputAction::ReleaseCursor, &config.controls.release_cursor);
-
-    // --- Re-apply to entities (mirrors apply_config_to_entities) ---
-
-    let proj = projection_from_config(&config);
-    for (mut controller, mut camera_proj) in &mut camera_query {
-        controller.sensitivity = config.player.mouse_sensitivity;
-        *camera_proj = proj.clone();
+    if reloadable.contains(&events::ConfigSection::Render) {
+        chunk_manager.render_distance = config.render.render_distance;
+        chunk_manager.max_chunks_per_frame = config.render.max_chunks_per_frame;
     }
 
-    for mut movement in &mut player_query {
-        movement.walk_speed = config.player.walk_speed;
-        movement.sprint_speed = config.player.sprint_speed;
-        movement.fly_speed = config.player.fly_speed;
-        movement.jump_velocity = config.player.jump_velocity;
+    if reloadable.contains(&events::ConfigSection::Debug) {
+        debug_state.visible = config.debug.overlay_visible;
+        debug_state.show_memory = config.debug.show_memory;
+        debug_state.show_input_state = config.debug.show_input;
+        debug_state.show_chunks = config.debug.show_chunks;
+        debug_state.show_render = config.debug.show_render;
+        load_metrics.enabled = config.debug.collect_chunk_metrics;
     }
 
-    // --- Re-apply audio config ---
-    *audio_config = audio::AudioConfig::from_settings(&config.audio);
+    if reloadable.contains(&events::ConfigSection::Unload) {
+        unload_config.unload_distance = config.unload.unload_distance;
+        unload_config.save_on_unload = config.unload.save_on_unload;
+        unload_config.memory_threshold_bytes = config.unload.memory_threshold_mb * 1024 * 1024;
+        unload_config.memory_pressure_reduction = config.unload.memory_pressure_reduction;
+        unload_config.max_saves_per_frame = config.unload.max_saves_per_frame;
+    }
 
-    info!("Hot-reload complete: render_dist={}, walk_speed={}, fly_speed={}",
-        config.render.render_distance,
-        config.player.walk_speed,
-        config.player.fly_speed,
+    if reloadable.contains(&events::ConfigSection::Save) {
+        save_system.save_dir = std::path::PathBuf::from(&config.save.save_dir);
+        save_system.auto_save_interval = config.save.auto_save_interval;
+        save_system.set_chunk_format_from_str(&config.save.chunk_format);
+    }
+
+    if reloadable.contains(&events::ConfigSection::Streaming) {
+        streaming_config.lookahead_chunks = config.streaming.lookahead_chunks;
+        streaming_config.velocity_smoothing = config.streaming.velocity_smoothing;
+        streaming_config.min_speed_threshold = config.streaming.min_speed_threshold;
+        streaming_config.max_predictive_per_frame = config.streaming.max_predictive_per_frame;
+    }
+
+    if reloadable.contains(&events::ConfigSection::World) {
+        chunk_manager.load_distance = config.world.load_distance;
+        chunk_manager.vertical_load_up = config.world.vertical_load_up;
+        chunk_manager.vertical_load_down = config.world.vertical_load_down;
+    }
+
+    if reloadable.contains(&events::ConfigSection::Controls) {
+        input_map.clear();
+        bind_from_config(&mut input_map, InputAction::MoveForward, &config.controls.move_forward);
+        bind_from_config(&mut input_map, InputAction::MoveBackward, &config.controls.move_backward);
+        bind_from_config(&mut input_map, InputAction::MoveLeft, &config.controls.move_left);
+        bind_from_config(&mut input_map, InputAction::MoveRight, &config.controls.move_right);
+        bind_from_config(&mut input_map, InputAction::Jump, &config.controls.jump);
+        bind_from_config(&mut input_map, InputAction::Crouch, &config.controls.crouch);
+        bind_from_config(&mut input_map, InputAction::Sprint, &config.controls.sprint);
+        bind_from_config(&mut input_map, InputAction::ToggleFly, &config.controls.toggle_fly);
+        bind_from_config(&mut input_map, InputAction::ToggleNoclip, &config.controls.toggle_noclip);
+        bind_from_config(&mut input_map, InputAction::ReleaseCursor, &config.controls.release_cursor);
+    }
+
+    if reloadable.contains(&events::ConfigSection::Player) {
+        let proj = projection_from_config(&config);
+        for (mut controller, mut camera_proj) in &mut camera_query {
+            controller.sensitivity = config.player.mouse_sensitivity;
+            *camera_proj = proj.clone();
+        }
+        for mut movement in &mut player_query {
+            movement.walk_speed = config.player.walk_speed;
+            movement.sprint_speed = config.player.sprint_speed;
+            movement.fly_speed = config.player.fly_speed;
+            movement.jump_velocity = config.player.jump_velocity;
+        }
+    }
+
+    if reloadable.contains(&events::ConfigSection::Audio) {
+        *audio_config = audio::AudioConfig::from_settings(&config.audio);
+    }
+
+    // Emit event so other systems can react
+    config_events.send(events::ConfigChanged {
+        changed_sections,
+        validation_issues: validation.issues.len(),
+        had_non_reloadable_changes: had_non_reloadable,
+    });
+
+    info!(
+        "Hot-reload complete: {} section(s) applied, {} validation issue(s)",
+        reloadable.len(),
+        validation.issues.len(),
     );
 }
 
