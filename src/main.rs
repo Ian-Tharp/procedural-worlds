@@ -42,6 +42,7 @@ fn main() {
         // Our custom plugins
         .add_plugins(editor::EditorPlugin)
         .add_plugins(editor::DebugOverlayPlugin)
+        .add_plugins(editor::ChunkDebugPlugin)
         .add_plugins(editor::HudPlugin)
         .add_plugins(engine::CameraPlugin)
         .add_plugins(engine::RaycastPlugin)

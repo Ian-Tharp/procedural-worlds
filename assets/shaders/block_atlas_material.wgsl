@@ -206,7 +206,10 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
   // Subtle per-block albedo variation to reduce flat/plasticky look.
   // Keep it tight so it doesn't look like noise.
   let jitter = (f32((h >> 8u) & 255u) / 255.0) * 0.10 - 0.05; // [-0.05, +0.05]
-  pbr_input.material.base_color.rgb *= (1.0 + jitter);
+  // WGSL gotcha: avoid compound assignment to swizzles on struct members.
+  // Do an explicit write to the full vec4 instead.
+  let bc = pbr_input.material.base_color;
+  pbr_input.material.base_color = vec4<f32>(bc.rgb * (1.0 + jitter), bc.a);
 
   // Alpha discard (for alpha-cutout textures, if configured in StandardMaterial).
   pbr_input.material.base_color =

@@ -1,10 +1,12 @@
 //! Editor systems - UI panels, viewport, tools
 
 pub mod block_highlight;
+pub mod chunk_debug;
 pub mod debug_overlay;
 pub mod hud;
 
 pub use block_highlight::BlockHighlightPlugin;
+pub use chunk_debug::ChunkDebugPlugin;
 pub use debug_overlay::DebugOverlayPlugin;
 pub use hud::HudPlugin;
 
