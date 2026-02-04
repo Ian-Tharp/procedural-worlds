@@ -44,6 +44,7 @@
 //! is registered separately from the main config plugin to maintain clean
 //! separation of concerns.
 
+pub mod ambient;
 pub mod playback;
 pub mod validation;
 
@@ -56,6 +57,11 @@ pub use playback::{
 pub use validation::{
     AudioValidationPlugin, AudioDeviceStatus, DeviceState,
     ValidationResult, validate_audio_config, resolve_device_state,
+};
+pub use ambient::{
+    AmbientAudioPlugin, PlayerActivityState, PlayerAudioState,
+    BiomeAudioProfile, ActivityChangedEvent, ActivitySoundAssets,
+    WindSoundState, WindSound,
 };
 
 use bevy::prelude::*;
@@ -77,6 +83,7 @@ pub struct AudioPlugin;
 impl Plugin for AudioPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins(AudioPlaybackPlugin)
-            .add_plugins(AudioValidationPlugin);
+            .add_plugins(AudioValidationPlugin)
+            .add_plugins(AmbientAudioPlugin);
     }
 }
