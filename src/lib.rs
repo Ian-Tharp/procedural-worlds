@@ -6,6 +6,7 @@
 //! The binary entry-point lives in `main.rs`.
 
 pub mod actors;
+pub mod audio;
 pub mod config;
 pub mod editor;
 pub mod engine;

@@ -15,6 +15,7 @@ use bevy::diagnostic::FrameTimeDiagnosticsPlugin;
 use bevy_egui::{egui, EguiContexts};
 
 use crate::actors::{Movement, Player};
+use crate::config::audio::AudioSettingsPanelState;
 use crate::engine::input::ActionStates;
 use crate::engine::lighting::DayNightCycle;
 use crate::engine::raycast::CurrentTarget;
@@ -104,6 +105,7 @@ fn editor_ui_system(
     mut contexts: EguiContexts,
     mut editor_state: ResMut<EditorState>,
     mut overlay_state: ResMut<debug_overlay::DebugOverlayState>,
+    mut audio_panel_state: ResMut<AudioSettingsPanelState>,
     camera_query: Query<&GlobalTransform, With<Camera3d>>,
     mut chunk_manager: Option<ResMut<crate::world::ChunkManager>>,
     physics: Option<Res<crate::physics::PlayerPhysics>>,
@@ -160,6 +162,8 @@ fn editor_ui_system(
             ui.menu_button("View", |ui| {
                 ui.checkbox(&mut editor_state.show_inspector, "Inspector");
                 ui.checkbox(&mut editor_state.show_world_settings, "World Settings");
+                ui.separator();
+                ui.checkbox(&mut audio_panel_state.visible, "Audio Settings (F9)");
                 ui.separator();
                 ui.checkbox(&mut overlay_state.visible, "Debug (F3)");
             });

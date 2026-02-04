@@ -27,6 +27,8 @@
 //! 2. Set its default in the section's `Default` impl
 //! 3. Apply it in `apply_config_to_resources` or `apply_config_to_entities`
 
+pub mod audio;
+
 use bevy::prelude::*;
 use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use serde::{Deserialize, Serialize};
@@ -77,6 +79,8 @@ pub struct EngineConfig {
     pub unload: UnloadSettings,
     /// World chunk loading settings (load distances, vertical range)
     pub world: WorldConfig,
+    /// Audio settings (volume, spatial audio, device configuration)
+    pub audio: audio::AudioSettings,
     /// Duration of a full day/night cycle in seconds (default: 600 = 10 min)
     pub cycle_duration_seconds: f32,
 }
@@ -287,6 +291,7 @@ impl Default for EngineConfig {
             debug: DebugConfig::default(),
             unload: UnloadSettings::default(),
             world: WorldConfig::default(),
+            audio: audio::AudioSettings::default(),
             cycle_duration_seconds: 600.0,
         }
     }
@@ -822,6 +827,7 @@ fn poll_config_changes(
     mut terrain_config: ResMut<TerrainConfig>,
     mut debug_state: ResMut<DebugOverlayState>,
     mut unload_config: ResMut<UnloadConfig>,
+    mut audio_config: ResMut<audio::AudioConfig>,
     mut camera_query: Query<(&mut CameraController, &mut Projection), With<Camera3d>>,
     mut player_query: Query<&mut Movement, With<Player>>,
 ) {
@@ -926,6 +932,9 @@ fn poll_config_changes(
         movement.jump_velocity = config.player.jump_velocity;
     }
 
+    // --- Re-apply audio config ---
+    *audio_config = audio::AudioConfig::from_settings(&config.audio);
+
     info!("Hot-reload complete: render_dist={}, walk_speed={}, fly_speed={}",
         config.render.render_distance,
         config.player.walk_speed,
@@ -982,6 +991,16 @@ mod tests {
         assert_eq!(config.world.load_distance, None);
         assert_eq!(config.world.vertical_load_up, 4);
         assert_eq!(config.world.vertical_load_down, 2);
+
+        // Audio defaults
+        assert_eq!(config.audio.master_volume, 0.8);
+        assert_eq!(config.audio.ambience_intensity, 0.6);
+        assert_eq!(config.audio.distance_falloff, 1.0);
+        assert!(config.audio.spatial_audio_enabled);
+        assert_eq!(config.audio.music_volume, 0.5);
+        assert_eq!(config.audio.sfx_volume, 0.7);
+        assert!(config.audio.enabled);
+        assert_eq!(config.audio.preferred_device, None);
     }
 
     #[test]
@@ -1003,6 +1022,11 @@ mod tests {
         assert_eq!(deserialized.world.vertical_load_down, original.world.vertical_load_down);
         assert_eq!(deserialized.terrain.biome_blend_enabled, original.terrain.biome_blend_enabled);
         assert_eq!(deserialized.terrain.biome_blend_distance, original.terrain.biome_blend_distance);
+        assert_eq!(deserialized.audio.master_volume, original.audio.master_volume);
+        assert_eq!(deserialized.audio.ambience_intensity, original.audio.ambience_intensity);
+        assert_eq!(deserialized.audio.distance_falloff, original.audio.distance_falloff);
+        assert_eq!(deserialized.audio.spatial_audio_enabled, original.audio.spatial_audio_enabled);
+        assert_eq!(deserialized.audio.enabled, original.audio.enabled);
     }
 
     #[test]
