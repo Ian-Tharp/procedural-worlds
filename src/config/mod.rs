@@ -43,6 +43,7 @@ use crate::engine::controller::CameraController;
 use crate::engine::input::{InputAction, InputMap};
 use crate::generation::TerrainConfig;
 use crate::world::ChunkManager;
+use crate::world::save::SaveSystem;
 use crate::world::unloading::UnloadConfig;
 
 // ============================================================================
@@ -81,6 +82,8 @@ pub struct EngineConfig {
     pub world: WorldConfig,
     /// Audio settings (volume, spatial audio, device configuration)
     pub audio: audio::AudioSettings,
+    /// Save system settings (save directory, auto-save interval, format)
+    pub save: SaveConfig,
     /// Duration of a full day/night cycle in seconds (default: 600 = 10 min)
     pub cycle_duration_seconds: f32,
 }
@@ -296,6 +299,39 @@ pub struct DebugConfig {
     pub collect_chunk_metrics: bool,
 }
 
+/// Save system configuration
+///
+/// Controls where world saves are stored, auto-save timing, and the
+/// serialization format for chunk data. The `world.json` metadata file
+/// is always JSON (human-readable); only chunk data supports binary.
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(default)]
+pub struct SaveConfig {
+    /// Root directory for save files (default: `"saves/default"`).
+    ///
+    /// The directory structure will be:
+    /// ```text
+    /// <save_dir>/
+    /// ├── world.json          ← world metadata, player state
+    /// └── chunks/
+    ///     ├── chunk_0_2_-3.bin (or .json)
+    ///     └── ...
+    /// ```
+    pub save_dir: String,
+    /// Seconds between automatic saves (default: 300 = 5 minutes).
+    /// Set to 0 to disable auto-save.
+    pub auto_save_interval: f32,
+    /// Serialization format for chunk data on disk.
+    ///
+    /// - `"json"` — Human-readable, larger files (~100KB per chunk).
+    ///   Good for debugging and modding.
+    /// - `"binary"` — Compact binary via bincode (~8KB per chunk).
+    ///   Recommended for normal play.
+    ///
+    /// Default: `"binary"`.
+    pub chunk_format: String,
+}
+
 // ============================================================================
 // DEFAULT IMPLEMENTATIONS
 // ============================================================================
@@ -312,6 +348,7 @@ impl Default for EngineConfig {
             unload: UnloadSettings::default(),
             world: WorldConfig::default(),
             audio: audio::AudioSettings::default(),
+            save: SaveConfig::default(),
             cycle_duration_seconds: 600.0,
         }
     }
@@ -430,6 +467,16 @@ impl Default for DebugConfig {
             show_chunks: true,
             show_render: true,
             collect_chunk_metrics: true,
+        }
+    }
+}
+
+impl Default for SaveConfig {
+    fn default() -> Self {
+        Self {
+            save_dir: "saves/default".into(),
+            auto_save_interval: 300.0,
+            chunk_format: "binary".into(),
         }
     }
 }
@@ -724,6 +771,7 @@ fn apply_config_to_resources(
     mut debug_state: ResMut<DebugOverlayState>,
     mut unload_config: ResMut<UnloadConfig>,
     mut load_metrics: ResMut<crate::world::ChunkLoadMetrics>,
+    mut save_system: ResMut<SaveSystem>,
 ) {
     info!("Applying engine configuration...");
 
@@ -792,6 +840,17 @@ fn apply_config_to_resources(
         config.unload.save_on_unload,
         config.unload.memory_threshold_mb,
         config.unload.unload_distance,
+    );
+
+    // --- Save system settings ---
+    save_system.save_dir = std::path::PathBuf::from(&config.save.save_dir);
+    save_system.auto_save_interval = config.save.auto_save_interval;
+    save_system.set_chunk_format_from_str(&config.save.chunk_format);
+    info!(
+        "Save: dir={:?}, auto_save={}s, format={}",
+        config.save.save_dir,
+        config.save.auto_save_interval,
+        config.save.chunk_format,
     );
 
     // --- Input bindings ---
@@ -864,6 +923,7 @@ fn poll_config_changes(
     mut unload_config: ResMut<UnloadConfig>,
     mut audio_config: ResMut<audio::AudioConfig>,
     mut load_metrics: ResMut<crate::world::ChunkLoadMetrics>,
+    mut save_system: ResMut<SaveSystem>,
     mut camera_query: Query<(&mut CameraController, &mut Projection), With<Camera3d>>,
     mut player_query: Query<&mut Movement, With<Player>>,
 ) {
@@ -946,6 +1006,10 @@ fn poll_config_changes(
     unload_config.memory_threshold_bytes = config.unload.memory_threshold_mb * 1024 * 1024;
     unload_config.memory_pressure_reduction = config.unload.memory_pressure_reduction;
     unload_config.max_saves_per_frame = config.unload.max_saves_per_frame;
+
+    save_system.save_dir = std::path::PathBuf::from(&config.save.save_dir);
+    save_system.auto_save_interval = config.save.auto_save_interval;
+    save_system.set_chunk_format_from_str(&config.save.chunk_format);
 
     input_map.clear();
     bind_from_config(&mut input_map, InputAction::MoveForward, &config.controls.move_forward);
@@ -1043,6 +1107,11 @@ mod tests {
         assert_eq!(config.audio.sfx_volume, 0.7);
         assert!(config.audio.enabled);
         assert_eq!(config.audio.preferred_device, None);
+
+        // Save system defaults
+        assert_eq!(config.save.save_dir, "saves/default");
+        assert_eq!(config.save.auto_save_interval, 300.0);
+        assert_eq!(config.save.chunk_format, "binary");
     }
 
     #[test]
@@ -1070,6 +1139,9 @@ mod tests {
         assert_eq!(deserialized.audio.spatial_audio_enabled, original.audio.spatial_audio_enabled);
         assert_eq!(deserialized.audio.enabled, original.audio.enabled);
         assert_eq!(deserialized.debug.collect_chunk_metrics, original.debug.collect_chunk_metrics);
+        assert_eq!(deserialized.save.save_dir, original.save.save_dir);
+        assert_eq!(deserialized.save.auto_save_interval, original.save.auto_save_interval);
+        assert_eq!(deserialized.save.chunk_format, original.save.chunk_format);
     }
 
     #[test]
@@ -1215,6 +1287,30 @@ mod tests {
         // Unmodified fields should have defaults
         assert_eq!(reloaded.terrain.seed, 12345);
         assert_eq!(reloaded.window.title, "Procedural Worlds Engine");
+    }
+
+    #[test]
+    fn test_save_config_defaults() {
+        let config = SaveConfig::default();
+        assert_eq!(config.save_dir, "saves/default");
+        assert_eq!(config.auto_save_interval, 300.0);
+        assert_eq!(config.chunk_format, "binary");
+    }
+
+    #[test]
+    fn test_save_config_from_partial_json() {
+        // Only save_dir specified — others get defaults
+        let json = r#"{ "save": { "save_dir": "my_saves/world1" } }"#;
+        let config: EngineConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(config.save.save_dir, "my_saves/world1");
+        assert_eq!(config.save.auto_save_interval, 300.0);
+        assert_eq!(config.save.chunk_format, "binary");
+
+        // Explicit JSON format
+        let json = r#"{ "save": { "chunk_format": "json", "auto_save_interval": 60.0 } }"#;
+        let config: EngineConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(config.save.chunk_format, "json");
+        assert_eq!(config.save.auto_save_interval, 60.0);
     }
 
     #[test]
