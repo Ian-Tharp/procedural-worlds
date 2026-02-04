@@ -39,7 +39,7 @@ use std::path::{Path, PathBuf};
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 
-use super::persistence::{self, ChunkStorage};
+use super::persistence::{self, ChunkStorage, SaveFormat};
 use super::Chunk;
 use crate::actors::{Movement, Player};
 use crate::config::EngineConfig;
@@ -111,6 +111,8 @@ pub struct SaveSystem {
     pub last_save_chunk_count: usize,
     /// Whether a save is currently requested (set by trigger, cleared by save system).
     save_requested: bool,
+    /// Serialization format for chunk data (default: Binary).
+    pub chunk_format: SaveFormat,
 }
 
 impl Default for SaveSystem {
@@ -121,6 +123,7 @@ impl Default for SaveSystem {
             auto_save_timer: 0.0,
             last_save_chunk_count: 0,
             save_requested: false,
+            chunk_format: SaveFormat::default(),
         }
     }
 }
@@ -149,6 +152,14 @@ impl SaveSystem {
     pub fn request_save(&mut self) {
         self.save_requested = true;
     }
+
+    /// Set the chunk format from a config string (case-insensitive).
+    ///
+    /// Accepts `"json"`, `"binary"`, `"bin"`, `"bincode"`.
+    /// Unknown values default to `Binary` with a log warning.
+    pub fn set_chunk_format_from_str(&mut self, s: &str) {
+        self.chunk_format = SaveFormat::from_str_lossy(s);
+    }
 }
 
 // ============================================================================
@@ -175,6 +186,31 @@ pub fn save_world(
     player_movement: &Movement,
     engine_config: &EngineConfig,
 ) -> Result<usize, io::Error> {
+    save_world_fmt(save_dir, chunks, player_pos, player_movement, engine_config, SaveFormat::Json)
+}
+
+/// Save the entire world state to disk using a specific chunk format.
+///
+/// This is the format-aware version of [`save_world`]. It:
+/// 1. Iterates all loaded chunks and saves those with `modified == true`
+///    using the specified [`SaveFormat`]
+/// 2. Collects player position and movement state
+/// 3. Collects terrain generation config
+/// 4. Writes `world.json` with all metadata
+///
+/// Returns the number of chunks saved.
+///
+/// # Errors
+///
+/// Returns `io::Error` if directory creation or file writes fail.
+pub fn save_world_fmt(
+    save_dir: &Path,
+    chunks: &[(IVec3, &Chunk)],
+    player_pos: Vec3,
+    player_movement: &Movement,
+    engine_config: &EngineConfig,
+    chunk_format: SaveFormat,
+) -> Result<usize, io::Error> {
     // Ensure save directories exist
     let chunk_dir = save_dir.join("chunks");
     fs::create_dir_all(&chunk_dir)?;
@@ -187,7 +223,7 @@ pub fn save_world(
 
     for &(pos, chunk) in chunks {
         if chunk.modified {
-            persistence::save_chunk(chunk, &storage)?;
+            persistence::save_chunk_fmt(chunk, &storage, chunk_format)?;
             saved_positions.push([pos.x, pos.y, pos.z]);
             chunks_saved += 1;
         }
@@ -340,12 +376,13 @@ pub fn perform_save_system(
     let chunks: Vec<(IVec3, &Chunk)> = chunk_query.iter().map(|c| (c.position, c)).collect();
 
     let save_dir = save_system.save_dir.clone();
-    match save_world(&save_dir, &chunks, player_pos, player_movement, &engine_config) {
+    let chunk_format = save_system.chunk_format;
+    match save_world_fmt(&save_dir, &chunks, player_pos, player_movement, &engine_config, chunk_format) {
         Ok(count) => {
             save_system.last_save_chunk_count = count;
             info!(
-                "Save complete: {} modified chunks written to {:?}",
-                count, save_dir
+                "Save complete: {} modified chunks written to {:?} (format: {})",
+                count, save_dir, chunk_format
             );
         }
         Err(e) => {
@@ -503,6 +540,7 @@ mod tests {
         assert_eq!(ss.auto_save_timer, 0.0);
         assert_eq!(ss.last_save_chunk_count, 0);
         assert!(!ss.save_requested);
+        assert_eq!(ss.chunk_format, SaveFormat::Binary);
     }
 
     #[test]
@@ -893,6 +931,105 @@ mod tests {
         assert!(err_msg.contains("newer than supported"));
 
         cleanup(&dir);
+    }
+
+    #[test]
+    fn test_save_system_set_chunk_format() {
+        let mut ss = SaveSystem::default();
+        assert_eq!(ss.chunk_format, SaveFormat::Binary);
+
+        ss.set_chunk_format_from_str("json");
+        assert_eq!(ss.chunk_format, SaveFormat::Json);
+
+        ss.set_chunk_format_from_str("binary");
+        assert_eq!(ss.chunk_format, SaveFormat::Binary);
+
+        ss.set_chunk_format_from_str("bin");
+        assert_eq!(ss.chunk_format, SaveFormat::Binary);
+
+        // Unknown defaults to binary
+        ss.set_chunk_format_from_str("xml");
+        assert_eq!(ss.chunk_format, SaveFormat::Binary);
+    }
+
+    #[test]
+    fn test_save_world_binary_format() {
+        let dir = temp_save_dir();
+        let movement = default_movement();
+        let config = default_config();
+
+        let mut chunk = Chunk::new(IVec3::new(1, 0, 1));
+        chunk.set_block(0, 0, 0, BlockType::Stone);
+        chunk.set_block(8, 4, 12, BlockType::Obsidian);
+        chunk.modified = true;
+
+        let chunks: Vec<(IVec3, &Chunk)> = vec![(chunk.position, &chunk)];
+
+        let result = save_world_fmt(
+            &dir,
+            &chunks,
+            Vec3::new(10.0, 20.0, 30.0),
+            &movement,
+            &config,
+            SaveFormat::Binary,
+        );
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), 1);
+
+        // Binary chunk file should exist
+        let chunk_dir = dir.join("chunks");
+        assert!(chunk_dir.join("chunk_1_0_1.bin").exists());
+        // JSON chunk file should NOT exist
+        assert!(!chunk_dir.join("chunk_1_0_1.json").exists());
+
+        // world.json metadata should still be JSON
+        assert!(dir.join("world.json").exists());
+        let metadata = load_world_metadata(&dir.join("world.json")).unwrap();
+        assert_eq!(metadata.player.position, [10.0, 20.0, 30.0]);
+
+        // Load chunk back using persistence auto-detection
+        let storage = ChunkStorage::new(&chunk_dir);
+        let loaded = persistence::load_chunk_auto(IVec3::new(1, 0, 1), &storage).unwrap();
+        assert_eq!(loaded.get_block(0, 0, 0), BlockType::Stone);
+        assert_eq!(loaded.get_block(8, 4, 12), BlockType::Obsidian);
+
+        cleanup(&dir);
+    }
+
+    #[test]
+    fn test_save_world_binary_is_smaller() {
+        let dir_json = temp_save_dir();
+        let dir_bin = temp_save_dir();
+        let movement = default_movement();
+        let config = default_config();
+
+        // Create a chunk with varied data
+        let mut chunk = Chunk::new(IVec3::ZERO);
+        for x in 0..16 {
+            for z in 0..16 {
+                chunk.set_block(x, 0, z, BlockType::Stone);
+                chunk.set_block(x, 1, z, BlockType::Dirt);
+                chunk.set_block(x, 2, z, BlockType::Grass);
+            }
+        }
+        chunk.modified = true;
+
+        let chunks: Vec<(IVec3, &Chunk)> = vec![(IVec3::ZERO, &chunk)];
+
+        save_world_fmt(&dir_json, &chunks, Vec3::ZERO, &movement, &config, SaveFormat::Json).unwrap();
+        save_world_fmt(&dir_bin, &chunks, Vec3::ZERO, &movement, &config, SaveFormat::Binary).unwrap();
+
+        let json_size = fs::metadata(dir_json.join("chunks/chunk_0_0_0.json")).unwrap().len();
+        let bin_size = fs::metadata(dir_bin.join("chunks/chunk_0_0_0.bin")).unwrap().len();
+
+        assert!(
+            bin_size < json_size,
+            "Binary ({} bytes) should be smaller than JSON ({} bytes)",
+            bin_size, json_size
+        );
+
+        cleanup(&dir_json);
+        cleanup(&dir_bin);
     }
 
     #[test]

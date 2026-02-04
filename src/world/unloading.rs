@@ -24,6 +24,7 @@ use bevy::prelude::*;
 use bevy::tasks::{block_on, futures_lite::future, AsyncComputeTaskPool, Task};
 
 use super::persistence::{self, ChunkStorage};
+use super::save::SaveSystem;
 use super::{Chunk, ChunkManager, PendingChunk};
 use crate::engine::memory::get_process_memory;
 
@@ -129,12 +130,14 @@ pub fn chunk_unloading_system(
     mut chunk_manager: ResMut<ChunkManager>,
     unload_config: Res<UnloadConfig>,
     storage: Res<ChunkStorage>,
+    save_system: Res<SaveSystem>,
     chunk_query: Query<(Entity, &Chunk), Without<PendingSave>>,
     pending_query: Query<(Entity, &PendingChunk)>,
 ) {
     let center = chunk_manager.player_chunk;
     let max_dist = unload_config.effective_unload_distance(chunk_manager.render_distance);
     let mut saves_this_frame: u32 = 0;
+    let chunk_format = save_system.chunk_format;
 
     let task_pool = AsyncComputeTaskPool::get();
 
@@ -157,7 +160,7 @@ pub fn chunk_unloading_system(
                 let pos = chunk.position;
 
                 let task = task_pool.spawn(async move {
-                    persistence::save_chunk(&chunk_clone, &save_storage)
+                    persistence::save_chunk_fmt(&chunk_clone, &save_storage, chunk_format)
                         .map_err(|e| e.to_string())
                 });
 
