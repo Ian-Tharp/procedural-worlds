@@ -4,11 +4,13 @@ pub mod block_highlight;
 pub mod chunk_debug;
 pub mod debug_overlay;
 pub mod hud;
+pub mod performance;
 
 pub use block_highlight::BlockHighlightPlugin;
 pub use chunk_debug::ChunkDebugPlugin;
 pub use debug_overlay::DebugOverlayPlugin;
 pub use hud::HudPlugin;
+pub use performance::PerformanceDashboardPlugin;
 
 use bevy::prelude::*;
 use bevy::diagnostic::FrameTimeDiagnosticsPlugin;
@@ -106,6 +108,7 @@ fn editor_ui_system(
     mut editor_state: ResMut<EditorState>,
     mut overlay_state: ResMut<debug_overlay::DebugOverlayState>,
     mut audio_panel_state: ResMut<AudioSettingsPanelState>,
+    perf_dashboard: Option<Res<performance::PerformanceDashboard>>,
     camera_query: Query<&GlobalTransform, With<Camera3d>>,
     mut chunk_manager: Option<ResMut<crate::world::ChunkManager>>,
     physics: Option<Res<crate::physics::PlayerPhysics>>,
@@ -350,4 +353,16 @@ fn editor_ui_system(
             });
     }
 
+    // ── Floating Performance Dashboard (F8) ──
+    if let Some(ref dashboard) = perf_dashboard
+        && dashboard.visible
+    {
+        let chunk_count = chunk_manager.as_ref().map(|cm| cm.chunks.len()).unwrap_or(0);
+        performance::draw_performance_dashboard(
+            contexts.ctx_mut(),
+            dashboard,
+            chunk_count,
+            load_metrics.as_deref(),
+        );
+    }
 }
