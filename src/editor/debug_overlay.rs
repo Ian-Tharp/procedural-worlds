@@ -685,7 +685,7 @@ pub fn draw_debug_ui(
         ui.checkbox(&mut overlay_state.show_render, "Render");
     });
 
-    ui.small("F3 overlay | F4 chunk borders | F5/F6 load dist | F7 shadows");
+    ui.small("F3 overlay | F4 chunk borders | F5/F6 load dist | F7 shadows | F8 perf");
 }
 
 /// Plugin to add debug overlay functionality.
