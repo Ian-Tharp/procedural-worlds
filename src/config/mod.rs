@@ -44,6 +44,7 @@ use crate::engine::input::{InputAction, InputMap};
 use crate::generation::TerrainConfig;
 use crate::world::ChunkManager;
 use crate::world::save::SaveSystem;
+use crate::world::streaming::StreamingConfig;
 use crate::world::unloading::UnloadConfig;
 
 // ============================================================================
@@ -84,6 +85,8 @@ pub struct EngineConfig {
     pub audio: audio::AudioSettings,
     /// Save system settings (save directory, auto-save interval, format)
     pub save: SaveConfig,
+    /// Predictive chunk streaming settings (velocity-based prefetching)
+    pub streaming: StreamingSettings,
     /// Duration of a full day/night cycle in seconds (default: 600 = 10 min)
     pub cycle_duration_seconds: f32,
 }
@@ -277,6 +280,23 @@ pub struct WorldConfig {
     pub vertical_load_down: i32,
 }
 
+/// Predictive chunk streaming settings
+///
+/// Controls velocity-based chunk prefetching to reduce loading stutters
+/// when the player moves through the world at speed.
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(default)]
+pub struct StreamingSettings {
+    /// Chunks to prefetch ahead of the player in their movement direction (default: 3)
+    pub lookahead_chunks: i32,
+    /// Velocity smoothing factor (0.0-1.0). Higher = more responsive (default: 0.15)
+    pub velocity_smoothing: f32,
+    /// Minimum horizontal speed in chunks/sec to activate prediction (default: 0.5)
+    pub min_speed_threshold: f32,
+    /// Maximum predictive tasks per frame (default: 2)
+    pub max_predictive_per_frame: u32,
+}
+
 /// Debug overlay settings
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(default)]
@@ -349,6 +369,7 @@ impl Default for EngineConfig {
             world: WorldConfig::default(),
             audio: audio::AudioSettings::default(),
             save: SaveConfig::default(),
+            streaming: StreamingSettings::default(),
             cycle_duration_seconds: 600.0,
         }
     }
@@ -454,6 +475,17 @@ impl Default for WorldConfig {
             load_distance: None,
             vertical_load_up: 4,
             vertical_load_down: 2,
+        }
+    }
+}
+
+impl Default for StreamingSettings {
+    fn default() -> Self {
+        Self {
+            lookahead_chunks: 3,
+            velocity_smoothing: 0.15,
+            min_speed_threshold: 0.5,
+            max_predictive_per_frame: 2,
         }
     }
 }
@@ -772,6 +804,7 @@ fn apply_config_to_resources(
     mut unload_config: ResMut<UnloadConfig>,
     mut load_metrics: ResMut<crate::world::ChunkLoadMetrics>,
     mut save_system: ResMut<SaveSystem>,
+    mut streaming_config: ResMut<StreamingConfig>,
 ) {
     info!("Applying engine configuration...");
 
@@ -853,6 +886,18 @@ fn apply_config_to_resources(
         config.save.chunk_format,
     );
 
+    // --- Streaming settings ---
+    streaming_config.lookahead_chunks = config.streaming.lookahead_chunks;
+    streaming_config.velocity_smoothing = config.streaming.velocity_smoothing;
+    streaming_config.min_speed_threshold = config.streaming.min_speed_threshold;
+    streaming_config.max_predictive_per_frame = config.streaming.max_predictive_per_frame;
+    info!(
+        "Streaming: lookahead={}, smoothing={}, threshold={}",
+        config.streaming.lookahead_chunks,
+        config.streaming.velocity_smoothing,
+        config.streaming.min_speed_threshold,
+    );
+
     // --- Input bindings ---
     // Clear default bindings and apply from config
     input_map.clear();
@@ -924,6 +969,7 @@ fn poll_config_changes(
     mut audio_config: ResMut<audio::AudioConfig>,
     mut load_metrics: ResMut<crate::world::ChunkLoadMetrics>,
     mut save_system: ResMut<SaveSystem>,
+    mut streaming_config: ResMut<StreamingConfig>,
     mut camera_query: Query<(&mut CameraController, &mut Projection), With<Camera3d>>,
     mut player_query: Query<&mut Movement, With<Player>>,
 ) {
@@ -1010,6 +1056,11 @@ fn poll_config_changes(
     save_system.save_dir = std::path::PathBuf::from(&config.save.save_dir);
     save_system.auto_save_interval = config.save.auto_save_interval;
     save_system.set_chunk_format_from_str(&config.save.chunk_format);
+
+    streaming_config.lookahead_chunks = config.streaming.lookahead_chunks;
+    streaming_config.velocity_smoothing = config.streaming.velocity_smoothing;
+    streaming_config.min_speed_threshold = config.streaming.min_speed_threshold;
+    streaming_config.max_predictive_per_frame = config.streaming.max_predictive_per_frame;
 
     input_map.clear();
     bind_from_config(&mut input_map, InputAction::MoveForward, &config.controls.move_forward);
