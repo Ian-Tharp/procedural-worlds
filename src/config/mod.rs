@@ -163,13 +163,27 @@ pub struct TerrainSettings {
     ///
     /// When enabled, terrain generation parameters (height amplitude, noise
     /// frequency) are interpolated at biome boundaries using distance-weighted
-    /// sampling, eliminating abrupt terrain seams between biomes.
+    /// sampling with noise modulation, eliminating abrupt terrain seams and
+    /// producing organic-looking boundary edges.
     pub biome_blend_enabled: bool,
     /// Distance in blocks over which biome parameters blend at boundaries (default: 32.0).
     ///
     /// Larger values produce wider, more gradual transitions. A value of 0
     /// effectively disables blending. Typical range: 16–64.
     pub biome_blend_distance: f64,
+    /// Noise frequency for transition zone modulation (default: 0.08).
+    ///
+    /// Controls the scale of the Perlin noise mask that warps biome boundaries.
+    /// Higher values create more jagged, detailed boundary edges.
+    /// Lower values create smoother, broader boundary undulations.
+    pub transition_noise_scale: f64,
+    /// Amplitude of the transition noise modulation (default: 0.45).
+    ///
+    /// Controls how much the noise mask distorts the blend boundary.
+    /// At 0.0, transitions are purely distance-based (geometric).
+    /// At 1.0, noise can shift the effective boundary by up to one full
+    /// blend distance. Typical range: 0.2–0.6.
+    pub transition_noise_amplitude: f64,
 }
 
 /// Player movement and camera settings
@@ -344,6 +358,8 @@ impl Default for TerrainSettings {
             biome_scale: 0.005,
             biome_blend_enabled: true,
             biome_blend_distance: 32.0,
+            transition_noise_scale: 0.08,
+            transition_noise_amplitude: 0.45,
         }
     }
 }
@@ -731,12 +747,16 @@ fn apply_config_to_resources(
     terrain_config.biome_scale = config.terrain.biome_scale;
     terrain_config.blend_enabled = config.terrain.biome_blend_enabled;
     terrain_config.blend_distance = config.terrain.biome_blend_distance;
+    terrain_config.transition_noise_scale = config.terrain.transition_noise_scale;
+    terrain_config.transition_noise_amplitude = config.terrain.transition_noise_amplitude;
     info!(
-        "Terrain seed: {}, biome_scale: {}, blend: {} (distance: {})",
+        "Terrain seed: {}, biome_scale: {}, blend: {} (distance: {}, noise: {:.2}@{:.3})",
         config.terrain.seed,
         config.terrain.biome_scale,
         config.terrain.biome_blend_enabled,
         config.terrain.biome_blend_distance,
+        config.terrain.transition_noise_amplitude,
+        config.terrain.transition_noise_scale,
     );
 
     // --- Debug overlay settings ---
@@ -892,6 +912,10 @@ fn poll_config_changes(
     terrain_config.frequency = config.terrain.frequency;
     terrain_config.octaves = config.terrain.octaves;
     terrain_config.biome_scale = config.terrain.biome_scale;
+    terrain_config.blend_enabled = config.terrain.biome_blend_enabled;
+    terrain_config.blend_distance = config.terrain.biome_blend_distance;
+    terrain_config.transition_noise_scale = config.terrain.transition_noise_scale;
+    terrain_config.transition_noise_amplitude = config.terrain.transition_noise_amplitude;
 
     debug_state.visible = config.debug.overlay_visible;
     debug_state.show_memory = config.debug.show_memory;
@@ -1063,12 +1087,20 @@ mod tests {
         assert_eq!(config.terrain.seed, 99999);
         assert!(config.terrain.biome_blend_enabled);
         assert_eq!(config.terrain.biome_blend_distance, 32.0);
+        assert_eq!(config.terrain.transition_noise_scale, 0.08);
+        assert_eq!(config.terrain.transition_noise_amplitude, 0.45);
 
         // Config with blend fields should honor them
         let json = r#"{ "terrain": { "biome_blend_enabled": false, "biome_blend_distance": 64.0 } }"#;
         let config: EngineConfig = serde_json::from_str(json).unwrap();
         assert!(!config.terrain.biome_blend_enabled);
         assert_eq!(config.terrain.biome_blend_distance, 64.0);
+
+        // Config with transition noise fields should honor them
+        let json = r#"{ "terrain": { "transition_noise_scale": 0.12, "transition_noise_amplitude": 0.6 } }"#;
+        let config: EngineConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(config.terrain.transition_noise_scale, 0.12);
+        assert_eq!(config.terrain.transition_noise_amplitude, 0.6);
     }
 
     #[test]
