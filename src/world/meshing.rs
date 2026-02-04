@@ -71,7 +71,7 @@ pub fn block_color(block: BlockType) -> [f32; 4] {
     }
 }
 
-// ── Biome Vegetation Tinting ─────────────────────────────────────────
+// â”€â”€ Biome Vegetation Tinting â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 /// Simple deterministic hash for per-block tint noise.
 #[inline]
@@ -91,7 +91,7 @@ fn tint_noise(x: i32, z: i32, seed: u32) -> f32 {
 /// noise fields, simulating temperature variation across the world:
 /// - Warm areas: yellow-green tint (higher R, lower B)
 /// - Cool areas: deep blue-green tint (lower R, higher B)
-/// - Per-block noise adds ±8% brightness variation
+/// - Per-block noise adds Â±8% brightness variation
 ///
 /// The smooth component varies over ~48 blocks, producing natural-looking
 /// biome-scale color gradients without requiring actual biome data at
@@ -107,16 +107,16 @@ pub fn biome_grass_tint(world_x: f32, world_z: f32) -> [f32; 3] {
         + (sx * 0.3 - sz * 0.8).cos() * 0.25;
     let temp = raw.clamp(0.0, 1.0);
 
-    // Temperature → color multiplier
-    //   cool (temp≈0): [0.85, 0.95, 1.05]  — blue-green (forest/tundra edge)
-    //   warm (temp≈1): [1.08, 1.00, 0.82]  — yellow-green (plains/desert edge)
+    // Temperature â†’ color multiplier
+    //   cool (tempâ‰ˆ0): [0.85, 0.95, 1.05]  â€” blue-green (forest/tundra edge)
+    //   warm (tempâ‰ˆ1): [1.08, 1.00, 0.82]  â€” yellow-green (plains/desert edge)
     let r = 0.85 + temp * 0.23;
     let g = 0.95 + temp * 0.05;
     let b = 1.05 - temp * 0.23;
 
     // Per-block noise for subtle variation so adjacent blocks differ
     let noise = tint_noise(world_x.floor() as i32, world_z.floor() as i32, 54321);
-    let variation = noise * 0.36 - 0.18; // ±18%
+    let variation = noise * 0.36 - 0.18; // Â±18%
 
     [
         (r + variation).max(0.0),
@@ -146,7 +146,7 @@ pub struct AtlasConfig {
     pub atlas_size: u32,
 }
 
-/// Add vertices for a single 1×1 face of a cube (used by naive meshing).
+/// Add vertices for a single 1Ã—1 face of a cube (used by naive meshing).
 ///
 /// `ao` contains per-vertex ambient occlusion levels (0-3) matching the vertex
 /// winding order. The diagonal is flipped when AO creates asymmetry to avoid
@@ -482,7 +482,7 @@ fn is_neighbor_transparent(chunk: &Chunk, x: i32, y: i32, z: i32) -> bool {
         .is_transparent()
 }
 
-// ── Ambient Occlusion ────────────────────────────────────────────────
+// â”€â”€ Ambient Occlusion â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 /// AO darkening multipliers for levels 0-3.
 /// Level 0 = no occlusion (full brightness), level 3 = maximum occlusion.
@@ -569,6 +569,221 @@ pub fn compute_face_ao(chunk: &Chunk, x: usize, y: usize, z: usize, face: Face) 
     ao
 }
 
+
+// â”€â”€ Cross-Chunk Neighbor Data â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
+/// Block data from neighboring chunks for cross-chunk face culling.
+///
+/// Each neighbor is a flat array of CHUNK_SIZEÂ³ `BlockType` values, or `None`
+/// if the neighbor chunk doesn't exist (treated as air/transparent).
+///
+/// The flat array uses Chunk-native indexing: `x + y * CHUNK_SIZE + z * CHUNK_SIZE * CHUNK_SIZE`.
+pub struct ChunkNeighbors {
+    pub pos_x: Option<Vec<BlockType>>,  // +X neighbor
+    pub neg_x: Option<Vec<BlockType>>,  // -X neighbor
+    pub pos_y: Option<Vec<BlockType>>,  // +Y neighbor
+    pub neg_y: Option<Vec<BlockType>>,  // -Y neighbor
+    pub pos_z: Option<Vec<BlockType>>,  // +Z neighbor
+    pub neg_z: Option<Vec<BlockType>>,  // -Z neighbor
+}
+
+impl ChunkNeighbors {
+    /// Create an empty set of neighbors (all `None` â€” treats boundaries as air).
+    #[allow(dead_code)]
+    pub fn empty() -> Self {
+        Self {
+            pos_x: None, neg_x: None,
+            pos_y: None, neg_y: None,
+            pos_z: None, neg_z: None,
+        }
+    }
+}
+
+/// Look up a block from a flat chunk-data array using Chunk-native indexing.
+#[inline]
+fn get_block_from_data(data: &[BlockType], x: usize, y: usize, z: usize) -> BlockType {
+    data[x + y * CHUNK_SIZE + z * CHUNK_SIZE * CHUNK_SIZE]
+}
+
+/// Get the block type at the given coordinate, looking into neighbor data
+/// when the coordinate falls outside 0..CHUNK_SIZE.
+fn get_block_with_neighbors(
+    chunk: &Chunk,
+    neighbors: &ChunkNeighbors,
+    x: i32, y: i32, z: i32,
+) -> BlockType {
+    let cs = CHUNK_SIZE as i32;
+    if x >= 0 && x < cs && y >= 0 && y < cs && z >= 0 && z < cs {
+        return chunk.get_block(x as usize, y as usize, z as usize);
+    }
+    let x_out = x < 0 || x >= cs;
+    let y_out = y < 0 || y >= cs;
+    let z_out = z < 0 || z >= cs;
+    // More than one axis out of range = diagonal neighbor (not stored)
+    if (x_out as u8 + y_out as u8 + z_out as u8) > 1 {
+        return BlockType::Air;
+    }
+    if x < 0 {
+        return neighbors.neg_x.as_ref()
+            .map(|d| get_block_from_data(d, CHUNK_SIZE - 1, y as usize, z as usize))
+            .unwrap_or(BlockType::Air);
+    }
+    if x >= cs {
+        return neighbors.pos_x.as_ref()
+            .map(|d| get_block_from_data(d, 0, y as usize, z as usize))
+            .unwrap_or(BlockType::Air);
+    }
+    if y < 0 {
+        return neighbors.neg_y.as_ref()
+            .map(|d| get_block_from_data(d, x as usize, CHUNK_SIZE - 1, z as usize))
+            .unwrap_or(BlockType::Air);
+    }
+    if y >= cs {
+        return neighbors.pos_y.as_ref()
+            .map(|d| get_block_from_data(d, x as usize, 0, z as usize))
+            .unwrap_or(BlockType::Air);
+    }
+    if z < 0 {
+        return neighbors.neg_z.as_ref()
+            .map(|d| get_block_from_data(d, x as usize, y as usize, CHUNK_SIZE - 1))
+            .unwrap_or(BlockType::Air);
+    }
+    if z >= cs {
+        return neighbors.pos_z.as_ref()
+            .map(|d| get_block_from_data(d, x as usize, y as usize, 0))
+            .unwrap_or(BlockType::Air);
+    }
+    BlockType::Air
+}
+
+/// Check if opaque, with cross-chunk neighbor lookups.
+fn is_opaque_with_neighbors(chunk: &Chunk, neighbors: &ChunkNeighbors, x: i32, y: i32, z: i32) -> bool {
+    !get_block_with_neighbors(chunk, neighbors, x, y, z).is_transparent()
+}
+
+/// Compute AO for a face with cross-chunk neighbor lookups.
+pub fn compute_face_ao_with_neighbors(
+    chunk: &Chunk, neighbors: &ChunkNeighbors,
+    x: usize, y: usize, z: usize, face: Face,
+) -> [u8; 4] {
+    let (bx, by, bz) = (x as i32, y as i32, z as i32);
+    let (nx, ny, nz) = face.offset();
+    let (fx, fy, fz) = (bx + nx, by + ny, bz + nz);
+    let (t1, t2): ((i32, i32, i32), (i32, i32, i32)) = match face {
+        Face::Top =>    ((1, 0, 0), (0, 0, 1)),
+        Face::Bottom => ((1, 0, 0), (0, 0, 1)),
+        Face::North =>  ((1, 0, 0), (0, 1, 0)),
+        Face::South =>  ((1, 0, 0), (0, 1, 0)),
+        Face::East =>   ((0, 0, 1), (0, 1, 0)),
+        Face::West =>   ((0, 0, 1), (0, 1, 0)),
+    };
+    let corners: [(i32, i32); 4] = match face {
+        Face::Top =>    [(-1, -1), ( 1, -1), ( 1,  1), (-1,  1)],
+        Face::Bottom => [(-1,  1), ( 1,  1), ( 1, -1), (-1, -1)],
+        Face::North =>  [(-1, -1), (-1,  1), ( 1,  1), ( 1, -1)],
+        Face::South =>  [( 1, -1), ( 1,  1), (-1,  1), (-1, -1)],
+        Face::East =>   [( 1, -1), ( 1,  1), (-1,  1), (-1, -1)],
+        Face::West =>   [(-1, -1), (-1,  1), ( 1,  1), ( 1, -1)],
+    };
+    let mut ao = [0u8; 4];
+    for (i, &(s1, s2)) in corners.iter().enumerate() {
+        let side1 = is_opaque_with_neighbors(chunk, neighbors, fx + s1 * t1.0, fy + s1 * t1.1, fz + s1 * t1.2);
+        let side2 = is_opaque_with_neighbors(chunk, neighbors, fx + s2 * t2.0, fy + s2 * t2.1, fz + s2 * t2.2);
+        let corner = is_opaque_with_neighbors(chunk, neighbors,
+            fx + s1 * t1.0 + s2 * t2.0, fy + s1 * t1.1 + s2 * t2.1, fz + s1 * t1.2 + s2 * t2.2);
+        ao[i] = vertex_ao(side1, side2, corner);
+    }
+    ao
+}
+
+/// Build a chunk mesh with cross-chunk neighbor data and atlas configuration.
+///
+/// This is the primary meshing entry point used by the runtime pipeline.
+/// It eliminates visible seams at chunk boundaries by looking into adjacent
+/// chunk data when determining face visibility and AO.
+pub fn build_chunk_mesh_with_neighbors(
+    chunk: &Chunk, atlas: Option<AtlasConfig>, neighbors: &ChunkNeighbors,
+) -> Mesh {
+    build_chunk_mesh_neighbors_inner(chunk, atlas, neighbors)
+}
+
+/// Inner greedy meshing with cross-chunk neighbor awareness.
+#[allow(clippy::needless_range_loop)]
+fn build_chunk_mesh_neighbors_inner(
+    chunk: &Chunk, atlas: Option<AtlasConfig>, neighbors: &ChunkNeighbors,
+) -> Mesh {
+    let world_offset = chunk.world_position();
+    let mut positions: Vec<[f32; 3]> = Vec::new();
+    let mut normals: Vec<[f32; 3]> = Vec::new();
+    let mut colors: Vec<[f32; 4]> = Vec::new();
+    let mut uvs: Vec<[f32; 2]> = Vec::new();
+    let mut uv1s: Vec<[f32; 2]> = Vec::new();
+    let mut indices: Vec<u32> = Vec::new();
+    let faces = [Face::Top, Face::Bottom, Face::North, Face::South, Face::East, Face::West];
+    for face in faces {
+        for slice in 0..CHUNK_SIZE {
+            let mut mask: [[Option<(BlockType, [u8; 4])>; CHUNK_SIZE]; CHUNK_SIZE] =
+                [[None; CHUNK_SIZE]; CHUNK_SIZE];
+            for v in 0..CHUNK_SIZE {
+                for u in 0..CHUNK_SIZE {
+                    let (x, y, z) = match face {
+                        Face::Top | Face::Bottom => (u, slice, v),
+                        Face::North | Face::South => (u, v, slice),
+                        Face::East | Face::West => (slice, v, u),
+                    };
+                    let block = chunk.get_block(x, y, z);
+                    if block == BlockType::Air { continue; }
+                    let (ox, oy, oz) = face.offset();
+                    let (nx, ny, nz) = (x as i32 + ox, y as i32 + oy, z as i32 + oz);
+                    let neighbor = get_block_with_neighbors(chunk, neighbors, nx, ny, nz);
+                    if should_render_face(block, neighbor) {
+                        let ao = compute_face_ao_with_neighbors(chunk, neighbors, x, y, z, face);
+                        mask[v][u] = Some((block, ao));
+                    }
+                }
+            }
+            let mut visited = [[false; CHUNK_SIZE]; CHUNK_SIZE];
+            for v in 0..CHUNK_SIZE {
+                for u in 0..CHUNK_SIZE {
+                    if visited[v][u] || mask[v][u].is_none() { continue; }
+                    let (block_type, ao) = mask[v][u].unwrap();
+                    let key = (block_type, ao);
+                    let mut w = 1usize;
+                    while u + w < CHUNK_SIZE && !visited[v][u + w] && mask[v][u + w] == Some(key) { w += 1; }
+                    let mut h = 1usize;
+                    'expand_v: while v + h < CHUNK_SIZE {
+                        for du in 0..w {
+                            if visited[v + h][u + du] || mask[v + h][u + du] != Some(key) { break 'expand_v; }
+                        }
+                        h += 1;
+                    }
+                    for dv in 0..h { for du in 0..w { visited[v + dv][u + du] = true; } }
+                    let (x, y, z) = match face {
+                        Face::Top | Face::Bottom => (u, slice, v),
+                        Face::North | Face::South => (u, v, slice),
+                        Face::East | Face::West => (slice, v, u),
+                    };
+                    let color = block_color(block_type);
+                    add_greedy_face(
+                        &mut positions, &mut normals, &mut colors,
+                        &mut uvs, &mut uv1s, &mut indices,
+                        x as f32, y as f32, z as f32, w as f32, h as f32,
+                        face, color, ao, atlas, block_type, world_offset,
+                    );
+                }
+            }
+        }
+    }
+    let mut mesh = Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::default());
+    mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
+    mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, normals);
+    mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, colors);
+    mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, uvs);
+    if atlas.is_some() { mesh.insert_attribute(Mesh::ATTRIBUTE_UV_1, uv1s); }
+    mesh.insert_indices(Indices::U32(indices));
+    mesh
+}
+
 /// Build a mesh for a chunk using **greedy meshing**.
 ///
 /// For each of the 6 face directions, iterates over 2-D slices perpendicular to the
@@ -622,7 +837,7 @@ fn build_chunk_mesh_inner(chunk: &Chunk, atlas: Option<AtlasConfig>) -> Mesh {
 
             for v in 0..CHUNK_SIZE {
                 for u in 0..CHUNK_SIZE {
-                    // Map (slice, u, v) → (x, y, z) depending on face direction.
+                    // Map (slice, u, v) â†’ (x, y, z) depending on face direction.
                     //   Top/Bottom (Y-normal): u=X, v=Z, slice=Y
                     //   North/South (Z-normal): u=X, v=Y, slice=Z
                     //   East/West (X-normal): u=Z, v=Y, slice=X
@@ -662,7 +877,7 @@ fn build_chunk_mesh_inner(chunk: &Chunk, atlas: Option<AtlasConfig>) -> Mesh {
                 }
             }
 
-            // Greedy rectangle merging — matches on (BlockType, AO pattern)
+            // Greedy rectangle merging â€” matches on (BlockType, AO pattern)
             let mut visited = [[false; CHUNK_SIZE]; CHUNK_SIZE];
 
             for v in 0..CHUNK_SIZE {
@@ -745,7 +960,7 @@ fn build_chunk_mesh_inner(chunk: &Chunk, atlas: Option<AtlasConfig>) -> Mesh {
     mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, uvs);
 
     // UV1 carries tile grid coordinates for the atlas shader.
-    // Only added when atlas mode is active — the shader checks
+    // Only added when atlas mode is active â€” the shader checks
     // `#ifdef VERTEX_UVS_B` which Bevy enables when UV1 is present.
     if atlas.is_some() {
         mesh.insert_attribute(Mesh::ATTRIBUTE_UV_1, uv1s);
@@ -909,7 +1124,7 @@ mod tests {
 
     #[test]
     fn test_vertex_ao_two_sides() {
-        // Both sides occlude → max AO regardless of corner
+        // Both sides occlude â†’ max AO regardless of corner
         assert_eq!(vertex_ao(true, true, false), 3);
         assert_eq!(vertex_ao(true, true, true), 3);
     }
@@ -924,20 +1139,20 @@ mod tests {
         assert!((ao0[2] - 0.6).abs() < 1e-6);
         assert_eq!(ao0[3], 1.0);
 
-        // AO level 1: 0.6× darkening
+        // AO level 1: 0.6Ã— darkening
         let ao1 = apply_ao(color, 1);
         assert!((ao1[0] - 0.6).abs() < 1e-6);
         assert!((ao1[1] - 0.48).abs() < 1e-5);
         assert!((ao1[2] - 0.36).abs() < 1e-5);
         assert_eq!(ao1[3], 1.0);
 
-        // AO level 2: 0.35× darkening
+        // AO level 2: 0.35Ã— darkening
         let ao2 = apply_ao(color, 2);
         assert!((ao2[0] - 0.35).abs() < 1e-6);
         assert!((ao2[1] - 0.28).abs() < 1e-5);
         assert!((ao2[2] - 0.21).abs() < 1e-5);
 
-        // AO level 3: 0.15× darkening
+        // AO level 3: 0.15Ã— darkening
         let ao3 = apply_ao(color, 3);
         assert!((ao3[0] - 0.15).abs() < 1e-5);
         assert!((ao3[1] - 0.12).abs() < 1e-5);
@@ -961,7 +1176,7 @@ mod tests {
 
     #[test]
     fn test_ao_fully_surrounded_top_face() {
-        // Fill a 3×3×3 region, check AO on center block's top face
+        // Fill a 3Ã—3Ã—3 region, check AO on center block's top face
         let mut chunk = Chunk::new(IVec3::ZERO);
         for x in 7..=9 {
             for y in 7..=9 {
@@ -982,7 +1197,7 @@ mod tests {
 
     #[test]
     fn test_ao_darkening_applied_to_mesh() {
-        // Isolated block → AO=0 everywhere → colors should be unmodified
+        // Isolated block â†’ AO=0 everywhere â†’ colors should be unmodified
         let mut chunk = Chunk::new(IVec3::ZERO);
         chunk.set_block(8, 8, 8, BlockType::Stone);
 
@@ -1002,7 +1217,7 @@ mod tests {
 
     #[test]
     fn test_ao_darkening_reduces_brightness() {
-        // 3×3×3 cube with center-top removed creates AO on cavity walls
+        // 3Ã—3Ã—3 cube with center-top removed creates AO on cavity walls
         let mut chunk = Chunk::new(IVec3::ZERO);
         for x in 0..3 {
             for z in 0..3 {
@@ -1059,7 +1274,7 @@ mod tests {
         let greedy = build_chunk_mesh(&chunk);
         let naive = build_chunk_mesh_naive(&chunk);
 
-        // Single block in air → AO=0 on all faces → all merge normally
+        // Single block in air â†’ AO=0 on all faces â†’ all merge normally
         assert_eq!(mesh_vertex_count(&greedy), 24);
         assert_eq!(mesh_vertex_count(&naive), 24);
     }
@@ -1139,7 +1354,7 @@ mod tests {
 
     #[test]
     fn test_greedy_preserves_colors_isolated_block() {
-        // Isolated block: AO=0 → colors should match base exactly
+        // Isolated block: AO=0 â†’ colors should match base exactly
         // Uses Stone (not subject to biome tinting) for exact color comparison.
         let mut chunk = Chunk::new(IVec3::ZERO);
         chunk.set_block(8, 8, 8, BlockType::Stone);
@@ -1325,7 +1540,7 @@ mod tests {
             );
             assert!(
                 uv[0] >= u_min && uv[0] <= u_max && uv[1] >= v_min && uv[1] <= v_max,
-                "atlas UV {:?} escaped tile bounds [{},{}]×[{},{}]",
+                "atlas UV {:?} escaped tile bounds [{},{}]Ã—[{},{}]",
                 uv,
                 u_min,
                 u_max,
@@ -1372,7 +1587,7 @@ mod tests {
     #[test]
     fn test_use_textures_false_keeps_vertex_colors() {
         // With atlas=None (use_textures=false), vertex colors should be
-        // the original block_color * AO — identical to legacy behaviour.
+        // the original block_color * AO â€” identical to legacy behaviour.
         // Uses Stone (not subject to biome tinting) for exact comparison.
         let mut chunk = Chunk::new(IVec3::ZERO);
         chunk.set_block(8, 8, 8, BlockType::Stone);
@@ -1383,7 +1598,7 @@ mod tests {
         if let Some(bevy::render::mesh::VertexAttributeValues::Float32x4(colors)) =
             legacy.attribute(Mesh::ATTRIBUTE_COLOR)
         {
-            // Isolated block → AO=0 → colors == base block color
+            // Isolated block â†’ AO=0 â†’ colors == base block color
             for c in colors {
                 assert_eq!(*c, expected, "legacy mode should use block_color");
             }
@@ -1520,7 +1735,7 @@ mod tests {
 
     #[test]
     fn test_uv1_contains_correct_tile_coordinates() {
-        // Stone uses tile 0 for all faces → tile_xy should be (0, 0)
+        // Stone uses tile 0 for all faces â†’ tile_xy should be (0, 0)
         let mut chunk = Chunk::new(IVec3::ZERO);
         chunk.set_block(8, 8, 8, BlockType::Stone);
 
@@ -1535,7 +1750,7 @@ mod tests {
             mesh.attribute(Mesh::ATTRIBUTE_UV_1)
         {
             for uv1 in uv1_data {
-                // Stone tile 0 → grid coords (0, 0)
+                // Stone tile 0 â†’ grid coords (0, 0)
                 assert_eq!(*uv1, [0.0, 0.0], "Stone tile 0 should have UV1 = (0, 0)");
             }
         } else {
@@ -1576,14 +1791,14 @@ mod tests {
                 unique
             );
 
-            // Grass top = tile 2 → (2, 0)
+            // Grass top = tile 2 â†’ (2, 0)
             assert!(
                 unique.iter().any(|u| (u[0] - 2.0).abs() < 1e-6 && u[1].abs() < 1e-6),
                 "Grass should have tile (2, 0) for top face, unique tiles: {:?}",
                 unique
             );
 
-            // Grass side = tile 3 → (3, 0)
+            // Grass side = tile 3 â†’ (3, 0)
             assert!(
                 unique.iter().any(|u| (u[0] - 3.0).abs() < 1e-6 && u[1].abs() < 1e-6),
                 "Grass should have tile (3, 0) for side faces, unique tiles: {:?}",
@@ -1611,7 +1826,7 @@ mod tests {
         if let Some(bevy::render::mesh::VertexAttributeValues::Float32x2(uv1_data)) =
             mesh.attribute(Mesh::ATTRIBUTE_UV_1)
         {
-            // Dirt = tile 1 for all faces → grid coords (1, 0)
+            // Dirt = tile 1 for all faces â†’ grid coords (1, 0)
             for uv1 in uv1_data {
                 assert_eq!(
                     *uv1,

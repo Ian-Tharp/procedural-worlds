@@ -1,8 +1,10 @@
 //! Editor systems - UI panels, viewport, tools
 
+pub mod block_highlight;
 pub mod debug_overlay;
 pub mod hud;
 
+pub use block_highlight::BlockHighlightPlugin;
 pub use debug_overlay::DebugOverlayPlugin;
 pub use hud::HudPlugin;
 
@@ -29,6 +31,7 @@ pub struct EditorPlugin;
 impl Plugin for EditorPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins(FrameTimeDiagnosticsPlugin::default())
+            .add_plugins(BlockHighlightPlugin)
             .init_resource::<EditorState>()
             .add_systems(
                 Update,
