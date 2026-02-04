@@ -14,6 +14,7 @@ use bevy::input::mouse::MouseWheel;
 use bevy::prelude::*;
 
 use crate::actors::Player;
+use crate::audio::{BlockSoundEvent, BlockSoundKind};
 use crate::engine::controller::CursorState;
 use crate::engine::raycast::CurrentTarget;
 
@@ -164,13 +165,14 @@ fn overlaps_player(block_pos: IVec3, player_pos: Vec3) -> bool {
 ///
 /// Replaces the targeted block with Air and marks the chunk (and any
 /// boundary-adjacent neighbor) as dirty for re-meshing. Water blocks
-/// cannot be broken.
+/// cannot be broken. Emits a [`BlockSoundEvent`] on success.
 fn break_block(
     mouse_buttons: Res<ButtonInput<MouseButton>>,
     current_target: Res<CurrentTarget>,
     chunk_manager: Res<ChunkManager>,
     cursor_state: Res<CursorState>,
     mut chunks: Query<&mut Chunk, With<ChunkMesh>>,
+    mut sound_events: EventWriter<BlockSoundEvent>,
 ) {
     // Only interact when cursor is grabbed (FPS mode)
     if !cursor_state.grabbed {
@@ -190,6 +192,8 @@ fn break_block(
         return;
     }
 
+    let broken_block_type = result.block_type;
+    let block_world_pos = result.block_pos.as_vec3() + Vec3::splat(0.5);
     let (chunk_pos, local) = world_to_chunk_and_local(result.block_pos);
 
     let Some(&entity) = chunk_manager.chunks.get(&chunk_pos) else {
@@ -205,6 +209,13 @@ fn break_block(
         );
         chunk.dirty = true;
         chunk.modified = true;
+
+        // Emit sound event for the broken block
+        sound_events.send(BlockSoundEvent {
+            kind: BlockSoundKind::Break,
+            position: block_world_pos,
+            block_type: broken_block_type,
+        });
     }
 
     dirty_neighbors_if_boundary(local, chunk_pos, &chunk_manager, &mut chunks);
@@ -214,6 +225,8 @@ fn break_block(
 ///
 /// Uses the currently selected block type from [`SelectedBlock`]. Prevents
 /// placement if the target position overlaps the player's capsule.
+/// Emits a [`BlockSoundEvent`] on success.
+#[allow(clippy::too_many_arguments)]
 fn place_block(
     mouse_buttons: Res<ButtonInput<MouseButton>>,
     current_target: Res<CurrentTarget>,
@@ -222,6 +235,7 @@ fn place_block(
     cursor_state: Res<CursorState>,
     mut chunks: Query<&mut Chunk, With<ChunkMesh>>,
     player_query: Query<&GlobalTransform, With<Player>>,
+    mut sound_events: EventWriter<BlockSoundEvent>,
 ) {
     if !cursor_state.grabbed {
         return;
@@ -259,6 +273,13 @@ fn place_block(
         );
         chunk.dirty = true;
         chunk.modified = true;
+
+        // Emit sound event for the placed block
+        sound_events.send(BlockSoundEvent {
+            kind: BlockSoundKind::Place,
+            position: place_pos.as_vec3() + Vec3::splat(0.5),
+            block_type: selected_block.block_type,
+        });
     }
 
     dirty_neighbors_if_boundary(local, chunk_pos, &chunk_manager, &mut chunks);

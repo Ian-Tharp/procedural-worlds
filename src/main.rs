@@ -7,6 +7,7 @@ use bevy::prelude::*;
 use bevy_egui::EguiPlugin;
 
 use procedural_worlds::actors;
+use procedural_worlds::audio;
 use procedural_worlds::config;
 use procedural_worlds::editor;
 use procedural_worlds::engine;
@@ -50,8 +51,12 @@ fn main() {
         .add_plugins(world::WorldPlugin)
         .add_plugins(physics::PhysicsPlugin)
         .add_plugins(actors::ActorPlugin)
+        // Audio system (playback + device validation)
+        .add_plugins(audio::AudioPlugin)
         // Config plugin applies settings to resources/entities in PostStartup
         .add_plugins(config::ConfigPlugin)
+        // Audio configuration plugin (settings panel, persistence)
+        .add_plugins(config::audio::AudioConfigPlugin)
         // Startup systems
         .add_systems(Startup, setup_scene)
         .run();
