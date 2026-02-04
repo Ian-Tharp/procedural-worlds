@@ -194,6 +194,19 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
 
   uv01 = rotate_flip_uv(uv01, effective_variant);
 
+  // ── Sub-texel UV offset ──────────────────────────────────────────────
+  // Shift the sampling point within the tile so adjacent identical blocks
+  // don't sample the exact same pixel pattern. The offset is small enough
+  // (±15% of tile UV space) to stay well within tile bounds after the
+  // full-texel inset applied by remap_atlas_uv, but large enough to
+  // visibly break the "photocopy" tiling pattern.
+  let uv_noise_u = (f32(h & 255u) / 255.0) * 2.0 - 1.0;        // [-1, +1]
+  let uv_noise_v = (f32((h >> 8u) & 255u) / 255.0) * 2.0 - 1.0; // [-1, +1]
+  let uv_offset_strength: f32 = 0.15; // fraction of tile UV space
+  uv01 = uv01 + vec2<f32>(uv_noise_u, uv_noise_v) * uv_offset_strength;
+  // Wrap back to [0,1] so we stay within the tile's repeatable region.
+  uv01 = fract(uv01 + vec2<f32>(1.0)); // +1.0 ensures fract() of negative values works
+
   #ifdef VERTEX_UVS
     #ifdef VERTEX_UVS_B
       vin.uv = remap_atlas_uv(uv01, in.uv_b);
@@ -203,13 +216,23 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
   // Generate PbrInput from StandardMaterial bindings (now sampling with remapped UVs).
   var pbr_input = pbr_input_from_standard_material(vin, is_front);
 
-  // Subtle per-block albedo variation to reduce flat/plasticky look.
-  // Keep it tight so it doesn't look like noise.
-  let jitter = (f32((h >> 8u) & 255u) / 255.0) * 0.10 - 0.05; // [-0.05, +0.05]
+  // ── Per-channel color variation ──────────────────────────────────────
+  // Unlike uniform albedo jitter, per-channel variation produces subtle
+  // warm/cool shifts that look more natural for organic materials.
+  // Each channel is independently adjusted by up to ±6%.
   // WGSL gotcha: avoid compound assignment to swizzles on struct members.
   // Do an explicit write to the full vec4 instead.
+  let max_color_var: f32 = 0.06;
+  let r_var = (f32((h >> 16u) & 255u) / 255.0) * 2.0 - 1.0; // [-1, +1]
+  let g_var = (f32((h >> 8u)  & 255u) / 255.0) * 2.0 - 1.0;
+  let b_var = (f32( h         & 255u) / 255.0) * 2.0 - 1.0;
   let bc = pbr_input.material.base_color;
-  pbr_input.material.base_color = vec4<f32>(bc.rgb * (1.0 + jitter), bc.a);
+  pbr_input.material.base_color = vec4<f32>(
+    bc.r * (1.0 + r_var * max_color_var),
+    bc.g * (1.0 + g_var * max_color_var),
+    bc.b * (1.0 + b_var * max_color_var),
+    bc.a,
+  );
 
   // Alpha discard (for alpha-cutout textures, if configured in StandardMaterial).
   pbr_input.material.base_color =

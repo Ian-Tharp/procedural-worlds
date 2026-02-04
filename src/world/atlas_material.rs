@@ -349,4 +349,32 @@ mod tests {
             "Shader should have UV safety clamping to prevent edge bleeding"
         );
     }
+
+    #[test]
+    fn test_shader_has_uv_offset_variation() {
+        // The fragment shader should apply sub-texel UV offsets to break tiling
+        let src = BLOCK_ATLAS_SHADER_WGSL;
+        assert!(
+            src.contains("uv_offset_strength"),
+            "Shader should have UV offset variation to break tiling repetition"
+        );
+        assert!(
+            src.contains("uv_noise_u") && src.contains("uv_noise_v"),
+            "Shader should compute per-axis UV noise offsets"
+        );
+    }
+
+    #[test]
+    fn test_shader_has_per_channel_color_variation() {
+        // The fragment shader should vary each RGB channel independently
+        let src = BLOCK_ATLAS_SHADER_WGSL;
+        assert!(
+            src.contains("r_var") && src.contains("g_var") && src.contains("b_var"),
+            "Shader should have per-channel (R/G/B) color variation"
+        );
+        assert!(
+            src.contains("max_color_var"),
+            "Shader should define a max color variation bound"
+        );
+    }
 }

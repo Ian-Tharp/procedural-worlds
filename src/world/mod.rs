@@ -25,6 +25,7 @@ pub mod persistence;
 pub mod save;
 pub mod streaming;
 pub mod texture_atlas;
+pub mod texture_variation;
 pub mod unloading;
 
 use persistence::ChunkStorage;
