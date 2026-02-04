@@ -584,8 +584,28 @@ pub fn draw_debug_ui(
                     ui.colored_label(avg_color, format!("{:.1} ms", avg));
                 });
                 ui.horizontal(|ui| {
+                    ui.label("Peak load time:");
+                    let peak = metrics.peak_load_time_ms;
+                    let peak_color = if peak <= 50.0 {
+                        egui::Color32::from_rgb(100, 255, 100)
+                    } else if peak <= 200.0 {
+                        egui::Color32::from_rgb(255, 255, 100)
+                    } else {
+                        egui::Color32::from_rgb(255, 100, 100)
+                    };
+                    ui.colored_label(peak_color, format!("{:.1} ms", peak));
+                    ui.colored_label(
+                        egui::Color32::from_rgb(150, 150, 150),
+                        format!("(all-time: {:.1} ms)", metrics.all_time_peak_load_time_ms),
+                    );
+                });
+                ui.horizontal(|ui| {
                     ui.label("Total loaded:");
                     ui.monospace(format!("{}", metrics.total_chunks_loaded));
+                });
+                ui.horizontal(|ui| {
+                    ui.label("Chunk data:");
+                    ui.monospace(format!("{:.1} MB", metrics.chunk_memory_mb()));
                 });
             }
         });

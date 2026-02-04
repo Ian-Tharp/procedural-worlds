@@ -288,6 +288,12 @@ pub struct DebugConfig {
     pub show_chunks: bool,
     /// Show rendering settings in debug overlay
     pub show_render: bool,
+    /// Enable chunk loading performance metrics collection (default: true).
+    ///
+    /// When disabled, the rolling-window timing instrumentation is skipped,
+    /// reducing overhead in release / performance-sensitive scenarios.
+    /// The total-chunks-loaded counter is always maintained regardless.
+    pub collect_chunk_metrics: bool,
 }
 
 // ============================================================================
@@ -423,6 +429,7 @@ impl Default for DebugConfig {
             show_input: false,
             show_chunks: true,
             show_render: true,
+            collect_chunk_metrics: true,
         }
     }
 }
@@ -716,6 +723,7 @@ fn apply_config_to_resources(
     mut terrain_config: ResMut<TerrainConfig>,
     mut debug_state: ResMut<DebugOverlayState>,
     mut unload_config: ResMut<UnloadConfig>,
+    mut load_metrics: ResMut<crate::world::ChunkLoadMetrics>,
 ) {
     info!("Applying engine configuration...");
 
@@ -765,6 +773,13 @@ fn apply_config_to_resources(
     debug_state.show_input_state = config.debug.show_input;
     debug_state.show_chunks = config.debug.show_chunks;
     debug_state.show_render = config.debug.show_render;
+
+    // --- Chunk metrics toggle ---
+    load_metrics.enabled = config.debug.collect_chunk_metrics;
+    info!(
+        "Chunk metrics collection: {}",
+        if config.debug.collect_chunk_metrics { "enabled" } else { "disabled" },
+    );
 
     // --- Unload settings ---
     unload_config.unload_distance = config.unload.unload_distance;
@@ -848,6 +863,7 @@ fn poll_config_changes(
     mut debug_state: ResMut<DebugOverlayState>,
     mut unload_config: ResMut<UnloadConfig>,
     mut audio_config: ResMut<audio::AudioConfig>,
+    mut load_metrics: ResMut<crate::world::ChunkLoadMetrics>,
     mut camera_query: Query<(&mut CameraController, &mut Projection), With<Camera3d>>,
     mut player_query: Query<&mut Movement, With<Player>>,
 ) {
@@ -922,6 +938,8 @@ fn poll_config_changes(
     debug_state.show_input_state = config.debug.show_input;
     debug_state.show_chunks = config.debug.show_chunks;
     debug_state.show_render = config.debug.show_render;
+
+    load_metrics.enabled = config.debug.collect_chunk_metrics;
 
     unload_config.unload_distance = config.unload.unload_distance;
     unload_config.save_on_unload = config.unload.save_on_unload;
@@ -1051,6 +1069,7 @@ mod tests {
         assert_eq!(deserialized.audio.distance_falloff, original.audio.distance_falloff);
         assert_eq!(deserialized.audio.spatial_audio_enabled, original.audio.spatial_audio_enabled);
         assert_eq!(deserialized.audio.enabled, original.audio.enabled);
+        assert_eq!(deserialized.debug.collect_chunk_metrics, original.debug.collect_chunk_metrics);
     }
 
     #[test]
