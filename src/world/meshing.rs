@@ -1933,4 +1933,172 @@ mod tests {
             }
         }
     }
+
+    // ==================================================================
+    //  Cross-chunk border optimization tests
+    // ==================================================================
+
+    #[test]
+    fn test_cross_chunk_border_face_culling() {
+        // Two adjacent filled chunks: the shared border faces should be culled
+        // when neighbor data is provided.
+        let mut chunk = Chunk::new(IVec3::ZERO);
+        chunk.fill(BlockType::Stone);
+
+        let mut neighbor = Chunk::new(IVec3::X);
+        neighbor.fill(BlockType::Stone);
+
+        // Mesh without neighbor data — +X border faces are rendered (treated as air)
+        let mesh_no_neighbors = build_chunk_mesh(&chunk);
+        let verts_no_neighbors = mesh_vertex_count(&mesh_no_neighbors);
+
+        // Mesh with +X neighbor — border faces should be culled
+        let neighbors = ChunkNeighbors {
+            pos_x: Some(neighbor.blocks().to_vec()),
+            neg_x: None,
+            pos_y: None,
+            neg_y: None,
+            pos_z: None,
+            neg_z: None,
+        };
+        let (mesh_with_neighbors, _) = build_chunk_mesh_with_neighbors(&chunk, None, &neighbors);
+        let verts_with_neighbors = mesh_vertex_count(&mesh_with_neighbors);
+
+        assert!(
+            verts_with_neighbors < verts_no_neighbors,
+            "mesh with +X neighbor ({verts_with_neighbors}) should have fewer vertices \
+             than without ({verts_no_neighbors}) because border faces are culled"
+        );
+    }
+
+    #[test]
+    fn test_cross_chunk_border_culling_all_six_faces() {
+        // A filled chunk surrounded by filled neighbors on all 6 sides should
+        // have no external faces at all (every border face is culled).
+        let mut chunk = Chunk::new(IVec3::ZERO);
+        chunk.fill(BlockType::Stone);
+
+        let filled_data: Vec<BlockType> = {
+            let mut tmp = Chunk::new(IVec3::ZERO);
+            tmp.fill(BlockType::Stone);
+            tmp.blocks().to_vec()
+        };
+
+        let neighbors = ChunkNeighbors {
+            pos_x: Some(filled_data.clone()),
+            neg_x: Some(filled_data.clone()),
+            pos_y: Some(filled_data.clone()),
+            neg_y: Some(filled_data.clone()),
+            pos_z: Some(filled_data.clone()),
+            neg_z: Some(filled_data.clone()),
+        };
+
+        let (mesh, _) = build_chunk_mesh_with_neighbors(&chunk, None, &neighbors);
+        let verts = mesh_vertex_count(&mesh);
+
+        assert_eq!(
+            verts, 0,
+            "a filled chunk fully surrounded by filled neighbors should have zero \
+             visible faces, but got {verts} vertices"
+        );
+    }
+
+    #[test]
+    fn test_cross_chunk_border_ao_differs_with_neighbor() {
+        // A block at the +X border should get different AO when a solid
+        // neighbor block exists in the adjacent chunk.
+        let mut chunk = Chunk::new(IVec3::ZERO);
+        chunk.set_block(CHUNK_SIZE - 1, 0, 0, BlockType::Stone);
+
+        // Without neighbor data: AO on Top face treats +X outside as air
+        let ao_without = compute_face_ao(&chunk, CHUNK_SIZE - 1, 0, 0, Face::Top);
+
+        // With a solid block in the +X neighbor at (0, 1, 0) — above and
+        // adjacent — this should create occlusion on the Top face
+        let mut neighbor = Chunk::new(IVec3::X);
+        neighbor.set_block(0, 1, 0, BlockType::Stone);
+
+        let neighbors = ChunkNeighbors {
+            pos_x: Some(neighbor.blocks().to_vec()),
+            neg_x: None,
+            pos_y: None,
+            neg_y: None,
+            pos_z: None,
+            neg_z: None,
+        };
+        let ao_with = compute_face_ao_with_neighbors(
+            &chunk, &neighbors, CHUNK_SIZE - 1, 0, 0, Face::Top,
+        );
+
+        assert_ne!(
+            ao_without, ao_with,
+            "AO should differ when neighbor chunk has occluding blocks: \
+             without={ao_without:?}, with={ao_with:?}"
+        );
+    }
+
+    #[test]
+    fn test_cross_chunk_border_partial_neighbor() {
+        // Only one neighbor present: faces toward that neighbor should be
+        // culled, other border faces should still render.
+        let mut chunk = Chunk::new(IVec3::ZERO);
+        chunk.fill(BlockType::Stone);
+
+        let filled_data: Vec<BlockType> = {
+            let mut tmp = Chunk::new(IVec3::ZERO);
+            tmp.fill(BlockType::Stone);
+            tmp.blocks().to_vec()
+        };
+
+        // All six neighbors present
+        let all_neighbors = ChunkNeighbors {
+            pos_x: Some(filled_data.clone()),
+            neg_x: Some(filled_data.clone()),
+            pos_y: Some(filled_data.clone()),
+            neg_y: Some(filled_data.clone()),
+            pos_z: Some(filled_data.clone()),
+            neg_z: Some(filled_data.clone()),
+        };
+
+        // Only +X neighbor
+        let one_neighbor = ChunkNeighbors {
+            pos_x: Some(filled_data.clone()),
+            neg_x: None,
+            pos_y: None,
+            neg_y: None,
+            pos_z: None,
+            neg_z: None,
+        };
+
+        let (mesh_all, _) = build_chunk_mesh_with_neighbors(&chunk, None, &all_neighbors);
+        let (mesh_one, _) = build_chunk_mesh_with_neighbors(&chunk, None, &one_neighbor);
+
+        let verts_all = mesh_vertex_count(&mesh_all);
+        let verts_one = mesh_vertex_count(&mesh_one);
+
+        // Fully surrounded = 0 faces, one neighbor = some faces culled
+        assert_eq!(verts_all, 0);
+        assert!(
+            verts_one > 0 && verts_one < mesh_vertex_count(&build_chunk_mesh(&chunk)),
+            "one neighbor should cull some but not all border faces: got {verts_one} vertices"
+        );
+    }
+
+    #[test]
+    fn test_empty_neighbors_equivalent_to_no_neighbors() {
+        // ChunkNeighbors::empty() should produce the same mesh as
+        // build_chunk_mesh (no neighbor data).
+        let mut chunk = Chunk::new(IVec3::ZERO);
+        chunk.fill(BlockType::Stone);
+
+        let mesh_legacy = build_chunk_mesh(&chunk);
+        let (mesh_empty_neighbors, _) =
+            build_chunk_mesh_with_neighbors(&chunk, None, &ChunkNeighbors::empty());
+
+        assert_eq!(
+            mesh_vertex_count(&mesh_legacy),
+            mesh_vertex_count(&mesh_empty_neighbors),
+            "empty neighbors should produce the same mesh as legacy (no neighbor data)"
+        );
+    }
 }
