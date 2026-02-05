@@ -486,7 +486,7 @@ fn is_neighbor_transparent(chunk: &Chunk, x: i32, y: i32, z: i32) -> bool {
 
 /// AO darkening multipliers for levels 0-3.
 /// Level 0 = no occlusion (full brightness), level 3 = maximum occlusion.
-const AO_CURVE: [f32; 4] = [1.0, 0.6, 0.35, 0.15];
+const AO_CURVE: [f32; 4] = [1.0, 0.75, 0.55, 0.35];
 
 /// Compute the ambient occlusion level (0-3) for a single vertex.
 ///
@@ -1189,24 +1189,24 @@ mod tests {
         assert!((ao0[2] - 0.6).abs() < 1e-6);
         assert_eq!(ao0[3], 1.0);
 
-        // AO level 1: 0.6Ã— darkening
+        // AO level 1: 0.75x darkening
         let ao1 = apply_ao(color, 1);
-        assert!((ao1[0] - 0.6).abs() < 1e-6);
-        assert!((ao1[1] - 0.48).abs() < 1e-5);
-        assert!((ao1[2] - 0.36).abs() < 1e-5);
+        assert!((ao1[0] - 0.75).abs() < 1e-6);
+        assert!((ao1[1] - 0.6).abs() < 1e-5);
+        assert!((ao1[2] - 0.45).abs() < 1e-5);
         assert_eq!(ao1[3], 1.0);
 
-        // AO level 2: 0.35Ã— darkening
+        // AO level 2: 0.55x darkening
         let ao2 = apply_ao(color, 2);
-        assert!((ao2[0] - 0.35).abs() < 1e-6);
-        assert!((ao2[1] - 0.28).abs() < 1e-5);
-        assert!((ao2[2] - 0.21).abs() < 1e-5);
+        assert!((ao2[0] - 0.55).abs() < 1e-6);
+        assert!((ao2[1] - 0.44).abs() < 1e-5);
+        assert!((ao2[2] - 0.33).abs() < 1e-5);
 
-        // AO level 3: 0.15Ã— darkening
+        // AO level 3: 0.35x darkening
         let ao3 = apply_ao(color, 3);
-        assert!((ao3[0] - 0.15).abs() < 1e-5);
-        assert!((ao3[1] - 0.12).abs() < 1e-5);
-        assert!((ao3[2] - 0.09).abs() < 1e-5);
+        assert!((ao3[0] - 0.35).abs() < 1e-5);
+        assert!((ao3[1] - 0.28).abs() < 1e-5);
+        assert!((ao3[2] - 0.21).abs() < 1e-5);
 
         // Alpha is never affected
         let transparent = [0.5, 0.5, 0.5, 0.5];

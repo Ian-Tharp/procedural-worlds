@@ -152,7 +152,7 @@ fn spawn_sun(mut commands: Commands, config: Res<EngineConfig>) {
     // Ambient light — will be overwritten each frame by apply_lighting
     commands.insert_resource(AmbientLight {
         color: Color::srgb(0.4, 0.4, 0.5),
-        brightness: 200.0,
+        brightness: 800.0,
     });
 
     // Sky color — will be updated dynamically by apply_lighting
@@ -290,26 +290,26 @@ fn ambient_settings(time_of_day: f32) -> (Color, f32) {
     let elevation = sun_elevation(time_of_day);
 
     if elevation < -0.1 {
-        // Deep night — slightly brighter blue so shadow faces aren't pitch black
-        (Color::srgb(0.08, 0.08, 0.18), 80.0)
+        // Deep night — brighter blue so shadow faces aren't pitch black
+        (Color::srgb(0.12, 0.12, 0.22), 150.0)
     } else if elevation < 0.0 {
         // Twilight transition
         let t = (elevation + 0.1) / 0.1;
         let color = Color::srgb(
-            lerp(0.08, 0.25, t),
-            lerp(0.08, 0.18, t),
-            lerp(0.18, 0.22, t),
+            lerp(0.12, 0.25, t),
+            lerp(0.12, 0.18, t),
+            lerp(0.22, 0.22, t),
         );
-        (color, lerp(80.0, 100.0, t))
+        (color, lerp(150.0, 400.0, t))
     } else {
-        // Daytime — brighter, neutral ambient
+        // Daytime — brighter, neutral ambient for visible shadow detail
         let day = elevation.min(1.0);
         let color = Color::srgb(
-            lerp(0.25, 0.4, day),
-            lerp(0.18, 0.4, day),
-            lerp(0.22, 0.5, day),
+            lerp(0.3, 0.5, day),
+            lerp(0.3, 0.5, day),
+            lerp(0.35, 0.6, day),
         );
-        (color, lerp(100.0, 250.0, day))
+        (color, lerp(400.0, 1200.0, day))
     }
 }
 
@@ -503,13 +503,13 @@ mod tests {
     #[test]
     fn test_ambient_dim_at_night() {
         let (_color, brightness) = ambient_settings(0.0);
-        assert!(brightness <= 80.0, "Night ambient should be dim, got {}", brightness);
+        assert!(brightness <= 150.0, "Night ambient should be dim, got {}", brightness);
     }
 
     #[test]
     fn test_ambient_bright_at_noon() {
         let (_color, brightness) = ambient_settings(0.5);
-        assert!(brightness > 200.0, "Noon ambient should be bright, got {}", brightness);
+        assert!(brightness > 800.0, "Noon ambient should be bright, got {}", brightness);
     }
 
     #[test]
