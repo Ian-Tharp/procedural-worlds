@@ -14,12 +14,13 @@ use bevy_egui::{egui, EguiContexts};
 use crate::engine::controller::CursorState;
 use crate::engine::raycast::CurrentTarget;
 use crate::world::interaction::SelectedBlock;
-use crate::world::{ChunkLoadMetrics, ChunkManager};
+use crate::world::{ChunkLoadMetrics, ChunkManager, PendingMesh};
 
-/// Tracks the chunk loading progress bar visibility state.
+/// Tracks the chunk loading progress bar visibility and animation state.
 ///
 /// The progress bar appears when chunks are pending and fades out
 /// after loading completes, providing a smooth visual transition.
+/// Includes a pulse animation timer for active loading indication.
 #[derive(Resource)]
 pub struct ChunkLoadingBarState {
     /// Opacity of the progress bar (0.0 = invisible, 1.0 = fully visible).
@@ -27,6 +28,8 @@ pub struct ChunkLoadingBarState {
     opacity: f32,
     /// Whether the bar was visible last frame (used to detect completion).
     was_loading: bool,
+    /// Accumulated time for the pulse animation (wraps at 2π).
+    pulse_timer: f32,
 }
 
 impl Default for ChunkLoadingBarState {
@@ -34,6 +37,7 @@ impl Default for ChunkLoadingBarState {
         Self {
             opacity: 0.0,
             was_loading: false,
+            pulse_timer: 0.0,
         }
     }
 }
@@ -194,12 +198,19 @@ fn hud_system(
     }
 }
 
-/// Chunk loading progress bar system.
+/// Chunk loading progress bar system with phase-aware visuals.
 ///
 /// Displays a translucent progress bar at the bottom center of the screen
-/// showing how many chunks have been loaded versus the expected total.
-/// The bar fades in when chunks are pending and fades out smoothly after
-/// loading completes.
+/// showing chunk loading progress with distinct visual states for the
+/// "generating" and "meshing" phases.
+///
+/// - **Generating** (blue/purple): Terrain, caves, and trees are being computed
+///   on background threads (`PendingChunk` entities).
+/// - **Meshing** (orange/amber): Block data is being converted into renderable
+///   meshes on background threads (`PendingMesh` entities).
+///
+/// The bar includes a subtle pulse animation on the active portion to
+/// communicate ongoing work, and fades in/out smoothly on state transitions.
 ///
 /// # Calculation
 ///
@@ -210,6 +221,7 @@ fn chunk_loading_progress_system(
     mut contexts: EguiContexts,
     chunk_manager: Option<Res<ChunkManager>>,
     load_metrics: Option<Res<ChunkLoadMetrics>>,
+    pending_mesh_query: Query<(), With<PendingMesh>>,
     mut bar_state: ResMut<ChunkLoadingBarState>,
     time: Res<Time>,
 ) {
@@ -220,9 +232,10 @@ fn chunk_loading_progress_system(
     let side = (2 * ld + 1) as usize;
     let expected = side * side * vertical_levels;
     let loaded = cm.chunks.len();
-    let pending = cm.pending.len();
+    let generating = cm.pending.len();
+    let meshing = pending_mesh_query.iter().count();
 
-    let is_loading = pending > 0 && loaded < expected;
+    let is_loading = (generating > 0 || meshing > 0) && loaded < expected;
 
     // Animate opacity
     let dt = time.delta_secs();
@@ -230,9 +243,12 @@ fn chunk_loading_progress_system(
         // Fade in quickly
         bar_state.opacity = (bar_state.opacity + dt * 4.0).min(1.0);
         bar_state.was_loading = true;
+        // Advance pulse timer (wraps at 2π for smooth looping)
+        bar_state.pulse_timer = (bar_state.pulse_timer + dt * 3.0) % std::f32::consts::TAU;
     } else if bar_state.was_loading {
         // Just finished loading — start fade out
         bar_state.was_loading = false;
+        bar_state.pulse_timer = 0.0;
     }
 
     if !is_loading {
@@ -252,6 +268,9 @@ fn chunk_loading_progress_system(
     };
 
     let alpha = (bar_state.opacity * 255.0) as u8;
+    // Pulse factor: oscillates 0.0..1.0 for brightness modulation
+    let pulse = (bar_state.pulse_timer.sin() * 0.5 + 0.5).clamp(0.0, 1.0);
+
     let ctx = contexts.ctx_mut();
     let screen_rect = ctx.screen_rect();
 
@@ -265,16 +284,31 @@ fn chunk_loading_progress_system(
     let cps_text = load_metrics
         .as_ref()
         .filter(|m| m.chunks_per_second > 0.1)
-        .map(|m| format!(" ({:.0} chunks/s)", m.chunks_per_second))
+        .map(|m| format!(" — {:.0} chunks/s", m.chunks_per_second))
         .unwrap_or_default();
 
-    let label_text = format!(
-        "Loading World: {}/{} ({:.0}%){}",
-        loaded,
-        expected,
-        progress * 100.0,
-        cps_text,
-    );
+    // Build phase-aware label
+    let phase_text = if generating > 0 && meshing > 0 {
+        format!("Generating: {}  Meshing: {}", generating, meshing)
+    } else if generating > 0 {
+        format!("Generating: {}", generating)
+    } else if meshing > 0 {
+        format!("Meshing: {}", meshing)
+    } else {
+        String::new()
+    };
+
+    let label_text = if phase_text.is_empty() {
+        format!(
+            "Loading World: {}/{} ({:.0}%){}",
+            loaded, expected, progress * 100.0, cps_text,
+        )
+    } else {
+        format!(
+            "Loading World: {}/{} ({:.0}%){}  [{}]",
+            loaded, expected, progress * 100.0, cps_text, phase_text,
+        )
+    };
 
     egui::Area::new(egui::Id::new("hud_chunk_progress"))
         .fixed_pos(egui::pos2(bar_x, bar_y))
@@ -304,20 +338,87 @@ fn chunk_loading_progress_system(
                     let track_color = egui::Color32::from_rgba_unmultiplied(40, 40, 40, alpha);
                     ui.painter().rect_filled(rect, 4.0, track_color);
 
-                    // Progress bar fill
+                    // Split the filled portion into generating and meshing segments.
+                    // Generating portion (blue/purple) comes first, then meshing
+                    // (orange/amber), then completed (green).
+                    let total_active = generating + meshing + loaded;
                     let fill_width = rect.width() * progress;
-                    if fill_width > 0.5 {
-                        let fill_rect = egui::Rect::from_min_size(
-                            rect.min,
-                            egui::vec2(fill_width, rect.height()),
-                        );
 
-                        // Color gradient: blue → green as progress increases
-                        let r = ((1.0 - progress) * 60.0) as u8;
-                        let g = (100.0 + progress * 155.0) as u8;
-                        let b = ((1.0 - progress) * 200.0 + 55.0) as u8;
-                        let fill_color = egui::Color32::from_rgba_unmultiplied(r, g, b, alpha);
-                        ui.painter().rect_filled(fill_rect, 4.0, fill_color);
+                    if fill_width > 0.5 && total_active > 0 {
+                        // Fraction of the filled bar that is "completed" vs active phases
+                        let completed_chunks = if loaded > generating + meshing {
+                            loaded - generating - meshing
+                        } else {
+                            loaded
+                        };
+
+                        // Calculate proportions within the filled area
+                        let completed_frac = if expected > 0 {
+                            (completed_chunks as f32 / expected as f32).clamp(0.0, progress)
+                        } else {
+                            progress
+                        };
+                        let generating_frac = if expected > 0 {
+                            (generating as f32 / expected as f32).clamp(0.0, 1.0 - completed_frac)
+                        } else {
+                            0.0
+                        };
+                        let meshing_frac = if expected > 0 {
+                            (meshing as f32 / expected as f32).clamp(0.0, 1.0 - completed_frac - generating_frac)
+                        } else {
+                            0.0
+                        };
+
+                        let completed_width = rect.width() * completed_frac;
+                        let generating_width = rect.width() * generating_frac;
+                        let meshing_width = rect.width() * meshing_frac;
+
+                        // 1. Completed segment (green)
+                        if completed_width > 0.5 {
+                            let completed_rect = egui::Rect::from_min_size(
+                                rect.min,
+                                egui::vec2(completed_width, rect.height()),
+                            );
+                            let green = egui::Color32::from_rgba_unmultiplied(50, 200, 80, alpha);
+                            ui.painter().rect_filled(completed_rect, 4.0, green);
+                        }
+
+                        // 2. Generating segment (blue/purple with pulse)
+                        if generating_width > 0.5 {
+                            let gen_rect = egui::Rect::from_min_size(
+                                egui::pos2(rect.min.x + completed_width, rect.min.y),
+                                egui::vec2(generating_width, rect.height()),
+                            );
+                            // Pulse between darker and brighter blue
+                            let brightness = 140.0 + pulse * 60.0;
+                            let gen_color = egui::Color32::from_rgba_unmultiplied(
+                                (brightness * 0.3) as u8,
+                                (brightness * 0.4) as u8,
+                                brightness as u8,
+                                alpha,
+                            );
+                            ui.painter().rect_filled(gen_rect, 4.0, gen_color);
+                        }
+
+                        // 3. Meshing segment (orange/amber with pulse)
+                        if meshing_width > 0.5 {
+                            let mesh_rect = egui::Rect::from_min_size(
+                                egui::pos2(
+                                    rect.min.x + completed_width + generating_width,
+                                    rect.min.y,
+                                ),
+                                egui::vec2(meshing_width, rect.height()),
+                            );
+                            // Pulse between darker and brighter orange
+                            let brightness = 160.0 + pulse * 60.0;
+                            let mesh_color = egui::Color32::from_rgba_unmultiplied(
+                                brightness as u8,
+                                (brightness * 0.6) as u8,
+                                (brightness * 0.15) as u8,
+                                alpha,
+                            );
+                            ui.painter().rect_filled(mesh_rect, 4.0, mesh_color);
+                        }
                     }
                 });
         });
@@ -359,6 +460,7 @@ mod tests {
         let state = ChunkLoadingBarState::default();
         assert_eq!(state.opacity, 0.0);
         assert!(!state.was_loading);
+        assert_eq!(state.pulse_timer, 0.0);
     }
 
     #[test]
