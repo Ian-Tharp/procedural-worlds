@@ -20,6 +20,7 @@ use crate::actors::{Movement, Player};
 use crate::config::audio::AudioSettingsPanelState;
 use crate::engine::input::ActionStates;
 use crate::engine::lighting::DayNightCycle;
+use crate::engine::profiler::ProfilerState;
 use crate::engine::raycast::CurrentTarget;
 use crate::world::ChunkLoadMetrics;
 
@@ -101,6 +102,186 @@ fn yaw_to_cardinal(yaw: f32) -> &'static str {
     }
 }
 
+/// Render the floating profiler overlay window showing per-scope timing data.
+fn draw_profiler_overlay(ui_ctx: &mut egui::Context, profiler: &ProfilerState) {
+    egui::Window::new("🔬 System Profiler")
+        .default_pos([400.0, 120.0])
+        .default_width(380.0)
+        .resizable(true)
+        .collapsible(true)
+        .show(ui_ctx, |ui| {
+            // ── Frame time headline ─────────────────────────
+            ui.horizontal(|ui| {
+                let frame_ms = profiler.current_frame_ms();
+                let fps = if frame_ms > 0.0 { 1000.0 / frame_ms } else { 0.0 };
+                let color = if fps >= 60.0 {
+                    egui::Color32::from_rgb(100, 255, 100)
+                } else if fps >= 30.0 {
+                    egui::Color32::from_rgb(255, 255, 100)
+                } else {
+                    egui::Color32::from_rgb(255, 100, 100)
+                };
+                ui.colored_label(
+                    color,
+                    egui::RichText::new(format!("{:.1} FPS", fps))
+                        .strong()
+                        .size(18.0),
+                );
+                ui.monospace(format!(
+                    "frame: {:.2} ms  avg: {:.2} ms",
+                    frame_ms,
+                    profiler.avg_frame_ms()
+                ));
+            });
+
+            ui.horizontal(|ui| {
+                ui.label("Frames profiled:");
+                ui.monospace(format!("{}", profiler.total_frames));
+                ui.label("Scopes:");
+                ui.monospace(format!("{}", profiler.scopes.len()));
+            });
+
+            ui.separator();
+
+            // ── Scope breakdown (sorted by avg time) ────────
+            egui::CollapsingHeader::new("⏱ System Scopes")
+                .default_open(true)
+                .show(ui, |ui| {
+                    let sorted = profiler.scopes_sorted_by_avg();
+                    if sorted.is_empty() {
+                        ui.colored_label(
+                            egui::Color32::from_rgb(150, 150, 150),
+                            "No scopes recorded yet",
+                        );
+                    } else {
+                        egui::Grid::new("profiler_scope_grid")
+                            .num_columns(5)
+                            .spacing([12.0, 4.0])
+                            .striped(true)
+                            .show(ui, |ui| {
+                                // Header
+                                ui.label(egui::RichText::new("Scope").strong());
+                                ui.label(egui::RichText::new("Last").strong());
+                                ui.label(egui::RichText::new("Avg").strong());
+                                ui.label(egui::RichText::new("Max").strong());
+                                ui.label(egui::RichText::new("Hits").strong());
+                                ui.end_row();
+
+                                for scope in &sorted {
+                                    ui.label(&scope.name);
+
+                                    // Format based on magnitude
+                                    let fmt_us = |us: f64| -> String {
+                                        if us >= 1000.0 {
+                                            format!("{:.2} ms", us / 1000.0)
+                                        } else {
+                                            format!("{:.0} µs", us)
+                                        }
+                                    };
+
+                                    let last_color = scope_time_color(scope.last_us);
+                                    ui.colored_label(last_color, fmt_us(scope.last_us));
+
+                                    let avg_color = scope_time_color(scope.avg_us);
+                                    ui.colored_label(avg_color, fmt_us(scope.avg_us));
+
+                                    let max_color = scope_time_color(scope.max_us);
+                                    ui.colored_label(max_color, fmt_us(scope.max_us));
+
+                                    ui.monospace(format!("{}", scope.total_hits));
+                                    ui.end_row();
+                                }
+                            });
+                    }
+                });
+
+            ui.separator();
+
+            // ── Frame time mini-graph ────────────────────────
+            egui::CollapsingHeader::new("📊 Frame Time Graph")
+                .default_open(true)
+                .show(ui, |ui| {
+                    let history = profiler.ordered_frame_history();
+                    if history.is_empty() {
+                        ui.label("No data yet");
+                        return;
+                    }
+
+                    let recent: Vec<f64> = history.iter().rev().take(120).copied().collect();
+                    // Target 16.67ms = 16670us
+                    let target_us = 16_670.0_f64;
+                    let max_us = recent
+                        .iter()
+                        .copied()
+                        .fold(target_us * 2.0, f64::max);
+
+                    let graph_width = ui.available_width().min(360.0);
+                    let graph_height = 40.0;
+                    let (rect, _) = ui.allocate_exact_size(
+                        egui::vec2(graph_width, graph_height),
+                        egui::Sense::hover(),
+                    );
+
+                    // Background
+                    ui.painter()
+                        .rect_filled(rect, 2.0, egui::Color32::from_rgb(20, 20, 30));
+
+                    // 16.67ms target line
+                    let target_y = rect.max.y - (target_us / max_us) as f32 * rect.height();
+                    ui.painter().line_segment(
+                        [
+                            egui::pos2(rect.min.x, target_y),
+                            egui::pos2(rect.max.x, target_y),
+                        ],
+                        egui::Stroke::new(
+                            1.0,
+                            egui::Color32::from_rgba_premultiplied(255, 255, 100, 80),
+                        ),
+                    );
+
+                    // Bars
+                    if !recent.is_empty() {
+                        let bar_w = rect.width() / recent.len() as f32;
+                        for (i, &ft) in recent.iter().rev().enumerate() {
+                            let normalized = (ft / max_us).min(1.0) as f32;
+                            let h = graph_height * normalized;
+                            let x = rect.min.x + i as f32 * bar_w;
+                            let bar_rect = egui::Rect::from_min_max(
+                                egui::pos2(x, rect.max.y - h),
+                                egui::pos2(x + bar_w - 0.5, rect.max.y),
+                            );
+                            let ft_ms = ft / 1000.0;
+                            let color = if ft_ms <= 16.67 {
+                                egui::Color32::from_rgb(100, 255, 100)
+                            } else if ft_ms <= 33.33 {
+                                egui::Color32::from_rgb(255, 255, 100)
+                            } else {
+                                egui::Color32::from_rgb(255, 100, 100)
+                            };
+                            ui.painter().rect_filled(bar_rect, 0.0, color);
+                        }
+                    }
+
+                    ui.small("Yellow line = 16.67ms target | Green ≤60fps | Red >30fps");
+                });
+
+            ui.separator();
+            ui.small("F4 toggle | Profiler tracks per-system execution times");
+        });
+}
+
+/// Color for a scope timing value in microseconds.
+fn scope_time_color(us: f64) -> egui::Color32 {
+    let ms = us / 1000.0;
+    if ms <= 1.0 {
+        egui::Color32::from_rgb(100, 255, 100) // Fast: ≤1ms
+    } else if ms <= 5.0 {
+        egui::Color32::from_rgb(255, 255, 100) // Moderate: ≤5ms
+    } else {
+        egui::Color32::from_rgb(255, 100, 100) // Slow: >5ms
+    }
+}
+
 /// Main editor UI system
 #[allow(clippy::too_many_arguments)]
 fn editor_ui_system(
@@ -109,6 +290,7 @@ fn editor_ui_system(
     mut overlay_state: ResMut<debug_overlay::DebugOverlayState>,
     mut audio_panel_state: ResMut<AudioSettingsPanelState>,
     perf_dashboard: Option<Res<performance::PerformanceDashboard>>,
+    profiler_state: Option<Res<ProfilerState>>,
     camera_query: Query<&GlobalTransform, With<Camera3d>>,
     mut chunk_manager: Option<ResMut<crate::world::ChunkManager>>,
     physics: Option<Res<crate::physics::PlayerPhysics>>,
@@ -364,5 +546,12 @@ fn editor_ui_system(
             chunk_count,
             load_metrics.as_deref(),
         );
+    }
+
+    // ── Floating Profiler Overlay (F4) ──
+    if let Some(ref profiler) = profiler_state
+        && profiler.overlay_visible
+    {
+        draw_profiler_overlay(contexts.ctx_mut(), profiler);
     }
 }
