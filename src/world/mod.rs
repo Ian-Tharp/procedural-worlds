@@ -211,12 +211,23 @@ impl Chunk {
 #[derive(Component)]
 pub struct ChunkMesh;
 
+/// Result of an async chunk loading task.
+///
+/// Contains the completed chunk data and whether it was loaded from disk
+/// (cache hit) or freshly generated (cache miss).
+pub struct ChunkLoadResult {
+    /// The completed chunk data.
+    pub chunk: Chunk,
+    /// `true` if loaded from disk, `false` if generated from scratch.
+    pub from_cache: bool,
+}
+
 /// Component attached to an entity while its chunk terrain is being generated
 /// on a background thread via `AsyncComputeTaskPool`.
 #[derive(Component)]
 pub struct PendingChunk {
-    /// The async task that will produce the completed `Chunk`.
-    pub(crate) task: Task<Chunk>,
+    /// The async task that will produce the completed chunk with cache info.
+    pub(crate) task: Task<ChunkLoadResult>,
     /// The chunk-coordinate position (used to remove from pending set on completion).
     pub(crate) position: IVec3,
 }
@@ -310,6 +321,12 @@ pub const CHUNK_LOADS_PER_SEC: DiagnosticPath = DiagnosticPath::const_new("chunk
 pub const CHUNK_TOTAL_LOADED: DiagnosticPath = DiagnosticPath::const_new("chunk/total_loaded");
 /// Diagnostic path for estimated chunk memory usage (MB).
 pub const CHUNK_MEMORY_MB: DiagnosticPath = DiagnosticPath::const_new("chunk/memory_mb");
+/// Diagnostic path for chunk cache hit rate (0.0–1.0).
+pub const CHUNK_CACHE_HIT_RATE: DiagnosticPath = DiagnosticPath::const_new("chunk/cache_hit_rate");
+/// Diagnostic path for total chunk cache hits.
+pub const CHUNK_CACHE_HITS: DiagnosticPath = DiagnosticPath::const_new("chunk/cache_hits");
+/// Diagnostic path for total chunk cache misses.
+pub const CHUNK_CACHE_MISSES: DiagnosticPath = DiagnosticPath::const_new("chunk/cache_misses");
 
 /// Performance metrics for chunk loading.
 ///
@@ -348,6 +365,22 @@ pub struct ChunkLoadMetrics {
     /// Wall-clock `Instant` recorded when a set of pending chunks start
     /// (used inside `poll_pending_chunks` to measure completion time).
     pub pending_start_times: HashMap<IVec3, Instant>,
+
+    // -- Cache hit/miss tracking --
+    /// Number of chunks loaded from disk (cache hits).
+    pub cache_hits: u64,
+    /// Number of chunks generated from scratch (cache misses).
+    pub cache_misses: u64,
+    /// Rolling window of recent cache results (`true` = hit, `false` = miss).
+    cache_hit_history: VecDeque<bool>,
+    /// Rolling cache hit rate (0.0..=1.0), recomputed on refresh.
+    pub cache_hit_rate: f32,
+
+    // -- Per-chunk load time history for profiler graphs --
+    /// Recent individual chunk load times in milliseconds (for histogram/graph).
+    pub recent_load_times_ms: VecDeque<f32>,
+    /// Per-chunk memory estimate in bytes (block data only).
+    pub memory_per_chunk_bytes: usize,
 }
 
 impl Default for ChunkLoadMetrics {
@@ -364,17 +397,40 @@ impl Default for ChunkLoadMetrics {
             total_chunks_loaded: 0,
             chunk_memory_bytes: 0,
             pending_start_times: HashMap::new(),
+            cache_hits: 0,
+            cache_misses: 0,
+            cache_hit_history: VecDeque::with_capacity(METRICS_HISTORY_SIZE),
+            cache_hit_rate: 0.0,
+            recent_load_times_ms: VecDeque::with_capacity(METRICS_HISTORY_SIZE),
+            memory_per_chunk_bytes: CHUNK_VOLUME * std::mem::size_of::<BlockType>(),
         }
     }
 }
 
 impl ChunkLoadMetrics {
-    /// Record one chunk load completion.
-    ///
-    /// When `enabled` is `false` this still increments `total_chunks_loaded`
-    /// (a cheap counter) but skips the rolling-window bookkeeping.
+    /// Record one chunk load completion (backwards-compatible, defaults to cache miss).
     pub fn record_load(&mut self, load_duration_secs: f32, app_time_secs: f64) {
+        self.record_load_with_source(load_duration_secs, app_time_secs, false);
+    }
+
+    /// Record one chunk load completion with cache source information.
+    ///
+    /// `from_cache` indicates whether the chunk was loaded from disk (`true`)
+    /// or freshly generated (`false`).
+    pub fn record_load_with_source(
+        &mut self,
+        load_duration_secs: f32,
+        app_time_secs: f64,
+        from_cache: bool,
+    ) {
         self.total_chunks_loaded += 1;
+
+        // Always track cache hit/miss counters (cheap)
+        if from_cache {
+            self.cache_hits += 1;
+        } else {
+            self.cache_misses += 1;
+        }
 
         if !self.enabled {
             return;
@@ -392,10 +448,22 @@ impl ChunkLoadMetrics {
         }
         self.completion_timestamps.push_back(app_time_secs);
 
+        // Push cache hit/miss into rolling history
+        if self.cache_hit_history.len() >= METRICS_HISTORY_SIZE {
+            self.cache_hit_history.pop_front();
+        }
+        self.cache_hit_history.push_back(from_cache);
+
+        // Push individual load time for profiler graphs
+        let duration_ms = load_duration_secs * 1000.0;
+        if self.recent_load_times_ms.len() >= METRICS_HISTORY_SIZE {
+            self.recent_load_times_ms.pop_front();
+        }
+        self.recent_load_times_ms.push_back(duration_ms);
+
         self.chunks_loaded_since_last += 1;
 
         // Update all-time peak
-        let duration_ms = load_duration_secs * 1000.0;
         if duration_ms > self.all_time_peak_load_time_ms {
             self.all_time_peak_load_time_ms = duration_ms;
         }
@@ -437,6 +505,14 @@ impl ChunkLoadMetrics {
         }
         let count = self.completion_timestamps.len() as f32;
         self.chunks_per_second = count / window_secs as f32;
+
+        // Recompute rolling cache hit rate
+        if self.cache_hit_history.is_empty() {
+            self.cache_hit_rate = 0.0;
+        } else {
+            let hits = self.cache_hit_history.iter().filter(|&&h| h).count();
+            self.cache_hit_rate = hits as f32 / self.cache_hit_history.len() as f32;
+        }
 
         self.chunks_loaded_since_last = 0;
     }
@@ -514,6 +590,19 @@ impl Plugin for WorldPlugin {
                 Diagnostic::new(CHUNK_MEMORY_MB)
                     .with_suffix(" MB")
                     .with_max_history_length(64),
+            )
+            .register_diagnostic(
+                Diagnostic::new(CHUNK_CACHE_HIT_RATE)
+                    .with_suffix("")
+                    .with_max_history_length(64),
+            )
+            .register_diagnostic(
+                Diagnostic::new(CHUNK_CACHE_HITS)
+                    .with_max_history_length(1),
+            )
+            .register_diagnostic(
+                Diagnostic::new(CHUNK_CACHE_MISSES)
+                    .with_max_history_length(1),
             )
             .init_resource::<streaming::StreamingConfig>()
             .init_resource::<streaming::PlayerChunkVelocity>()
@@ -728,7 +817,7 @@ fn chunk_streaming_system(
                     let task = task_pool.spawn(async move {
                         // Check for a previously saved chunk on disk
                         if let Ok(chunk) = persistence::load_chunk(chunk_pos, &storage) {
-                            return chunk;
+                            return ChunkLoadResult { chunk, from_cache: true };
                         }
                         // Not on disk â€” generate new terrain
                         let mut chunk = Chunk::new(chunk_pos);
@@ -736,7 +825,7 @@ fn chunk_streaming_system(
                         generate_caves(&mut chunk, &config);
                         generate_trees(&mut chunk, &config);
                         generate_cacti(&mut chunk, &config);
-                        chunk
+                        ChunkLoadResult { chunk, from_cache: false }
                     });
 
                     // Spawn a placeholder entity with the PendingChunk component
@@ -769,17 +858,17 @@ fn poll_pending_chunks(
     let app_time = time.elapsed_secs_f64();
 
     for (entity, mut pending) in &mut pending_query {
-        if let Some(chunk) = block_on(future::poll_once(&mut pending.task)) {
+        if let Some(result) = block_on(future::poll_once(&mut pending.task)) {
             let pos = pending.position;
 
-            // Measure load duration
+            // Measure load duration and record with cache source
             if let Some(start) = load_metrics.pending_start_times.remove(&pos) {
                 let duration = start.elapsed().as_secs_f32();
-                load_metrics.record_load(duration, app_time);
+                load_metrics.record_load_with_source(duration, app_time, result.from_cache);
             }
 
             // Insert the completed chunk data onto this entity
-            commands.entity(entity).insert(chunk).remove::<PendingChunk>();
+            commands.entity(entity).insert(result.chunk).remove::<PendingChunk>();
 
             // Update bookkeeping
             chunk_manager.pending.remove(&pos);
@@ -815,6 +904,15 @@ fn update_chunk_load_metrics(
     });
     diagnostics.add_measurement(&CHUNK_MEMORY_MB, || {
         load_metrics.chunk_memory_mb()
+    });
+    diagnostics.add_measurement(&CHUNK_CACHE_HIT_RATE, || {
+        load_metrics.cache_hit_rate as f64
+    });
+    diagnostics.add_measurement(&CHUNK_CACHE_HITS, || {
+        load_metrics.cache_hits as f64
+    });
+    diagnostics.add_measurement(&CHUNK_CACHE_MISSES, || {
+        load_metrics.cache_misses as f64
     });
 }
 
@@ -1885,5 +1983,159 @@ mod tests {
             spawned += 1;
         }
         assert_eq!(spawned, 4, "Should stop at max_chunks_per_frame");
+    }
+
+    // ========================================================================
+    // Cache hit/miss tracking tests
+    // ========================================================================
+
+    #[test]
+    fn test_chunk_load_metrics_cache_defaults() {
+        let metrics = ChunkLoadMetrics::default();
+        assert_eq!(metrics.cache_hits, 0);
+        assert_eq!(metrics.cache_misses, 0);
+        assert_eq!(metrics.cache_hit_rate, 0.0);
+        assert!(metrics.recent_load_times_ms.is_empty());
+        assert_eq!(metrics.memory_per_chunk_bytes, CHUNK_VOLUME * std::mem::size_of::<BlockType>());
+    }
+
+    #[test]
+    fn test_record_load_with_source_cache_hit() {
+        let mut metrics = ChunkLoadMetrics::default();
+        metrics.record_load_with_source(0.05, 1.0, true);
+
+        assert_eq!(metrics.cache_hits, 1);
+        assert_eq!(metrics.cache_misses, 0);
+        assert_eq!(metrics.total_chunks_loaded, 1);
+    }
+
+    #[test]
+    fn test_record_load_with_source_cache_miss() {
+        let mut metrics = ChunkLoadMetrics::default();
+        metrics.record_load_with_source(0.10, 1.0, false);
+
+        assert_eq!(metrics.cache_hits, 0);
+        assert_eq!(metrics.cache_misses, 1);
+        assert_eq!(metrics.total_chunks_loaded, 1);
+    }
+
+    #[test]
+    fn test_record_load_with_source_mixed() {
+        let mut metrics = ChunkLoadMetrics::default();
+        // 3 cache hits, 7 cache misses
+        for i in 0..10 {
+            let from_cache = i < 3;
+            metrics.record_load_with_source(0.05, i as f64, from_cache);
+        }
+
+        assert_eq!(metrics.cache_hits, 3);
+        assert_eq!(metrics.cache_misses, 7);
+        assert_eq!(metrics.total_chunks_loaded, 10);
+    }
+
+    #[test]
+    fn test_cache_hit_rate_computation() {
+        let mut metrics = ChunkLoadMetrics::default();
+
+        // Record 6 hits and 4 misses
+        for i in 0..10 {
+            let from_cache = i < 6;
+            metrics.record_load_with_source(0.01, i as f64, from_cache);
+        }
+
+        metrics.refresh(10.0);
+        assert!((metrics.cache_hit_rate - 0.6).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_cache_hit_rate_zero_when_all_misses() {
+        let mut metrics = ChunkLoadMetrics::default();
+        for i in 0..5 {
+            metrics.record_load_with_source(0.01, i as f64, false);
+        }
+        metrics.refresh(5.0);
+        assert_eq!(metrics.cache_hit_rate, 0.0);
+    }
+
+    #[test]
+    fn test_cache_hit_rate_one_when_all_hits() {
+        let mut metrics = ChunkLoadMetrics::default();
+        for i in 0..5 {
+            metrics.record_load_with_source(0.01, i as f64, true);
+        }
+        metrics.refresh(5.0);
+        assert!((metrics.cache_hit_rate - 1.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_recent_load_times_recorded() {
+        let mut metrics = ChunkLoadMetrics::default();
+        metrics.record_load_with_source(0.05, 1.0, false); // 50ms
+        metrics.record_load_with_source(0.10, 1.1, true);  // 100ms
+        metrics.record_load_with_source(0.02, 1.2, false); // 20ms
+
+        assert_eq!(metrics.recent_load_times_ms.len(), 3);
+        assert!((metrics.recent_load_times_ms[0] - 50.0).abs() < 0.1);
+        assert!((metrics.recent_load_times_ms[1] - 100.0).abs() < 0.1);
+        assert!((metrics.recent_load_times_ms[2] - 20.0).abs() < 0.1);
+    }
+
+    #[test]
+    fn test_recent_load_times_capped_at_history_size() {
+        let mut metrics = ChunkLoadMetrics::default();
+        for i in 0..(METRICS_HISTORY_SIZE + 50) {
+            metrics.record_load_with_source(0.01, i as f64, false);
+        }
+        assert!(metrics.recent_load_times_ms.len() <= METRICS_HISTORY_SIZE);
+    }
+
+    #[test]
+    fn test_cache_counters_increment_when_disabled() {
+        let mut metrics = ChunkLoadMetrics::default();
+        metrics.enabled = false;
+
+        metrics.record_load_with_source(0.05, 1.0, true);
+        metrics.record_load_with_source(0.05, 2.0, false);
+
+        // Cache counters should always increment
+        assert_eq!(metrics.cache_hits, 1);
+        assert_eq!(metrics.cache_misses, 1);
+        assert_eq!(metrics.total_chunks_loaded, 2);
+
+        // But rolling history should be empty
+        assert!(metrics.recent_load_times_ms.is_empty());
+        assert!(metrics.cache_hit_history.is_empty());
+    }
+
+    #[test]
+    fn test_record_load_backwards_compatible() {
+        // record_load (without source) should default to cache miss
+        let mut metrics = ChunkLoadMetrics::default();
+        metrics.record_load(0.05, 1.0);
+
+        assert_eq!(metrics.cache_hits, 0);
+        assert_eq!(metrics.cache_misses, 1);
+        assert_eq!(metrics.total_chunks_loaded, 1);
+    }
+
+    #[test]
+    fn test_cache_diagnostic_paths_unique() {
+        let paths = [
+            &CHUNK_AVG_LOAD_TIME,
+            &CHUNK_PEAK_LOAD_TIME,
+            &CHUNK_LOADS_PER_SEC,
+            &CHUNK_TOTAL_LOADED,
+            &CHUNK_MEMORY_MB,
+            &CHUNK_CACHE_HIT_RATE,
+            &CHUNK_CACHE_HITS,
+            &CHUNK_CACHE_MISSES,
+        ];
+        for (i, a) in paths.iter().enumerate() {
+            for (j, b) in paths.iter().enumerate() {
+                if i != j {
+                    assert_ne!(a, b, "Diagnostic paths at index {} and {} must differ", i, j);
+                }
+            }
+        }
     }
 }

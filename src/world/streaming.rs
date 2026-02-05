@@ -29,7 +29,7 @@ use std::time::Instant;
 
 use super::persistence::{self, ChunkStorage};
 use super::{
-    world_to_chunk_pos, Chunk, ChunkManager, ChunkLoadMetrics, PendingChunk,
+    world_to_chunk_pos, Chunk, ChunkLoadResult, ChunkManager, ChunkLoadMetrics, PendingChunk,
 };
 use crate::generation::{generate_cacti, generate_caves, generate_chunk_terrain, generate_trees, TerrainConfig};
 
@@ -238,7 +238,7 @@ pub fn predictive_chunk_streaming_system(
                 let task = task_pool.spawn(async move {
                     // Try loading from disk first
                     if let Ok(chunk) = persistence::load_chunk(chunk_pos, &storage) {
-                        return chunk;
+                        return ChunkLoadResult { chunk, from_cache: true };
                     }
                     // Generate new terrain
                     let mut chunk = Chunk::new(chunk_pos);
@@ -246,7 +246,7 @@ pub fn predictive_chunk_streaming_system(
                     generate_caves(&mut chunk, &config);
                     generate_trees(&mut chunk, &config);
                     generate_cacti(&mut chunk, &config);
-                    chunk
+                    ChunkLoadResult { chunk, from_cache: false }
                 });
 
                 commands.spawn(PendingChunk {

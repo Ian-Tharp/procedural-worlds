@@ -266,6 +266,214 @@ fn draw_profiler_overlay(ui_ctx: &mut egui::Context, profiler: &ProfilerState) {
                 });
 
             ui.separator();
+
+            // ── Chunk Loading Performance ────────────────────
+            egui::CollapsingHeader::new("📦 Chunk Loading Metrics")
+                .default_open(true)
+                .show(ui, |ui| {
+                    let cm = &profiler.chunk_metrics;
+
+                    // Summary stats
+                    egui::Grid::new("chunk_metrics_grid")
+                        .num_columns(2)
+                        .spacing([12.0, 2.0])
+                        .show(ui, |ui| {
+                            ui.label("Loaded:");
+                            ui.monospace(format!("{} chunks", cm.loaded_chunk_count));
+                            ui.end_row();
+
+                            ui.label("Total loaded:");
+                            ui.monospace(format!("{}", cm.total_chunks_loaded));
+                            ui.end_row();
+
+                            ui.label("Chunks/sec:");
+                            let cps_color = if cm.chunks_per_second >= 10.0 {
+                                egui::Color32::from_rgb(100, 255, 100)
+                            } else if cm.chunks_per_second >= 2.0 {
+                                egui::Color32::from_rgb(255, 255, 100)
+                            } else {
+                                egui::Color32::from_rgb(255, 100, 100)
+                            };
+                            ui.colored_label(cps_color, format!("{:.1}", cm.chunks_per_second));
+                            ui.end_row();
+
+                            ui.label("Avg load:");
+                            let avg_color = if cm.avg_load_time_ms <= 20.0 {
+                                egui::Color32::from_rgb(100, 255, 100)
+                            } else if cm.avg_load_time_ms <= 100.0 {
+                                egui::Color32::from_rgb(255, 255, 100)
+                            } else {
+                                egui::Color32::from_rgb(255, 100, 100)
+                            };
+                            ui.colored_label(avg_color, format!("{:.1} ms", cm.avg_load_time_ms));
+                            ui.end_row();
+
+                            ui.label("Peak load:");
+                            let peak_color = if cm.peak_load_time_ms <= 50.0 {
+                                egui::Color32::from_rgb(100, 255, 100)
+                            } else if cm.peak_load_time_ms <= 200.0 {
+                                egui::Color32::from_rgb(255, 255, 100)
+                            } else {
+                                egui::Color32::from_rgb(255, 100, 100)
+                            };
+                            ui.colored_label(peak_color, format!("{:.1} ms", cm.peak_load_time_ms));
+                            ui.end_row();
+
+                            ui.label("All-time peak:");
+                            ui.monospace(format!("{:.1} ms", cm.all_time_peak_ms));
+                            ui.end_row();
+                        });
+
+                    ui.add_space(4.0);
+
+                    // Memory usage
+                    ui.label(egui::RichText::new("💾 Memory").strong());
+                    ui.horizontal(|ui| {
+                        ui.label("Total:");
+                        ui.monospace(format!("{:.2} MB", cm.memory_mb));
+                        if cm.loaded_chunk_count > 0 {
+                            let per_chunk_kb = cm.memory_per_chunk_bytes as f64 / 1024.0;
+                            ui.colored_label(
+                                egui::Color32::from_rgb(150, 150, 150),
+                                format!("({:.1} KB/chunk)", per_chunk_kb),
+                            );
+                        }
+                    });
+
+                    ui.add_space(4.0);
+
+                    // Cache hit/miss rates
+                    ui.label(egui::RichText::new("🗄 Cache (Disk vs Generated)").strong());
+                    let total_cache = cm.cache_hits + cm.cache_misses;
+                    if total_cache > 0 {
+                        ui.horizontal(|ui| {
+                            ui.label("Hit rate:");
+                            let rate_pct = cm.cache_hit_rate * 100.0;
+                            let rate_color = if rate_pct >= 50.0 {
+                                egui::Color32::from_rgb(100, 255, 100)
+                            } else if rate_pct >= 20.0 {
+                                egui::Color32::from_rgb(255, 255, 100)
+                            } else {
+                                egui::Color32::from_rgb(255, 100, 100)
+                            };
+                            ui.colored_label(rate_color, format!("{:.1}%", rate_pct));
+                        });
+                        ui.horizontal(|ui| {
+                            ui.label("Hits:");
+                            ui.colored_label(
+                                egui::Color32::from_rgb(100, 200, 100),
+                                format!("{}", cm.cache_hits),
+                            );
+                            ui.label("Misses:");
+                            ui.colored_label(
+                                egui::Color32::from_rgb(200, 100, 100),
+                                format!("{}", cm.cache_misses),
+                            );
+                        });
+
+                        // Mini cache hit rate bar
+                        let bar_width = ui.available_width().min(200.0);
+                        let (rect, _) = ui.allocate_exact_size(
+                            egui::vec2(bar_width, 10.0),
+                            egui::Sense::hover(),
+                        );
+                        ui.painter().rect_filled(
+                            rect,
+                            2.0,
+                            egui::Color32::from_rgb(200, 60, 60),
+                        );
+                        let hit_width = rect.width() * cm.cache_hit_rate;
+                        if hit_width > 0.0 {
+                            let hit_rect = egui::Rect::from_min_max(
+                                rect.min,
+                                egui::pos2(rect.min.x + hit_width, rect.max.y),
+                            );
+                            ui.painter().rect_filled(
+                                hit_rect,
+                                2.0,
+                                egui::Color32::from_rgb(60, 200, 60),
+                            );
+                        }
+                        ui.small("Green = disk loaded | Red = generated");
+                    } else {
+                        ui.colored_label(
+                            egui::Color32::from_rgb(150, 150, 150),
+                            "No chunks loaded yet",
+                        );
+                    }
+
+                    ui.add_space(4.0);
+
+                    // Load time graph (recent individual chunk load times)
+                    if !cm.recent_load_times_ms.is_empty() {
+                        ui.label(egui::RichText::new("⏱ Load Time History").strong());
+
+                        let times = &cm.recent_load_times_ms;
+                        let max_time = times
+                            .iter()
+                            .copied()
+                            .fold(50.0_f32, f32::max);
+
+                        let graph_width = ui.available_width().min(360.0);
+                        let graph_height = 35.0;
+                        let (rect, _) = ui.allocate_exact_size(
+                            egui::vec2(graph_width, graph_height),
+                            egui::Sense::hover(),
+                        );
+
+                        // Background
+                        ui.painter().rect_filled(
+                            rect,
+                            2.0,
+                            egui::Color32::from_rgb(20, 20, 30),
+                        );
+
+                        // 50ms target line
+                        let target_ms = 50.0_f32;
+                        if target_ms < max_time {
+                            let target_y = rect.max.y
+                                - (target_ms / max_time) * rect.height();
+                            ui.painter().line_segment(
+                                [
+                                    egui::pos2(rect.min.x, target_y),
+                                    egui::pos2(rect.max.x, target_y),
+                                ],
+                                egui::Stroke::new(
+                                    1.0,
+                                    egui::Color32::from_rgba_premultiplied(
+                                        255, 200, 100, 80,
+                                    ),
+                                ),
+                            );
+                        }
+
+                        // Bars for each chunk load time (most recent on right)
+                        let display_count = times.len().min(60);
+                        let bar_w = rect.width() / display_count as f32;
+                        let start_idx = times.len().saturating_sub(display_count);
+                        for (i, &t) in times[start_idx..].iter().enumerate() {
+                            let normalized = (t / max_time).min(1.0);
+                            let h = graph_height * normalized;
+                            let x = rect.min.x + i as f32 * bar_w;
+                            let bar_rect = egui::Rect::from_min_max(
+                                egui::pos2(x, rect.max.y - h),
+                                egui::pos2(x + bar_w - 0.5, rect.max.y),
+                            );
+                            let color = if t <= 20.0 {
+                                egui::Color32::from_rgb(100, 255, 100)
+                            } else if t <= 100.0 {
+                                egui::Color32::from_rgb(255, 255, 100)
+                            } else {
+                                egui::Color32::from_rgb(255, 100, 100)
+                            };
+                            ui.painter().rect_filled(bar_rect, 0.0, color);
+                        }
+
+                        ui.small("Per-chunk load time | Green ≤20ms | Yellow ≤100ms | Red >100ms");
+                    }
+                });
+
+            ui.separator();
             ui.small("F4 toggle | Profiler tracks per-system execution times");
         });
 }

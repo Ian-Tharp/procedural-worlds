@@ -234,6 +234,11 @@ pub struct ProfilerState {
 
     /// Total number of frames profiled.
     pub total_frames: u64,
+
+    /// Snapshot of chunk loading performance metrics, updated each frame
+    /// by [`profile_chunk_metrics`]. Used by the profiler overlay to render
+    /// chunk-specific graphs and statistics.
+    pub chunk_metrics: ChunkMetricsSnapshot,
 }
 
 impl Default for ProfilerState {
@@ -251,6 +256,7 @@ impl Default for ProfilerState {
             current_frame_us: 0.0,
             avg_frame_us: 0.0,
             total_frames: 0,
+            chunk_metrics: ChunkMetricsSnapshot::default(),
         }
     }
 }
@@ -369,6 +375,7 @@ impl ProfilerState {
         self.avg_frame_us = 0.0;
         self.total_frames = 0;
         self.last_frame_start = Instant::now();
+        self.chunk_metrics = ChunkMetricsSnapshot::default();
     }
 }
 
@@ -450,11 +457,45 @@ pub fn profiler_keyboard_input(
     }
 }
 
+/// Snapshot of chunk performance metrics for the profiler overlay.
+///
+/// Copied from [`ChunkLoadMetrics`] each frame to avoid borrowing conflicts
+/// between the profiler overlay and world systems.
+#[derive(Debug, Clone, Default)]
+pub struct ChunkMetricsSnapshot {
+    /// Average chunk load time in milliseconds.
+    pub avg_load_time_ms: f32,
+    /// Peak chunk load time in milliseconds (rolling window).
+    pub peak_load_time_ms: f32,
+    /// All-time peak chunk load time in milliseconds.
+    pub all_time_peak_ms: f32,
+    /// Chunks loaded per second.
+    pub chunks_per_second: f32,
+    /// Total chunks loaded since start.
+    pub total_chunks_loaded: u64,
+    /// Estimated chunk memory usage in megabytes.
+    pub memory_mb: f64,
+    /// Memory per chunk in bytes.
+    pub memory_per_chunk_bytes: usize,
+    /// Number of currently loaded chunks.
+    pub loaded_chunk_count: usize,
+    /// Cache hits (disk loads).
+    pub cache_hits: u64,
+    /// Cache misses (generated chunks).
+    pub cache_misses: u64,
+    /// Rolling cache hit rate (0.0..=1.0).
+    pub cache_hit_rate: f32,
+    /// Recent individual load times in ms (for the load time graph).
+    pub recent_load_times_ms: Vec<f32>,
+}
+
 /// System that instruments chunk loading by reading `ChunkLoadMetrics` and
-/// recording aggregate timings into the profiler.
+/// recording aggregate timings into the profiler, plus capturing a snapshot
+/// for the profiler overlay's chunk metrics panel.
 pub fn profile_chunk_metrics(
     mut profiler: ResMut<ProfilerState>,
     load_metrics: Option<Res<crate::world::ChunkLoadMetrics>>,
+    chunk_manager: Option<Res<crate::world::ChunkManager>>,
 ) {
     if !profiler.enabled {
         return;
@@ -472,6 +513,23 @@ pub fn profile_chunk_metrics(
             let peak_us = metrics.peak_load_time_ms as f64 * 1000.0;
             profiler.record("chunk_load_peak", peak_us);
         }
+
+        // Build snapshot for the overlay
+        let loaded_count = chunk_manager.as_ref().map(|cm| cm.chunks.len()).unwrap_or(0);
+        profiler.chunk_metrics = ChunkMetricsSnapshot {
+            avg_load_time_ms: metrics.avg_load_time_ms,
+            peak_load_time_ms: metrics.peak_load_time_ms,
+            all_time_peak_ms: metrics.all_time_peak_load_time_ms,
+            chunks_per_second: metrics.chunks_per_second,
+            total_chunks_loaded: metrics.total_chunks_loaded,
+            memory_mb: metrics.chunk_memory_mb(),
+            memory_per_chunk_bytes: metrics.memory_per_chunk_bytes,
+            loaded_chunk_count: loaded_count,
+            cache_hits: metrics.cache_hits,
+            cache_misses: metrics.cache_misses,
+            cache_hit_rate: metrics.cache_hit_rate,
+            recent_load_times_ms: metrics.recent_load_times_ms.iter().copied().collect(),
+        };
     }
 }
 
@@ -793,5 +851,68 @@ mod tests {
 
         let scope = &state.scopes["system_x"];
         assert_eq!(scope.total_hits, 10);
+    }
+
+    #[test]
+    fn test_chunk_metrics_snapshot_default() {
+        let snapshot = ChunkMetricsSnapshot::default();
+        assert_eq!(snapshot.avg_load_time_ms, 0.0);
+        assert_eq!(snapshot.peak_load_time_ms, 0.0);
+        assert_eq!(snapshot.all_time_peak_ms, 0.0);
+        assert_eq!(snapshot.chunks_per_second, 0.0);
+        assert_eq!(snapshot.total_chunks_loaded, 0);
+        assert_eq!(snapshot.memory_mb, 0.0);
+        assert_eq!(snapshot.loaded_chunk_count, 0);
+        assert_eq!(snapshot.cache_hits, 0);
+        assert_eq!(snapshot.cache_misses, 0);
+        assert_eq!(snapshot.cache_hit_rate, 0.0);
+        assert!(snapshot.recent_load_times_ms.is_empty());
+    }
+
+    #[test]
+    fn test_profiler_state_has_chunk_metrics() {
+        let state = ProfilerState::default();
+        // Chunk metrics should be initialized with defaults
+        assert_eq!(state.chunk_metrics.cache_hits, 0);
+        assert_eq!(state.chunk_metrics.total_chunks_loaded, 0);
+        assert_eq!(state.chunk_metrics.memory_mb, 0.0);
+    }
+
+    #[test]
+    fn test_profiler_reset_clears_chunk_metrics() {
+        let mut state = ProfilerState::default();
+        // Simulate some chunk metrics data
+        state.chunk_metrics.cache_hits = 10;
+        state.chunk_metrics.total_chunks_loaded = 50;
+        state.chunk_metrics.memory_mb = 12.5;
+
+        state.reset();
+
+        assert_eq!(state.chunk_metrics.cache_hits, 0);
+        assert_eq!(state.chunk_metrics.total_chunks_loaded, 0);
+        assert_eq!(state.chunk_metrics.memory_mb, 0.0);
+    }
+
+    #[test]
+    fn test_chunk_metrics_snapshot_clone() {
+        let snapshot = ChunkMetricsSnapshot {
+            avg_load_time_ms: 25.0,
+            peak_load_time_ms: 100.0,
+            all_time_peak_ms: 200.0,
+            chunks_per_second: 5.0,
+            total_chunks_loaded: 100,
+            memory_mb: 8.0,
+            memory_per_chunk_bytes: 8192,
+            loaded_chunk_count: 50,
+            cache_hits: 30,
+            cache_misses: 70,
+            cache_hit_rate: 0.3,
+            recent_load_times_ms: vec![10.0, 20.0, 30.0],
+        };
+        let cloned = snapshot.clone();
+        assert_eq!(cloned.cache_hits, 30);
+        assert_eq!(cloned.cache_misses, 70);
+        assert!((cloned.cache_hit_rate - 0.3).abs() < 0.01);
+        assert_eq!(cloned.recent_load_times_ms.len(), 3);
     }
 }

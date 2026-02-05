@@ -58,6 +58,7 @@ pub use input::{
 
 #[allow(unused_imports)]
 pub use profiler::{
+    ChunkMetricsSnapshot,
     ProfilerPlugin,
     ProfilerState,
 };
