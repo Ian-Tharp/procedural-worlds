@@ -47,6 +47,7 @@ fn main() {
         .add_plugins(editor::PerformanceDashboardPlugin)
         .add_plugins(editor::HudPlugin)
         .add_plugins(engine::CameraPlugin)
+        .add_plugins(engine::profiler::ProfilerPlugin)
         .add_plugins(engine::RaycastPlugin)
         .add_plugins(engine::lighting::DayNightPlugin)
         .add_plugins(engine::post_processing::PostProcessingPlugin)
@@ -83,5 +84,5 @@ fn setup_scene(mut commands: Commands) {
     // DayNightPlugin — see engine::lighting
 
     info!("Scene setup complete! Player spawned, terrain will generate around you.");
-    info!("Controls: WASD move, Mouse look, F toggle fly, N toggle noclip");
+    info!("Controls: WASD move, Mouse look, F toggle fly, N toggle noclip, F4 profiler");
 }

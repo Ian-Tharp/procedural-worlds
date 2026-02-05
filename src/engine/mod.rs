@@ -33,6 +33,7 @@ pub mod controller;
 pub mod input;
 pub mod memory;
 pub mod post_processing;
+pub mod profiler;
 pub mod raycast;
 pub mod lighting;
 
@@ -53,6 +54,13 @@ pub use input::{
     InputAction,
     InputBinding,
     InputMap,
+};
+
+#[allow(unused_imports)]
+pub use profiler::{
+    ChunkMetricsSnapshot,
+    ProfilerPlugin,
+    ProfilerState,
 };
 
 #[allow(unused_imports)]
