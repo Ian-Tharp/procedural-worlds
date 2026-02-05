@@ -107,6 +107,7 @@ fn editor_ui_system(
     mut contexts: EguiContexts,
     mut editor_state: ResMut<EditorState>,
     mut overlay_state: ResMut<debug_overlay::DebugOverlayState>,
+    mut chunk_debug_state: ResMut<chunk_debug::ChunkDebugState>,
     mut audio_panel_state: ResMut<AudioSettingsPanelState>,
     perf_dashboard: Option<Res<performance::PerformanceDashboard>>,
     camera_query: Query<&GlobalTransform, With<Camera3d>>,
@@ -306,6 +307,15 @@ fn editor_ui_system(
                             action_states.as_deref(),
                             load_metrics.as_deref(),
                         );
+
+                        // Chunk border legend (shows when F4 overlay is active)
+                        if chunk_debug_state.visible {
+                            ui.separator();
+                            chunk_debug::draw_chunk_state_legend(
+                                ui,
+                                &mut chunk_debug_state,
+                            );
+                        }
                     }
                 });
             });

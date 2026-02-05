@@ -241,6 +241,9 @@ pub struct ChunkManager {
     /// Positions currently being generated in background tasks.
     /// Prevents duplicate task spawning for the same chunk coordinate.
     pub pending: HashSet<IVec3>,
+    /// Positions that failed to load or generate, with the error reason.
+    /// Displayed by the chunk debug overlay as magenta borders.
+    pub failed_chunks: HashMap<IVec3, String>,
     /// Render distance in chunks
     pub render_distance: i32,
     /// Horizontal chunk loading distance. If `None`, uses `render_distance`.
@@ -262,6 +265,7 @@ impl Default for ChunkManager {
         Self {
             chunks: HashMap::new(),
             pending: HashSet::new(),
+            failed_chunks: HashMap::new(),
             render_distance: 4,
             load_distance: None,
             vertical_load_up: 4,
