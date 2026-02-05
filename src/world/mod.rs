@@ -223,10 +223,14 @@ pub struct PendingChunk {
 
 /// Component attached to an entity while its mesh is being generated
 /// on a background thread via `AsyncComputeTaskPool`.
+///
+/// The task produces `(opaque_mesh, Option<water_mesh>)`. The opaque mesh
+/// is assigned to the chunk entity itself; the optional water mesh is
+/// spawned as a child entity with [`WaterMesh`] marker and a blend material.
 #[derive(Component)]
 pub struct PendingMesh {
-    /// The async task that produces the mesh data.
-    task: Task<Mesh>,
+    /// The async task that produces the mesh data (opaque + optional water).
+    task: Task<(Mesh, Option<Mesh>)>,
 }
 
 /// Resource for tracking loaded chunks
@@ -563,11 +567,30 @@ impl Plugin for WorldPlugin {
     }
 }
 
-/// Enum to hold either a standard or atlas material handle.
+/// Enum to hold either a standard or atlas material handle pair (opaque + water).
+///
+/// Each variant holds two materials:
+/// - `opaque`: `AlphaMode::Opaque` for solid block meshes (main chunk entity)
+/// - `water`: `AlphaMode::Blend` for transparent water meshes (child entity)
 pub enum ChunkMaterialHandle {
-    Standard(Handle<StandardMaterial>),
-    Atlas(Handle<atlas_material::BlockAtlasMaterial>),
+    Standard {
+        opaque: Handle<StandardMaterial>,
+        water: Handle<StandardMaterial>,
+    },
+    Atlas {
+        opaque: Handle<atlas_material::BlockAtlasMaterial>,
+        water: Handle<atlas_material::BlockAtlasMaterial>,
+    },
 }
+
+/// Marker component for water mesh child entities.
+///
+/// Water faces are rendered on a separate child entity with `AlphaMode::Blend`
+/// so that solid terrain uses `AlphaMode::Opaque` for correct depth sorting.
+/// The child entity is automatically despawned when the parent chunk entity
+/// is despawned via `despawn_recursive`.
+#[derive(Component)]
+pub struct WaterMesh;
 
 /// Resource holding the shared material for chunk meshes
 #[derive(Resource, Default)]
@@ -590,30 +613,40 @@ fn setup_chunk_material(
 ) {
     if config.render.use_textures {
         if let Some(ref atlas_res) = atlas {
-            // Try to create the custom atlas material (shader-driven tiling)
-            if let Some(handle) = atlas_material::create_block_atlas_material(
+            // Try to create the custom atlas material pair (shader-driven tiling)
+            if let Some((opaque, water)) = atlas_material::create_block_atlas_material(
                 &mut atlas_materials,
                 atlas_res,
             ) {
-                chunk_material.handle = Some(ChunkMaterialHandle::Atlas(handle));
-                info!("Chunk material initialized: BlockAtlasMaterial (custom shader)");
+                chunk_material.handle = Some(ChunkMaterialHandle::Atlas { opaque, water });
+                info!("Chunk material initialized: BlockAtlasMaterial opaque + water (custom shader)");
                 return;
             }
             warn!("BlockAtlasMaterial creation failed, falling back to StandardMaterial");
         }
     }
 
-    // Fallback: plain white StandardMaterial with alpha blending for water transparency
-    let material = materials.add(StandardMaterial {
+    // Fallback: plain white StandardMaterial pair (opaque + water).
+    // Opaque material ensures chunks render with proper depth writes.
+    // AlphaMode::Blend caused see-through terrain artifacts (far chunks
+    // overdrawing near ones in Bevy's transparent pass).
+    let opaque = materials.add(StandardMaterial {
         base_color: Color::WHITE,
         perceptual_roughness: 0.9,
         metallic: 0.0,
+        alpha_mode: AlphaMode::Opaque,
+        ..default()
+    });
+    let water = materials.add(StandardMaterial {
+        base_color: Color::WHITE,
+        perceptual_roughness: 0.3,
+        metallic: 0.1,
         alpha_mode: AlphaMode::Blend,
         ..default()
     });
-    chunk_material.handle = Some(ChunkMaterialHandle::Standard(material));
+    chunk_material.handle = Some(ChunkMaterialHandle::Standard { opaque, water });
     info!(
-        "Chunk material initialized: StandardMaterial (textures: {})",
+        "Chunk material initialized: StandardMaterial opaque + water (textures: {})",
         config.render.use_textures && atlas.is_some()
     );
 }
@@ -889,6 +922,11 @@ fn mesh_dirty_chunks(
 
 
 /// Poll completed mesh-generation tasks and insert the resulting render components.
+///
+/// The opaque mesh is inserted on the chunk entity itself. If the mesher
+/// produced a water mesh, a child entity is spawned with the water mesh,
+/// the water blend material, and a [`WaterMesh`] marker. The child entity
+/// is automatically cleaned up by `despawn_recursive` when the chunk unloads.
 fn poll_pending_meshes(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
@@ -900,8 +938,8 @@ fn poll_pending_meshes(
     };
 
     for (entity, chunk, mut pending) in &mut pending_query {
-        if let Some(mesh) = block_on(future::poll_once(&mut pending.task)) {
-            let mesh_handle = meshes.add(mesh);
+        if let Some((opaque_mesh, water_mesh)) = block_on(future::poll_once(&mut pending.task)) {
+            let mesh_handle = meshes.add(opaque_mesh);
             let world_pos = chunk_to_world_pos(chunk.position);
 
             // Insert shared components (mesh, transform, visibility, marker)
@@ -911,14 +949,40 @@ fn poll_pending_meshes(
                 ChunkMesh,
             )).remove::<PendingMesh>();
 
-            // Insert the correct material type based on the enum
+            // Insert the opaque material on the chunk entity
             match mat {
-                ChunkMaterialHandle::Atlas(h) => {
-                    commands.entity(entity).insert(MeshMaterial3d(h.clone()));
+                ChunkMaterialHandle::Atlas { opaque, .. } => {
+                    commands.entity(entity).insert(MeshMaterial3d(opaque.clone()));
                 }
-                ChunkMaterialHandle::Standard(h) => {
-                    commands.entity(entity).insert(MeshMaterial3d(h.clone()));
+                ChunkMaterialHandle::Standard { opaque, .. } => {
+                    commands.entity(entity).insert(MeshMaterial3d(opaque.clone()));
                 }
+            }
+
+            // If the mesher produced a water mesh, spawn it as a child entity
+            if let Some(wm) = water_mesh {
+                let water_mesh_handle = meshes.add(wm);
+
+                // Spawn child entity with water mesh + blend material
+                let water_child = commands.spawn((
+                    Mesh3d(water_mesh_handle),
+                    // Child transform is identity — inherits parent's world position
+                    Transform::default(),
+                    WaterMesh,
+                )).id();
+
+                // Insert the water material on the child
+                match mat {
+                    ChunkMaterialHandle::Atlas { water, .. } => {
+                        commands.entity(water_child).insert(MeshMaterial3d(water.clone()));
+                    }
+                    ChunkMaterialHandle::Standard { water, .. } => {
+                        commands.entity(water_child).insert(MeshMaterial3d(water.clone()));
+                    }
+                }
+
+                // Parent the water entity to the chunk entity
+                commands.entity(entity).add_child(water_child);
             }
         }
     }

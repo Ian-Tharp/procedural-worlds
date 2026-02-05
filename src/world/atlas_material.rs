@@ -182,26 +182,38 @@ impl MaterialExtension for BlockAtlasExtension {
 /// PBR material with atlas tiling logic injected via [`BlockAtlasExtension`].
 pub type BlockAtlasMaterial = ExtendedMaterial<StandardMaterial, BlockAtlasExtension>;
 
-/// Resource holding the shared [`BlockAtlasMaterial`] handle for chunk rendering.
+/// Resource holding the shared [`BlockAtlasMaterial`] handles for chunk rendering.
 ///
 /// Populated at startup when `use_textures` is enabled. Systems that spawn
 /// chunk meshes can check this resource and use the atlas material instead of
 /// the plain `StandardMaterial` for improved per-block tiling.
+///
+/// Holds two material handles:
+/// - `opaque`: `AlphaMode::Opaque` for solid block meshes (correct depth sorting)
+/// - `water`: `AlphaMode::Blend` for transparent water meshes
 #[derive(Resource, Default)]
 pub struct BlockAtlasChunkMaterial {
-    pub handle: Option<Handle<BlockAtlasMaterial>>,
+    pub opaque: Option<Handle<BlockAtlasMaterial>>,
+    pub water: Option<Handle<BlockAtlasMaterial>>,
 }
 
-/// Create the [`BlockAtlasMaterial`] from the atlas texture and config.
+/// Create the [`BlockAtlasMaterial`] pair (opaque + water) from the atlas texture and config.
 ///
 /// Call this after both the atlas texture and the shader have been registered.
 /// Returns `None` if textures are disabled, the atlas is missing, or shader
 /// validation fails (in which case a warning is logged and the caller should
 /// fall back to `StandardMaterial`).
+///
+/// Returns `(opaque_handle, water_handle)`:
+/// - `opaque`: `AlphaMode::Opaque` — used for solid block chunk meshes.
+///   Renders in the opaque pass with proper depth writes, preventing the
+///   see-through terrain artifacts caused by `AlphaMode::Blend`.
+/// - `water`: `AlphaMode::Blend` — used for the separate water mesh child
+///   entity. Only water faces are rendered with this material.
 pub fn create_block_atlas_material(
     materials: &mut Assets<BlockAtlasMaterial>,
     atlas: &texture_atlas::BlockTextureAtlas,
-) -> Option<Handle<BlockAtlasMaterial>> {
+) -> Option<(Handle<BlockAtlasMaterial>, Handle<BlockAtlasMaterial>)> {
     // Validate shader before creating material
     if let Err(e) = validate_block_atlas_wgsl() {
         warn!(
@@ -211,12 +223,24 @@ pub fn create_block_atlas_material(
         return None;
     }
 
-    let handle = materials.add(ExtendedMaterial {
+    let opaque_handle = materials.add(ExtendedMaterial {
         base: StandardMaterial {
             base_color: Color::WHITE,
             base_color_texture: Some(atlas.texture.clone()),
             perceptual_roughness: 0.9,
             metallic: 0.0,
+            alpha_mode: AlphaMode::Opaque,
+            ..default()
+        },
+        extension: BlockAtlasExtension::new(atlas.tiles_per_row, atlas.atlas_size),
+    });
+
+    let water_handle = materials.add(ExtendedMaterial {
+        base: StandardMaterial {
+            base_color: Color::WHITE,
+            base_color_texture: Some(atlas.texture.clone()),
+            perceptual_roughness: 0.3,
+            metallic: 0.1,
             alpha_mode: AlphaMode::Blend,
             ..default()
         },
@@ -224,11 +248,11 @@ pub fn create_block_atlas_material(
     });
 
     info!(
-        "Block atlas material created ({}×{} atlas, {} tiles/row)",
+        "Block atlas materials created: opaque + water ({}×{} atlas, {} tiles/row)",
         atlas.atlas_size, atlas.atlas_size, atlas.tiles_per_row
     );
 
-    Some(handle)
+    Some((opaque_handle, water_handle))
 }
 
 /// Compute tile grid coordinates (column, row) for a given tile index.
