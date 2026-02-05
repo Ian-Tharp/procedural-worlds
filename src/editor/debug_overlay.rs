@@ -17,6 +17,8 @@ use crate::engine::input::{ActionState, ActionStates, InputAction};
 use crate::engine::lighting::{DayNightCycle, Sun};
 use crate::engine::memory;
 use crate::engine::raycast::CurrentTarget;
+use crate::world::streaming::StreamingConfig;
+use crate::world::unloading::UnloadConfig;
 use crate::world::{ChunkLoadMetrics, ChunkMesh, CHUNK_SIZE, CHUNK_VOLUME};
 
 /// Number of frame time samples to keep for the graph
@@ -52,6 +54,8 @@ pub struct DebugOverlayState {
     pub show_chunks: bool,
     /// Show rendering settings panel
     pub show_render: bool,
+    /// Show LOD distance configurator panel
+    pub show_lod_config: bool,
     /// Cached FPS value (smoothed for stable display)
     pub cached_fps: f64,
     /// Cached frame time in ms
@@ -83,6 +87,25 @@ pub struct DebugOverlayState {
     pub fog_start: f32,
     /// Fog end distance
     pub fog_end: f32,
+
+    // ── LOD distance configurator (runtime-adjustable via debug panel) ──
+
+    /// Whether LOD config fields have been populated from resources.
+    /// Set to `true` after first sync; prevents overwriting user edits.
+    pub lod_config_initialized: bool,
+    /// Render distance in chunks (how far chunks are visible)
+    pub lod_render_distance: i32,
+    /// Horizontal load distance in chunks (how far chunks are generated).
+    /// When equal to render distance, `ChunkManager::load_distance` is `None`.
+    pub lod_load_distance: i32,
+    /// Vertical chunk layers loaded above the player
+    pub lod_vertical_up: i32,
+    /// Vertical chunk layers loaded below the player
+    pub lod_vertical_down: i32,
+    /// Distance at which chunks are unloaded. 0 = auto (render_distance + 2).
+    pub lod_unload_distance: i32,
+    /// Predictive streaming lookahead in chunks
+    pub lod_lookahead: i32,
 }
 
 impl Default for DebugOverlayState {
@@ -97,6 +120,7 @@ impl Default for DebugOverlayState {
             show_memory: true,
             show_chunks: true,
             show_render: true,
+            show_lod_config: true,
             cached_fps: 0.0,
             cached_frame_time_ms: 0.0,
             cached_process_memory: None,
@@ -112,6 +136,13 @@ impl Default for DebugOverlayState {
             fog_enabled: false,
             fog_start: 0.0,
             fog_end: 0.0,
+            lod_config_initialized: false,
+            lod_render_distance: 4,
+            lod_load_distance: 4,
+            lod_vertical_up: 4,
+            lod_vertical_down: 2,
+            lod_unload_distance: 0,
+            lod_lookahead: 3,
         }
     }
 }
@@ -247,6 +278,65 @@ pub fn update_debug_render_data(
     overlay_state.fog_end = config.render.fog_end;
 }
 
+/// System to synchronise LOD distance configurator state with engine resources.
+///
+/// On first run, populates `DebugOverlayState` LOD fields from the live
+/// resources so sliders start at the correct values. On subsequent frames,
+/// writes slider values back to the resources (one-directional: UI → engine),
+/// following the same pattern as `toggle_wireframe`.
+pub fn sync_lod_distances(
+    mut overlay_state: ResMut<DebugOverlayState>,
+    mut chunk_manager: Option<ResMut<crate::world::ChunkManager>>,
+    mut unload_config: Option<ResMut<UnloadConfig>>,
+    mut streaming_config: Option<ResMut<StreamingConfig>>,
+) {
+    // ── First-time initialisation: read from resources → overlay state ──
+    if !overlay_state.lod_config_initialized {
+        if let Some(ref cm) = chunk_manager {
+            overlay_state.lod_render_distance = cm.render_distance;
+            overlay_state.lod_load_distance = cm.effective_load_distance();
+            overlay_state.lod_vertical_up = cm.vertical_load_up;
+            overlay_state.lod_vertical_down = cm.vertical_load_down;
+        }
+        if let Some(ref uc) = unload_config {
+            overlay_state.lod_unload_distance = uc.unload_distance.unwrap_or(0);
+        }
+        if let Some(ref sc) = streaming_config {
+            overlay_state.lod_lookahead = sc.lookahead_chunks;
+        }
+        overlay_state.lod_config_initialized = true;
+        return; // Skip write-back on the initialisation frame
+    }
+
+    // ── Apply overlay state → resources (UI is the source of truth) ──
+    if let Some(ref mut cm) = chunk_manager {
+        cm.render_distance = overlay_state.lod_render_distance;
+
+        // If the user set load distance equal to render distance, use
+        // the implicit default (`None`) so they stay locked together.
+        if overlay_state.lod_load_distance == overlay_state.lod_render_distance {
+            cm.load_distance = None;
+        } else {
+            cm.load_distance = Some(overlay_state.lod_load_distance);
+        }
+
+        cm.vertical_load_up = overlay_state.lod_vertical_up;
+        cm.vertical_load_down = overlay_state.lod_vertical_down;
+    }
+
+    if let Some(ref mut uc) = unload_config {
+        if overlay_state.lod_unload_distance <= 0 {
+            uc.unload_distance = None; // auto: render_distance + 2
+        } else {
+            uc.unload_distance = Some(overlay_state.lod_unload_distance);
+        }
+    }
+
+    if let Some(ref mut sc) = streaming_config {
+        sc.lookahead_chunks = overlay_state.lod_lookahead;
+    }
+}
+
 /// System to handle debug keyboard shortcuts (F3 overlay toggle, F5/F6 load dist, F7 shadow toggle)
 pub fn debug_keyboard_input(
     keyboard: Res<ButtonInput<KeyCode>>,
@@ -257,18 +347,21 @@ pub fn debug_keyboard_input(
     if keyboard.just_pressed(KeyCode::F3) {
         overlay_state.visible = !overlay_state.visible;
     }
-    // Adjust chunk loading distance with F5 (decrease) / F6 (increase)
+    // Adjust chunk loading distance with F5 (decrease) / F6 (increase).
+    // Also update the overlay state so the LOD configurator sliders stay in sync.
     if let Some(ref mut cm) = chunk_manager {
         if keyboard.just_pressed(KeyCode::F5) {
             let current = cm.effective_load_distance();
             let new_dist = (current - 1).max(1);
             cm.load_distance = Some(new_dist);
+            overlay_state.lod_load_distance = new_dist;
             info!("Chunk load distance decreased to {}", new_dist);
         }
         if keyboard.just_pressed(KeyCode::F6) {
             let current = cm.effective_load_distance();
             let new_dist = current + 1;
             cm.load_distance = Some(new_dist);
+            overlay_state.lod_load_distance = new_dist;
             info!("Chunk load distance increased to {}", new_dist);
         }
     }
@@ -651,6 +744,142 @@ pub fn draw_debug_ui(
         ui.separator();
     }
 
+    // LOD distance configurator — runtime adjustment of chunk loading/rendering distances
+    if overlay_state.show_lod_config {
+        ui.collapsing("🔭 LOD Distances", |ui| {
+            ui.label(
+                egui::RichText::new("Adjust chunk level-of-detail distances at runtime.")
+                    .weak()
+                    .italics(),
+            );
+            ui.add_space(4.0);
+
+            // ── Render distance: controls how far chunks are visible ──
+            ui.horizontal(|ui| {
+                ui.label("Render dist:");
+                if ui
+                    .add(
+                        egui::Slider::new(&mut overlay_state.lod_render_distance, 1..=24)
+                            .suffix(" chunks"),
+                    )
+                    .changed()
+                {
+                    // Keep load distance >= render distance
+                    if overlay_state.lod_load_distance < overlay_state.lod_render_distance {
+                        overlay_state.lod_load_distance = overlay_state.lod_render_distance;
+                    }
+                }
+            });
+
+            // ── Load distance: how far chunks are generated (>= render dist) ──
+            ui.horizontal(|ui| {
+                ui.label("Load dist:");
+                let min_load = overlay_state.lod_render_distance;
+                ui.add(
+                    egui::Slider::new(&mut overlay_state.lod_load_distance, min_load..=32)
+                        .suffix(" chunks"),
+                )
+                .on_hover_text("How far ahead chunks are generated. Must be ≥ render distance.");
+            });
+
+            ui.add_space(2.0);
+
+            // ── Vertical range: chunk layers above/below the player ──
+            ui.horizontal(|ui| {
+                ui.label("Vertical ↑:");
+                ui.add(
+                    egui::Slider::new(&mut overlay_state.lod_vertical_up, 0..=16)
+                        .suffix(" layers"),
+                );
+            });
+            ui.horizontal(|ui| {
+                ui.label("Vertical ↓:");
+                ui.add(
+                    egui::Slider::new(&mut overlay_state.lod_vertical_down, 0..=16)
+                        .suffix(" layers"),
+                );
+            });
+
+            ui.add_space(2.0);
+
+            // ── Unload distance: when chunks are removed from memory ──
+            // Pre-compute hover text before the mutable borrow in Slider::new
+            let unload_hover = if overlay_state.lod_unload_distance <= 0 {
+                format!("auto ({})", overlay_state.lod_render_distance + 2)
+            } else {
+                format!("{} chunks", overlay_state.lod_unload_distance)
+            };
+            ui.horizontal(|ui| {
+                ui.label("Unload dist:");
+                ui.add(
+                    egui::Slider::new(&mut overlay_state.lod_unload_distance, 0..=32)
+                        .custom_formatter(|val, _| {
+                            if val <= 0.0 {
+                                "auto".to_string()
+                            } else {
+                                format!("{}", val as i32)
+                            }
+                        }),
+                )
+                .on_hover_text(unload_hover);
+            });
+
+            // ── Streaming lookahead: predictive loading distance ──
+            ui.horizontal(|ui| {
+                ui.label("Lookahead:");
+                ui.add(
+                    egui::Slider::new(&mut overlay_state.lod_lookahead, 0..=8)
+                        .suffix(" chunks"),
+                )
+                .on_hover_text("Predictive streaming: how many chunks ahead of movement to pre-load");
+            });
+
+            ui.add_space(4.0);
+
+            // ── Summary of effective distances ──
+            let eff_load = overlay_state.lod_load_distance;
+            let eff_unload = if overlay_state.lod_unload_distance <= 0 {
+                overlay_state.lod_render_distance + 2
+            } else {
+                overlay_state.lod_unload_distance
+            };
+            let total_vert = overlay_state.lod_vertical_down + overlay_state.lod_vertical_up + 1;
+            let side = (2 * eff_load + 1) as usize;
+            let max_chunks = side * side * total_vert as usize;
+
+            ui.separator();
+            ui.label(egui::RichText::new("Summary").strong());
+            ui.horizontal(|ui| {
+                ui.label("Effective unload:");
+                ui.monospace(format!("{} chunks", eff_unload));
+            });
+            ui.horizontal(|ui| {
+                ui.label("Max chunks:");
+                ui.monospace(format!("~{}", max_chunks));
+            });
+            ui.horizontal(|ui| {
+                ui.label("Vert layers:");
+                ui.monospace(format!("-{}..+{} ({})", overlay_state.lod_vertical_down, overlay_state.lod_vertical_up, total_vert));
+            });
+
+            // ── Reset button ──
+            ui.add_space(4.0);
+            if ui
+                .button("↺ Reset to Defaults")
+                .on_hover_text("Restore default LOD distances")
+                .clicked()
+            {
+                overlay_state.lod_render_distance = 4;
+                overlay_state.lod_load_distance = 4;
+                overlay_state.lod_vertical_up = 4;
+                overlay_state.lod_vertical_down = 2;
+                overlay_state.lod_unload_distance = 0;
+                overlay_state.lod_lookahead = 3;
+            }
+        });
+        ui.separator();
+    }
+
     // Render options
     ui.collapsing("🎨 Render Options", |ui| {
         ui.checkbox(&mut overlay_state.wireframe_enabled, "Wireframe mode");
@@ -703,6 +932,7 @@ pub fn draw_debug_ui(
         ui.checkbox(&mut overlay_state.show_input_state, "Input");
         ui.checkbox(&mut overlay_state.show_chunks, "Chunks");
         ui.checkbox(&mut overlay_state.show_render, "Render");
+        ui.checkbox(&mut overlay_state.show_lod_config, "LOD");
     });
 
     ui.small("F3 overlay | F4 profiler | F5/F6 load dist | F7 shadows | F8 perf");
@@ -724,6 +954,7 @@ impl Plugin for DebugOverlayPlugin {
                 (
                     update_frame_time_history,
                     update_debug_render_data,
+                    sync_lod_distances,
                     debug_keyboard_input,
                     toggle_wireframe,
                 )
