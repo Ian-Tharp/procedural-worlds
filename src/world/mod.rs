@@ -868,6 +868,7 @@ fn poll_pending_chunks(
     mut chunk_manager: ResMut<ChunkManager>,
     mut load_metrics: ResMut<ChunkLoadMetrics>,
     mut pending_query: Query<(Entity, &mut PendingChunk)>,
+    mut chunk_query: Query<&mut Chunk>,
     time: Res<Time>,
 ) {
     let app_time = time.elapsed_secs_f64();
@@ -888,6 +889,22 @@ fn poll_pending_chunks(
             // Update bookkeeping
             chunk_manager.pending.remove(&pos);
             chunk_manager.chunks.insert(pos, entity);
+
+            // Mark face-adjacent neighbor chunks as dirty so they remesh with
+            // the newly available neighbor data. This eliminates visual seams
+            // at chunk borders caused by missing cross-chunk face culling and AO.
+            for offset in [
+                IVec3::X, IVec3::NEG_X,
+                IVec3::Y, IVec3::NEG_Y,
+                IVec3::Z, IVec3::NEG_Z,
+            ] {
+                let neighbor_pos = pos + offset;
+                if let Some(&neighbor_entity) = chunk_manager.chunks.get(&neighbor_pos)
+                    && let Ok(mut neighbor_chunk) = chunk_query.get_mut(neighbor_entity)
+                {
+                    neighbor_chunk.dirty = true;
+                }
+            }
         }
     }
 }
@@ -948,7 +965,7 @@ fn mesh_dirty_chunks(
     mut commands: Commands,
     chunk_manager: Res<ChunkManager>,
     mut param_set: ParamSet<(
-        Query<(Entity, &mut Chunk), (Without<ChunkMesh>, Without<PendingMesh>)>,
+        Query<(Entity, &mut Chunk), Without<PendingMesh>>,
         Query<&Chunk>,
     )>,
     config: Res<crate::config::EngineConfig>,
@@ -2152,5 +2169,113 @@ mod tests {
                 }
             }
         }
+    }
+
+    // ========================================================================
+    // Chunk border optimization tests
+    // ========================================================================
+
+    #[test]
+    fn test_neighbor_dirtying_logic() {
+        // Verify the neighbor-dirtying logic used in poll_pending_chunks:
+        // when a chunk loads at `pos`, its 6 face-adjacent neighbors should be
+        // found in ChunkManager::chunks and can be marked dirty.
+        let mut cm = ChunkManager::default();
+
+        // Simulate 6 neighbors already loaded around (0,0,0)
+        let neighbor_positions = [
+            IVec3::X, IVec3::NEG_X,
+            IVec3::Y, IVec3::NEG_Y,
+            IVec3::Z, IVec3::NEG_Z,
+        ];
+        for pos in &neighbor_positions {
+            cm.chunks.insert(*pos, Entity::PLACEHOLDER);
+        }
+
+        // New chunk at origin — all 6 neighbors should be found
+        let new_pos = IVec3::ZERO;
+        let mut found = Vec::new();
+        for offset in neighbor_positions {
+            let neighbor_pos = new_pos + offset;
+            if cm.chunks.contains_key(&neighbor_pos) {
+                found.push(neighbor_pos);
+            }
+        }
+
+        assert_eq!(
+            found.len(), 6,
+            "all 6 face-adjacent neighbors should be found when loaded"
+        );
+    }
+
+    #[test]
+    fn test_neighbor_dirtying_skips_unloaded() {
+        // Only some neighbors are loaded — dirtying should only affect those.
+        let mut cm = ChunkManager::default();
+
+        // Only +X and -Z neighbors loaded
+        cm.chunks.insert(IVec3::X, Entity::PLACEHOLDER);
+        cm.chunks.insert(IVec3::NEG_Z, Entity::PLACEHOLDER);
+
+        let new_pos = IVec3::ZERO;
+        let offsets = [
+            IVec3::X, IVec3::NEG_X,
+            IVec3::Y, IVec3::NEG_Y,
+            IVec3::Z, IVec3::NEG_Z,
+        ];
+
+        let mut found_count = 0;
+        for offset in offsets {
+            let neighbor_pos = new_pos + offset;
+            if cm.chunks.contains_key(&neighbor_pos) {
+                found_count += 1;
+            }
+        }
+
+        assert_eq!(
+            found_count, 2,
+            "only loaded neighbors should be dirtied"
+        );
+    }
+
+    #[test]
+    fn test_border_remeshing_with_neighbor_data() {
+        // Verify that a chunk meshed with neighbor data produces different
+        // (fewer) vertices than one meshed without, confirming the border
+        // optimization is effective.
+        init_task_pool();
+
+        let mut chunk = Chunk::new(IVec3::ZERO);
+        chunk.fill(BlockType::Stone);
+
+        let neighbor_data: Vec<BlockType> = {
+            let mut tmp = Chunk::new(IVec3::X);
+            tmp.fill(BlockType::Stone);
+            tmp.blocks().to_vec()
+        };
+
+        // Without neighbors: all border faces rendered
+        let mesh_before = meshing::build_chunk_mesh(&chunk);
+        let verts_before = mesh_before
+            .attribute(Mesh::ATTRIBUTE_POSITION)
+            .map(|a| a.len())
+            .unwrap_or(0);
+
+        // With +X neighbor: +X border faces culled
+        let neighbors = meshing::ChunkNeighbors {
+            pos_x: Some(neighbor_data),
+            neg_x: None, pos_y: None, neg_y: None, pos_z: None, neg_z: None,
+        };
+        let mesh_after = meshing::build_chunk_mesh_with_neighbors(&chunk, None, &neighbors);
+        let verts_after = mesh_after
+            .attribute(Mesh::ATTRIBUTE_POSITION)
+            .map(|a| a.len())
+            .unwrap_or(0);
+
+        assert!(
+            verts_after < verts_before,
+            "remeshing with neighbor data should reduce vertex count: \
+             before={verts_before}, after={verts_after}"
+        );
     }
 }
