@@ -53,6 +53,30 @@ impl BiomeType {
             BiomeType::Volcanic,
         ]
     }
+
+    /// Human-readable display name for UI presentation.
+    pub fn display_name(&self) -> &'static str {
+        match self {
+            BiomeType::Plains => "Plains",
+            BiomeType::Desert => "Desert",
+            BiomeType::Forest => "Forest",
+            BiomeType::Mountains => "Mountains",
+            BiomeType::Tundra => "Tundra",
+            BiomeType::Volcanic => "Volcanic Wastes",
+        }
+    }
+
+    /// Emoji icon representing this biome in the HUD.
+    pub fn icon(&self) -> &'static str {
+        match self {
+            BiomeType::Plains => "\u{1F33E}",
+            BiomeType::Desert => "\u{1F3DC}\u{FE0F}",
+            BiomeType::Forest => "\u{1F332}",
+            BiomeType::Mountains => "\u{26F0}\u{FE0F}",
+            BiomeType::Tundra => "\u{2744}\u{FE0F}",
+            BiomeType::Volcanic => "\u{1F30B}",
+        }
+    }
 }
 
 // ============================================================================
@@ -446,5 +470,39 @@ mod tests {
     #[test]
     fn test_biome_type_all_returns_six() {
         assert_eq!(BiomeType::all().len(), 6);
+    }
+
+    // ── display_name / icon ──
+
+    #[test]
+    fn test_display_names() {
+        assert_eq!(BiomeType::Plains.display_name(), "Plains");
+        assert_eq!(BiomeType::Desert.display_name(), "Desert");
+        assert_eq!(BiomeType::Forest.display_name(), "Forest");
+        assert_eq!(BiomeType::Mountains.display_name(), "Mountains");
+        assert_eq!(BiomeType::Tundra.display_name(), "Tundra");
+        assert_eq!(BiomeType::Volcanic.display_name(), "Volcanic Wastes");
+    }
+
+    #[test]
+    fn test_all_biomes_have_display_names() {
+        for biome in BiomeType::all() {
+            assert!(
+                !biome.display_name().is_empty(),
+                "{:?} should have a non-empty display name",
+                biome
+            );
+        }
+    }
+
+    #[test]
+    fn test_all_biomes_have_icons() {
+        for biome in BiomeType::all() {
+            assert!(
+                !biome.icon().is_empty(),
+                "{:?} should have a non-empty icon",
+                biome
+            );
+        }
     }
 }

@@ -11,10 +11,14 @@
 use bevy::prelude::*;
 use bevy_egui::{egui, EguiContexts};
 
+use noise::Simplex;
+
 use crate::engine::controller::CursorState;
 use crate::engine::raycast::CurrentTarget;
+use crate::generation::biome::{biome_at, BiomeType};
+use crate::generation::TerrainConfig;
 use crate::world::interaction::SelectedBlock;
-use crate::world::{ChunkLoadMetrics, ChunkManager, PendingMesh};
+use crate::world::{ChunkLoadMetrics, ChunkManager, PendingMesh, CHUNK_SIZE};
 
 /// Tracks the chunk loading progress bar visibility and animation state.
 ///
@@ -54,6 +58,52 @@ impl ChunkLoadingBarState {
     }
 }
 
+// ============================================================================
+// Biome Indicator
+// ============================================================================
+
+/// How long (seconds) the biome name stays fully visible after a change.
+const BIOME_DISPLAY_DURATION: f32 = 3.0;
+
+/// How fast the biome indicator fades in (opacity per second).
+const BIOME_FADE_IN_SPEED: f32 = 4.0;
+
+/// How fast the biome indicator fades out (opacity per second).
+const BIOME_FADE_OUT_SPEED: f32 = 1.5;
+
+/// Tracks the biome indicator HUD state.
+///
+/// When the player crosses a biome boundary, the new biome name fades in,
+/// stays visible for [`BIOME_DISPLAY_DURATION`] seconds, then fades out.
+/// This provides unobtrusive awareness of the current environment without
+/// cluttering the screen during normal gameplay.
+#[derive(Resource)]
+pub struct BiomeIndicatorState {
+    /// The biome the player is currently in.
+    pub current_biome: Option<BiomeType>,
+    /// Opacity of the indicator (0.0 = invisible, 1.0 = fully visible).
+    pub opacity: f32,
+    /// Timer counting down after a biome change (seconds remaining).
+    pub display_timer: f32,
+    /// Last checked player chunk (x, z) to avoid redundant noise queries.
+    last_checked_chunk: Option<(i32, i32)>,
+}
+
+impl Default for BiomeIndicatorState {
+    fn default() -> Self {
+        Self {
+            current_biome: None,
+            opacity: 0.0,
+            display_timer: 0.0,
+            last_checked_chunk: None,
+        }
+    }
+}
+
+// ============================================================================
+// Plugin
+// ============================================================================
+
 /// Plugin that adds the crosshair overlay, block target HUD, and chunk
 /// loading progress bar.
 ///
@@ -66,7 +116,11 @@ pub struct HudPlugin;
 impl Plugin for HudPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<ChunkLoadingBarState>()
-            .add_systems(Update, (hud_system, chunk_loading_progress_system));
+            .init_resource::<BiomeIndicatorState>()
+            .add_systems(
+                Update,
+                (hud_system, chunk_loading_progress_system, biome_indicator_system),
+            );
     }
 }
 
@@ -436,6 +490,94 @@ fn chunk_loading_progress_system(
         });
 }
 
+/// Biome indicator system — shows the biome name when crossing boundaries.
+///
+/// Detects biome changes by sampling the biome noise at the player's current
+/// chunk position. When the biome changes, the name fades in with an icon,
+/// stays visible for [`BIOME_DISPLAY_DURATION`] seconds, then fades out.
+///
+/// Only visible when the cursor is grabbed (FPS mode), consistent with
+/// the crosshair and other HUD elements.
+fn biome_indicator_system(
+    mut contexts: EguiContexts,
+    cursor_state: Res<CursorState>,
+    chunk_manager: Option<Res<ChunkManager>>,
+    terrain_config: Option<Res<TerrainConfig>>,
+    mut indicator: ResMut<BiomeIndicatorState>,
+    time: Res<Time>,
+) {
+    // ── Biome detection ────────────────────────────────────────────────
+    if let (Some(cm), Some(config)) = (&chunk_manager, &terrain_config) {
+        let chunk_xz = (cm.player_chunk.x, cm.player_chunk.z);
+
+        if indicator.last_checked_chunk != Some(chunk_xz) {
+            indicator.last_checked_chunk = Some(chunk_xz);
+
+            // Sample biome at the center of the player's chunk
+            let world_x = cm.player_chunk.x * CHUNK_SIZE as i32 + CHUNK_SIZE as i32 / 2;
+            let world_z = cm.player_chunk.z * CHUNK_SIZE as i32 + CHUNK_SIZE as i32 / 2;
+            let biome_noise =
+                Simplex::new(config.seed.wrapping_add(config.biome_seed_offset));
+            let biome = biome_at(world_x, world_z, &biome_noise, config.biome_scale);
+
+            if indicator.current_biome != Some(biome) {
+                indicator.current_biome = Some(biome);
+                // Trigger fade-in animation
+                indicator.display_timer = BIOME_DISPLAY_DURATION;
+                indicator.opacity = 0.0;
+            }
+        }
+    }
+
+    // ── Animation update ───────────────────────────────────────────────
+    let dt = time.delta_secs();
+    if indicator.display_timer > 0.0 {
+        // Fade in while the timer is active
+        indicator.opacity = (indicator.opacity + dt * BIOME_FADE_IN_SPEED).min(1.0);
+        indicator.display_timer -= dt;
+    } else {
+        // Fade out after the timer expires
+        indicator.opacity = (indicator.opacity - dt * BIOME_FADE_OUT_SPEED).max(0.0);
+    }
+
+    // ── Rendering ──────────────────────────────────────────────────────
+    if indicator.opacity < 0.01 || !cursor_state.grabbed {
+        return;
+    }
+
+    let Some(biome) = indicator.current_biome else {
+        return;
+    };
+
+    let ctx = contexts.ctx_mut();
+    let screen_rect = ctx.screen_rect();
+    let alpha = (indicator.opacity * 255.0) as u8;
+
+    let display_text = format!("{} {}", biome.icon(), biome.display_name());
+
+    egui::Area::new(egui::Id::new("hud_biome_indicator"))
+        .fixed_pos(egui::pos2(screen_rect.center().x, 50.0))
+        .anchor(egui::Align2::CENTER_TOP, egui::vec2(0.0, 0.0))
+        .order(egui::Order::Foreground)
+        .interactable(false)
+        .show(ctx, |ui| {
+            egui::Frame::none()
+                .fill(egui::Color32::from_rgba_unmultiplied(0, 0, 0, alpha / 3))
+                .rounding(egui::Rounding::same(8.0))
+                .inner_margin(egui::Margin::symmetric(16.0, 8.0))
+                .show(ui, |ui| {
+                    ui.label(
+                        egui::RichText::new(display_text)
+                            .color(egui::Color32::from_rgba_unmultiplied(
+                                255, 255, 240, alpha,
+                            ))
+                            .size(20.0)
+                            .strong(),
+                    );
+                });
+        });
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -486,5 +628,53 @@ mod tests {
         // Simulate rapid fade-out
         state.opacity = (state.opacity - 10.0).max(0.0);
         assert_eq!(state.opacity, 0.0);
+    }
+
+    // ── Biome indicator tests ──
+
+    #[test]
+    fn test_biome_indicator_state_defaults() {
+        let state = BiomeIndicatorState::default();
+        assert!(state.current_biome.is_none());
+        assert_eq!(state.opacity, 0.0);
+        assert_eq!(state.display_timer, 0.0);
+        assert!(state.last_checked_chunk.is_none());
+    }
+
+    #[test]
+    fn test_biome_display_names() {
+        use crate::generation::biome::BiomeType;
+
+        assert_eq!(BiomeType::Plains.display_name(), "Plains");
+        assert_eq!(BiomeType::Desert.display_name(), "Desert");
+        assert_eq!(BiomeType::Forest.display_name(), "Forest");
+        assert_eq!(BiomeType::Mountains.display_name(), "Mountains");
+        assert_eq!(BiomeType::Tundra.display_name(), "Tundra");
+        assert_eq!(BiomeType::Volcanic.display_name(), "Volcanic Wastes");
+    }
+
+    #[test]
+    fn test_biome_icons_non_empty() {
+        use crate::generation::biome::BiomeType;
+
+        for biome in BiomeType::all() {
+            assert!(
+                !biome.icon().is_empty(),
+                "{:?} should have a non-empty icon",
+                biome
+            );
+        }
+    }
+
+    #[test]
+    fn test_biome_indicator_display_constants() {
+        assert!(BIOME_DISPLAY_DURATION > 0.0);
+        assert!(BIOME_FADE_IN_SPEED > 0.0);
+        assert!(BIOME_FADE_OUT_SPEED > 0.0);
+        // Fade-in should be faster than fade-out for snappy feel
+        assert!(
+            BIOME_FADE_IN_SPEED > BIOME_FADE_OUT_SPEED,
+            "Fade-in should be faster than fade-out"
+        );
     }
 }
