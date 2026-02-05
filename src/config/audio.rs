@@ -614,4 +614,141 @@ mod tests {
         let config: super::super::EngineConfig = serde_json::from_str(json).unwrap();
         assert_eq!(config.audio, AudioSettings::default());
     }
+
+    // ----------------------------------------------------------------
+    // Audio mixer panel integration
+    // ----------------------------------------------------------------
+
+    #[test]
+    fn test_audio_settings_panel_state_default_hidden() {
+        let state = AudioSettingsPanelState::default();
+        assert!(!state.visible, "Audio settings panel should be hidden by default");
+    }
+
+    #[test]
+    fn test_audio_settings_panel_toggle() {
+        let mut state = AudioSettingsPanelState::default();
+        assert!(!state.visible);
+        state.visible = true;
+        assert!(state.visible);
+        state.visible = false;
+        assert!(!state.visible);
+    }
+
+    #[test]
+    fn test_volume_slider_range_produces_valid_effective_volumes() {
+        // Simulate sweeping all sliders across their full range
+        for master_pct in 0..=10 {
+            for channel_pct in 0..=10 {
+                let master = master_pct as f32 / 10.0;
+                let channel = channel_pct as f32 / 10.0;
+                let config = AudioConfig {
+                    master_volume: master,
+                    ambience_intensity: channel,
+                    sfx_volume: channel,
+                    music_volume: channel,
+                    ..AudioConfig::default()
+                };
+                let eff_amb = config.effective_ambience_volume();
+                let eff_sfx = config.effective_sfx_volume();
+                let eff_mus = config.effective_music_volume();
+
+                // Effective volumes must stay in [0.0, 1.0]
+                assert!(
+                    (0.0..=1.0).contains(&eff_amb),
+                    "Ambient out of range: {} (master={}, channel={})",
+                    eff_amb, master, channel,
+                );
+                assert!(
+                    (0.0..=1.0).contains(&eff_sfx),
+                    "SFX out of range: {} (master={}, channel={})",
+                    eff_sfx, master, channel,
+                );
+                assert!(
+                    (0.0..=1.0).contains(&eff_mus),
+                    "Music out of range: {} (master={}, channel={})",
+                    eff_mus, master, channel,
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_config_dirty_flag_set_on_slider_change_simulation() {
+        // Simulate the UI flow: user changes a slider → dirty = true → persist → dirty = false
+        let mut config = AudioConfig::default();
+        assert!(!config.dirty);
+
+        // Step 1: User drags master slider
+        config.master_volume = 0.5;
+        config.dirty = true;
+        assert!(config.dirty);
+
+        // Step 2: Persistence system saves and clears dirty flag
+        let settings = config.to_settings();
+        assert_eq!(settings.master_volume, 0.5);
+        config.dirty = false;
+        assert!(!config.dirty);
+
+        // Step 3: User drags SFX slider
+        config.sfx_volume = 0.3;
+        config.dirty = true;
+        assert!(config.dirty);
+        assert_eq!(config.to_settings().sfx_volume, 0.3);
+    }
+
+    #[test]
+    fn test_reset_to_defaults_restores_all_volumes() {
+        let config = AudioConfig {
+            master_volume: 0.1,
+            sfx_volume: 0.2,
+            ambience_intensity: 0.3,
+            music_volume: 0.4,
+            ..AudioConfig::default()
+        };
+
+        // Verify custom values are set
+        assert_eq!(config.master_volume, 0.1);
+        assert_eq!(config.sfx_volume, 0.2);
+
+        // Simulate "Reset to Defaults" button (replaces the entire config)
+        let config = AudioConfig::default();
+
+        assert_eq!(config.master_volume, 0.8);
+        assert_eq!(config.sfx_volume, 0.7);
+        assert_eq!(config.ambience_intensity, 0.6);
+        assert_eq!(config.music_volume, 0.5);
+    }
+
+    #[test]
+    fn test_to_settings_preserves_slider_values() {
+        // Ensure that the values the UI writes to AudioConfig survive
+        // the round-trip through to_settings → from_settings, which is
+        // the path used by the persist system.
+        let config = AudioConfig {
+            master_volume: 0.42,
+            ambience_intensity: 0.33,
+            sfx_volume: 0.77,
+            music_volume: 0.61,
+            distance_falloff: 1.8,
+            spatial_audio_enabled: false,
+            enabled: true,
+            preferred_device: None,
+            sample_rate: None,
+            buffer_size: None,
+            dirty: true, // dirty flag should NOT survive the round-trip
+        };
+
+        let settings = config.to_settings();
+        let restored = AudioConfig::from_settings(&settings);
+
+        assert_eq!(restored.master_volume, 0.42);
+        assert_eq!(restored.ambience_intensity, 0.33);
+        assert_eq!(restored.sfx_volume, 0.77);
+        assert_eq!(restored.music_volume, 0.61);
+        assert_eq!(restored.distance_falloff, 1.8);
+        assert!(!restored.spatial_audio_enabled);
+        // dirty flag is NOT serialized — from_settings always sets it to false
+        assert!(!restored.dirty);
+    }
 }

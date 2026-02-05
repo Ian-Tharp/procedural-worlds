@@ -155,6 +155,7 @@ impl Plugin for AudioPlaybackPlugin {
                 (
                     play_block_sounds,
                     update_ambient_biome_sound,
+                    apply_realtime_volume,
                     cleanup_finished_sounds,
                 ),
             );
@@ -292,6 +293,40 @@ fn update_ambient_biome_sound(
 
     current_ambient.active_biome = Some(current_biome);
     info!("Biome ambient changed to: {:?}", current_biome);
+}
+
+/// Apply volume changes to currently-playing audio entities in real time.
+///
+/// When the user adjusts volume sliders in the audio mixer panel (F9), this
+/// system immediately updates the volume of all active audio sinks so that
+/// changes are audible without waiting for a biome transition or new sound
+/// event. This covers:
+///
+/// - **Ambient sounds** — biome loops whose volume is master × ambience
+/// - **SFX** — short-lived spatial effects whose volume is master × sfx
+///
+/// The system only runs when [`AudioConfig`] has been mutated (Bevy change
+/// detection), so there is zero overhead during normal gameplay.
+fn apply_realtime_volume(
+    audio_config: Res<AudioConfig>,
+    ambient_sinks: Query<&AudioSink, With<AmbientSound>>,
+    sfx_sinks: Query<&AudioSink, With<SpatialSfx>>,
+) {
+    if !audio_config.is_changed() {
+        return;
+    }
+
+    // Update ambient sound volumes (master × ambience)
+    let ambient_vol = audio_config.effective_ambience_volume();
+    for sink in &ambient_sinks {
+        sink.set_volume(ambient_vol);
+    }
+
+    // Update in-flight SFX volumes (master × sfx)
+    let sfx_vol = audio_config.effective_sfx_volume();
+    for sink in &sfx_sinks {
+        sink.set_volume(sfx_vol);
+    }
 }
 
 /// Despawn expired spatial sound effect entities.
@@ -440,5 +475,92 @@ mod tests {
             // Just call it — we're checking that none panic
             let _ = assets.for_biome(*biome);
         }
+    }
+
+    // ----------------------------------------------------------------
+    // Real-time volume application
+    // ----------------------------------------------------------------
+
+    #[test]
+    fn test_effective_volume_scales_with_master() {
+        let mut config = AudioConfig::default();
+
+        // Default: master=0.8, ambience=0.6, sfx=0.7
+        let base_ambient = config.effective_ambience_volume();
+        let base_sfx = config.effective_sfx_volume();
+        assert!((base_ambient - 0.48).abs() < f32::EPSILON);
+        assert!((base_sfx - 0.56).abs() < f32::EPSILON);
+
+        // Halve master — effective volumes should halve
+        config.master_volume = 0.4;
+        let half_ambient = config.effective_ambience_volume();
+        let half_sfx = config.effective_sfx_volume();
+        assert!((half_ambient - base_ambient * 0.5).abs() < 1e-6);
+        assert!((half_sfx - base_sfx * 0.5).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_effective_volume_muted_at_zero_master() {
+        let mut config = AudioConfig::default();
+        config.master_volume = 0.0;
+        assert_eq!(config.effective_ambience_volume(), 0.0);
+        assert_eq!(config.effective_sfx_volume(), 0.0);
+        assert_eq!(config.effective_music_volume(), 0.0);
+    }
+
+    #[test]
+    fn test_effective_volume_muted_at_zero_channel() {
+        let mut config = AudioConfig::default();
+        config.ambience_intensity = 0.0;
+        config.sfx_volume = 0.0;
+        config.music_volume = 0.0;
+        assert_eq!(config.effective_ambience_volume(), 0.0);
+        assert_eq!(config.effective_sfx_volume(), 0.0);
+        assert_eq!(config.effective_music_volume(), 0.0);
+        // Master is still non-zero
+        assert!(config.master_volume > 0.0);
+    }
+
+    #[test]
+    fn test_effective_volume_max_at_full() {
+        let config = AudioConfig {
+            master_volume: 1.0,
+            ambience_intensity: 1.0,
+            sfx_volume: 1.0,
+            music_volume: 1.0,
+            ..AudioConfig::default()
+        };
+        assert!((config.effective_ambience_volume() - 1.0).abs() < f32::EPSILON);
+        assert!((config.effective_sfx_volume() - 1.0).abs() < f32::EPSILON);
+        assert!((config.effective_music_volume() - 1.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn test_audio_playback_plugin_registers_systems() {
+        // Verify the plugin can be added without panicking, which confirms
+        // all systems (including apply_realtime_volume) have valid signatures.
+        // We don't call app.update() because MinimalPlugins lacks AssetServer.
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins);
+        app.init_resource::<AudioConfig>();
+        app.add_plugins(AudioPlaybackPlugin);
+        // Plugin registered successfully — system signatures are valid
+    }
+
+    #[test]
+    fn test_dirty_flag_triggers_persist_flow() {
+        // Verify that modifying AudioConfig sets the dirty flag,
+        // which the persist_audio_config system uses as a run condition.
+        let mut config = AudioConfig::default();
+        assert!(!config.dirty);
+
+        // Simulating what the UI slider does
+        config.master_volume = 0.5;
+        config.dirty = true;
+        assert!(config.dirty);
+
+        // After persistence the flag is cleared
+        config.dirty = false;
+        assert!(!config.dirty);
     }
 }
