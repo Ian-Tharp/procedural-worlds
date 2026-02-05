@@ -19,6 +19,7 @@ use serde::{Deserialize, Serialize};
 use crate::generation::{generate_cacti, generate_caves, generate_chunk_terrain, generate_trees, TerrainConfig};
 
 pub mod atlas_material;
+pub mod chunk_priority;
 pub mod interaction;
 pub mod meshing;
 pub mod persistence;
@@ -517,6 +518,7 @@ impl Plugin for WorldPlugin {
             )
             .init_resource::<streaming::StreamingConfig>()
             .init_resource::<streaming::PlayerChunkVelocity>()
+            .init_resource::<chunk_priority::ChunkPriorityConfig>()
             // Custom atlas material pipeline (shader + material type registration)
             .add_plugins(atlas_material::BlockAtlasMaterialPlugin)
             // Save system plugin (auto-save, manual save, load on startup)
@@ -667,19 +669,25 @@ fn update_player_chunk_position(
     }
 }
 
-/// Spawn async chunk-generation tasks based on player position.
+/// Spawn async chunk-generation tasks based on player position and camera direction.
+///
+/// Uses the [`chunk_priority`] system to sort needed chunks by a combined
+/// distance + direction score. Chunks the player is looking toward are
+/// spawned first, giving faster perceived loading in the direction of travel.
 ///
 /// Instead of generating chunks synchronously on the main thread, this system
 /// spawns lightweight tasks on `AsyncComputeTaskPool`. Each task creates a
 /// `Chunk`, runs terrain + cave + tree generation, and returns the completed
-/// chunk data. The rate limiter now controls how many tasks are *spawned* per
-/// frame rather than how many blocking generations occur.
+/// chunk data. The rate limiter controls how many tasks are *spawned* per
+/// frame.
 fn chunk_streaming_system(
     mut commands: Commands,
     mut chunk_manager: ResMut<ChunkManager>,
     mut load_metrics: ResMut<ChunkLoadMetrics>,
     terrain_config: Res<TerrainConfig>,
     chunk_storage: Res<ChunkStorage>,
+    priority_config: Res<chunk_priority::ChunkPriorityConfig>,
+    camera_query: Query<&crate::engine::controller::CameraController, With<Camera3d>>,
 ) {
     // Reset per-frame spawn counter
     chunk_manager.tasks_spawned_this_frame = 0;
@@ -692,65 +700,65 @@ fn chunk_streaming_system(
 
     let task_pool = AsyncComputeTaskPool::get();
 
-    // Iterate through chunks that should be loaded
-    // Priority: closest chunks first (spiral out from center)
-    for dist in 0..=rd {
-        for x in (center.x - dist)..=(center.x + dist) {
-            for z in (center.z - dist)..=(center.z + dist) {
-                // Only process chunks at current distance ring
-                let dx = (x - center.x).abs();
-                let dz = (z - center.z).abs();
-                if dx != dist && dz != dist {
-                    continue;
-                }
+    // Get camera forward direction for priority sorting
+    let forward_dir = if priority_config.enabled {
+        camera_query
+            .get_single()
+            .ok()
+            .map(|controller| controller.horizontal_forward())
+    } else {
+        None
+    };
 
-                // Vertical range based on configurable load distances
-                for y in -vert_down..=vert_up {
-                    let chunk_pos = IVec3::new(x, y, z);
+    // Collect all needed chunk positions, sorted by priority
+    let loaded_keys: HashSet<IVec3> = chunk_manager.chunks.keys().copied().collect();
+    let sorted_chunks = chunk_priority::collect_needed_chunks_sorted(
+        center,
+        rd,
+        vert_down,
+        vert_up,
+        forward_dir,
+        priority_config.direction_weight,
+        &loaded_keys,
+        &chunk_manager.pending,
+    );
 
-                    // Skip if already loaded or already pending
-                    if chunk_manager.chunks.contains_key(&chunk_pos)
-                        || chunk_manager.pending.contains(&chunk_pos)
-                    {
-                        continue;
-                    }
-
-                    // Rate limit task spawning
-                    if chunk_manager.tasks_spawned_this_frame >= max_per_frame {
-                        return;
-                    }
-
-                    // Clone resources for the background task
-                    let config = (*terrain_config).clone();
-                    let storage = ChunkStorage::new(chunk_storage.save_dir.clone());
-
-                    // Spawn async task: try loading from disk first, generate if not found
-                    let task = task_pool.spawn(async move {
-                        // Check for a previously saved chunk on disk
-                        if let Ok(chunk) = persistence::load_chunk(chunk_pos, &storage) {
-                            return chunk;
-                        }
-                        // Not on disk â€” generate new terrain
-                        let mut chunk = Chunk::new(chunk_pos);
-                        generate_chunk_terrain(&mut chunk, &config);
-                        generate_caves(&mut chunk, &config);
-                        generate_trees(&mut chunk, &config);
-                        generate_cacti(&mut chunk, &config);
-                        chunk
-                    });
-
-                    // Spawn a placeholder entity with the PendingChunk component
-                    commands.spawn(PendingChunk {
-                        task,
-                        position: chunk_pos,
-                    });
-
-                    chunk_manager.pending.insert(chunk_pos);
-                    chunk_manager.tasks_spawned_this_frame += 1;
-                    load_metrics.pending_start_times.insert(chunk_pos, Instant::now());
-                }
-            }
+    // Spawn tasks in priority order, up to the per-frame limit
+    for scored in sorted_chunks {
+        if chunk_manager.tasks_spawned_this_frame >= max_per_frame {
+            return;
         }
+
+        let chunk_pos = scored.position;
+
+        // Clone resources for the background task
+        let config = (*terrain_config).clone();
+        let storage = ChunkStorage::new(chunk_storage.save_dir.clone());
+
+        // Spawn async task: try loading from disk first, generate if not found
+        let task = task_pool.spawn(async move {
+            // Check for a previously saved chunk on disk
+            if let Ok(chunk) = persistence::load_chunk(chunk_pos, &storage) {
+                return chunk;
+            }
+            // Not on disk — generate new terrain
+            let mut chunk = Chunk::new(chunk_pos);
+            generate_chunk_terrain(&mut chunk, &config);
+            generate_caves(&mut chunk, &config);
+            generate_trees(&mut chunk, &config);
+            generate_cacti(&mut chunk, &config);
+            chunk
+        });
+
+        // Spawn a placeholder entity with the PendingChunk component
+        commands.spawn(PendingChunk {
+            task,
+            position: chunk_pos,
+        });
+
+        chunk_manager.pending.insert(chunk_pos);
+        chunk_manager.tasks_spawned_this_frame += 1;
+        load_metrics.pending_start_times.insert(chunk_pos, Instant::now());
     }
 }
 
