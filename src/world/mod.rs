@@ -16,6 +16,7 @@ use bevy::prelude::*;
 use bevy::tasks::{block_on, futures_lite::future, AsyncComputeTaskPool, Task};
 use serde::{Deserialize, Serialize};
 
+use crate::engine::memory::ChunkMeshPool;
 use crate::generation::{generate_cacti, generate_caves, generate_chunk_terrain, generate_trees, TerrainConfig};
 
 pub mod atlas_material;
@@ -490,6 +491,8 @@ impl Plugin for WorldPlugin {
             .init_resource::<ChunkStorage>()
             .init_resource::<unloading::UnloadConfig>()
             .init_resource::<ChunkLoadMetrics>()
+            // Pre-allocated mesh buffer pool for reduced allocation overhead
+            .init_resource::<ChunkMeshPool>()
             // Register chunk diagnostics with Bevy's DiagnosticsStore
             .register_diagnostic(
                 Diagnostic::new(CHUNK_AVG_LOAD_TIME)
