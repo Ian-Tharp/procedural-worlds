@@ -20,6 +20,7 @@ use crate::engine::memory::ChunkMeshPool;
 use crate::generation::{generate_cacti, generate_caves, generate_chunk_terrain, generate_trees, TerrainConfig};
 
 pub mod atlas_material;
+pub mod chunk_priority;
 pub mod interaction;
 pub mod meshing;
 pub mod persistence;
@@ -136,7 +137,7 @@ pub struct Chunk {
     /// (e.g., by player block placement). Modified chunks are saved to
     /// disk before unloading; unmodified chunks can be regenerated.
     ///
-    /// **Not set automatically** by `set_block` â€” callers (e.g., block
+    /// **Not set automatically** by `set_block` â€" callers (e.g., block
     /// placement systems) should set `chunk.modified = true` explicitly
     /// when making player-driven changes. This avoids terrain generation
     /// routines (which also use `set_block`) from marking chunks as modified.
@@ -326,7 +327,7 @@ pub const CHUNK_LOADS_PER_SEC: DiagnosticPath = DiagnosticPath::const_new("chunk
 pub const CHUNK_TOTAL_LOADED: DiagnosticPath = DiagnosticPath::const_new("chunk/total_loaded");
 /// Diagnostic path for estimated chunk memory usage (MB).
 pub const CHUNK_MEMORY_MB: DiagnosticPath = DiagnosticPath::const_new("chunk/memory_mb");
-/// Diagnostic path for chunk cache hit rate (0.0–1.0).
+/// Diagnostic path for chunk cache hit rate (0.0-1.0).
 pub const CHUNK_CACHE_HIT_RATE: DiagnosticPath = DiagnosticPath::const_new("chunk/cache_hit_rate");
 /// Diagnostic path for total chunk cache hits.
 pub const CHUNK_CACHE_HITS: DiagnosticPath = DiagnosticPath::const_new("chunk/cache_hits");
@@ -613,6 +614,7 @@ impl Plugin for WorldPlugin {
             )
             .init_resource::<streaming::StreamingConfig>()
             .init_resource::<streaming::PlayerChunkVelocity>()
+            .init_resource::<chunk_priority::ChunkPriorityConfig>()
             // Custom atlas material pipeline (shader + material type registration)
             .add_plugins(atlas_material::BlockAtlasMaterialPlugin)
             // Save system plugin (auto-save, manual save, load on startup)
@@ -749,7 +751,7 @@ fn setup_chunk_material(
 
 /// Update the player's current chunk position based on camera
 ///
-/// Uses `GlobalTransform` because the camera is a child entity of the player â€”
+/// Uses `GlobalTransform` because the camera is a child entity of the player â€"
 /// its local `Transform` is just the eye-height offset, not the world position.
 fn update_player_chunk_position(
     camera_query: Query<&GlobalTransform, With<Camera3d>>,
@@ -763,19 +765,25 @@ fn update_player_chunk_position(
     }
 }
 
-/// Spawn async chunk-generation tasks based on player position.
+/// Spawn async chunk-generation tasks based on player position and camera direction.
+///
+/// Uses the [`chunk_priority`] system to sort needed chunks by a combined
+/// distance + direction score. Chunks the player is looking toward are
+/// spawned first, giving faster perceived loading in the direction of travel.
 ///
 /// Instead of generating chunks synchronously on the main thread, this system
 /// spawns lightweight tasks on `AsyncComputeTaskPool`. Each task creates a
 /// `Chunk`, runs terrain + cave + tree generation, and returns the completed
-/// chunk data. The rate limiter now controls how many tasks are *spawned* per
-/// frame rather than how many blocking generations occur.
+/// chunk data. The rate limiter controls how many tasks are *spawned* per
+/// frame.
 fn chunk_streaming_system(
     mut commands: Commands,
     mut chunk_manager: ResMut<ChunkManager>,
     mut load_metrics: ResMut<ChunkLoadMetrics>,
     terrain_config: Res<TerrainConfig>,
     chunk_storage: Res<ChunkStorage>,
+    priority_config: Res<chunk_priority::ChunkPriorityConfig>,
+    camera_query: Query<&crate::engine::controller::CameraController, With<Camera3d>>,
 ) {
     // Reset per-frame spawn counter
     chunk_manager.tasks_spawned_this_frame = 0;
@@ -788,65 +796,65 @@ fn chunk_streaming_system(
 
     let task_pool = AsyncComputeTaskPool::get();
 
-    // Iterate through chunks that should be loaded
-    // Priority: closest chunks first (spiral out from center)
-    for dist in 0..=rd {
-        for x in (center.x - dist)..=(center.x + dist) {
-            for z in (center.z - dist)..=(center.z + dist) {
-                // Only process chunks at current distance ring
-                let dx = (x - center.x).abs();
-                let dz = (z - center.z).abs();
-                if dx != dist && dz != dist {
-                    continue;
-                }
+    // Get camera forward direction for priority sorting
+    let forward_dir = if priority_config.enabled {
+        camera_query
+            .get_single()
+            .ok()
+            .map(|controller| controller.horizontal_forward())
+    } else {
+        None
+    };
 
-                // Vertical range based on configurable load distances
-                for y in -vert_down..=vert_up {
-                    let chunk_pos = IVec3::new(x, y, z);
+    // Collect all needed chunk positions, sorted by priority
+    let loaded_keys: HashSet<IVec3> = chunk_manager.chunks.keys().copied().collect();
+    let sorted_chunks = chunk_priority::collect_needed_chunks_sorted(
+        center,
+        rd,
+        vert_down,
+        vert_up,
+        forward_dir,
+        priority_config.direction_weight,
+        &loaded_keys,
+        &chunk_manager.pending,
+    );
 
-                    // Skip if already loaded or already pending
-                    if chunk_manager.chunks.contains_key(&chunk_pos)
-                        || chunk_manager.pending.contains(&chunk_pos)
-                    {
-                        continue;
-                    }
-
-                    // Rate limit task spawning
-                    if chunk_manager.tasks_spawned_this_frame >= max_per_frame {
-                        return;
-                    }
-
-                    // Clone resources for the background task
-                    let config = (*terrain_config).clone();
-                    let storage = ChunkStorage::new(chunk_storage.save_dir.clone());
-
-                    // Spawn async task: try loading from disk first, generate if not found
-                    let task = task_pool.spawn(async move {
-                        // Check for a previously saved chunk on disk
-                        if let Ok(chunk) = persistence::load_chunk(chunk_pos, &storage) {
-                            return ChunkLoadResult { chunk, from_cache: true };
-                        }
-                        // Not on disk â€” generate new terrain
-                        let mut chunk = Chunk::new(chunk_pos);
-                        generate_chunk_terrain(&mut chunk, &config);
-                        generate_caves(&mut chunk, &config);
-                        generate_trees(&mut chunk, &config);
-                        generate_cacti(&mut chunk, &config);
-                        ChunkLoadResult { chunk, from_cache: false }
-                    });
-
-                    // Spawn a placeholder entity with the PendingChunk component
-                    commands.spawn(PendingChunk {
-                        task,
-                        position: chunk_pos,
-                    });
-
-                    chunk_manager.pending.insert(chunk_pos);
-                    chunk_manager.tasks_spawned_this_frame += 1;
-                    load_metrics.pending_start_times.insert(chunk_pos, Instant::now());
-                }
-            }
+    // Spawn tasks in priority order, up to the per-frame limit
+    for scored in sorted_chunks {
+        if chunk_manager.tasks_spawned_this_frame >= max_per_frame {
+            return;
         }
+
+        let chunk_pos = scored.position;
+
+        // Clone resources for the background task
+        let config = (*terrain_config).clone();
+        let storage = ChunkStorage::new(chunk_storage.save_dir.clone());
+
+        // Spawn async task: try loading from disk first, generate if not found
+        let task = task_pool.spawn(async move {
+            // Check for a previously saved chunk on disk
+            if let Ok(chunk) = persistence::load_chunk(chunk_pos, &storage) {
+                return ChunkLoadResult { chunk, from_cache: true };
+            }
+            // Not on disk - generate new terrain
+            let mut chunk = Chunk::new(chunk_pos);
+            generate_chunk_terrain(&mut chunk, &config);
+            generate_caves(&mut chunk, &config);
+            generate_trees(&mut chunk, &config);
+            generate_cacti(&mut chunk, &config);
+            ChunkLoadResult { chunk, from_cache: false }
+        });
+
+        // Spawn a placeholder entity with the PendingChunk component
+        commands.spawn(PendingChunk {
+            task,
+            position: chunk_pos,
+        });
+
+        chunk_manager.pending.insert(chunk_pos);
+        chunk_manager.tasks_spawned_this_frame += 1;
+        load_metrics.pending_start_times.insert(chunk_pos, Instant::now());
     }
 }
 
@@ -1071,7 +1079,7 @@ fn poll_pending_meshes(
                 // Spawn child entity with water mesh + blend material
                 let water_child = commands.spawn((
                     Mesh3d(water_mesh_handle),
-                    // Child transform is identity — inherits parent's world position
+                    // Child transform is identity - inherits parent's world position
                     Transform::default(),
                     WaterMesh,
                 )).id();
@@ -1094,7 +1102,7 @@ fn poll_pending_meshes(
 }
 
 // Chunk unloading is now handled by `unloading::chunk_unloading_system` and
-// `unloading::poll_pending_saves` â€” see `src/world/unloading.rs`.
+// `unloading::poll_pending_saves` â€" see `src/world/unloading.rs`.
 
 // ============================================================================
 // BLOCK QUERIES - For collision and gameplay
@@ -1410,7 +1418,7 @@ mod tests {
     // ========================================================================
 
     /// Ensure `AsyncComputeTaskPool` is initialised for tests that use it.
-    /// Calling `get_or_init` more than once is safe â€” subsequent calls are no-ops.
+    /// Calling `get_or_init` more than once is safe â€" subsequent calls are no-ops.
     fn init_task_pool() {
         AsyncComputeTaskPool::get_or_init(|| {
             bevy::tasks::TaskPool::new()
@@ -1701,7 +1709,7 @@ mod tests {
                     assert_eq!(
                         result.get_block(x, y, z),
                         reference.get_block(x, y, z),
-                        "Block mismatch at ({x}, {y}, {z}) â€” disk fallback should generate identically"
+                        "Block mismatch at ({x}, {y}, {z}) - disk fallback should generate identically"
                     );
                 }
             }
@@ -1789,7 +1797,7 @@ mod tests {
         assert_eq!(metrics.total_chunks_loaded, 5);
         assert_eq!(metrics.chunks_loaded_since_last, 5);
 
-        // Refresh at t=2.0s â€” all 5 loads within the 2s window
+        // Refresh at t=2.0s â€" all 5 loads within the 2s window
         metrics.refresh(2.0);
         assert_eq!(metrics.chunks_loaded_since_last, 0); // reset by refresh
         assert!((metrics.avg_load_time_ms - 50.0).abs() < 0.01); // 0.05s = 50ms
@@ -1805,7 +1813,7 @@ mod tests {
             metrics.record_load(0.01, 1.0);
         }
 
-        // Refresh at t=5.0 â€” all loads older than 2s window â†’ 0 chunks/sec
+        // Refresh at t=5.0 â€" all loads older than 2s window â†' 0 chunks/sec
         metrics.refresh(5.0);
         assert_eq!(metrics.chunks_per_second, 0.0);
         // avg_load_time_ms still valid (rolling buffer)
@@ -1847,7 +1855,7 @@ mod tests {
         // Record loads with varying durations
         metrics.record_load(0.01, 1.0); // 10ms
         metrics.record_load(0.05, 1.1); // 50ms
-        metrics.record_load(0.20, 1.2); // 200ms — peak
+        metrics.record_load(0.20, 1.2); // 200ms - peak
         metrics.record_load(0.02, 1.3); // 20ms
 
         metrics.refresh(2.0);
