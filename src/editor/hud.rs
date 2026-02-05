@@ -42,6 +42,18 @@ impl Default for ChunkLoadingBarState {
     }
 }
 
+impl ChunkLoadingBarState {
+    /// Current opacity of the progress bar (0.0–1.0).
+    pub fn opacity(&self) -> f32 {
+        self.opacity
+    }
+
+    /// Whether the bar was in the loading state last frame.
+    pub fn was_loading(&self) -> bool {
+        self.was_loading
+    }
+}
+
 /// Plugin that adds the crosshair overlay, block target HUD, and chunk
 /// loading progress bar.
 ///
