@@ -701,24 +701,46 @@ pub fn compute_face_ao_with_neighbors(
 /// This is the primary meshing entry point used by the runtime pipeline.
 /// It eliminates visible seams at chunk boundaries by looking into adjacent
 /// chunk data when determining face visibility and AO.
+///
+/// Returns `(opaque_mesh, Option<water_mesh>)`. The opaque mesh contains all
+/// solid block faces and uses `AlphaMode::Opaque` for correct depth sorting.
+/// The optional water mesh contains only water block faces and uses
+/// `AlphaMode::Blend` for transparency. This split prevents the see-through
+/// terrain artifacts caused by rendering everything in the transparent pass.
 pub fn build_chunk_mesh_with_neighbors(
     chunk: &Chunk, atlas: Option<AtlasConfig>, neighbors: &ChunkNeighbors,
-) -> Mesh {
+) -> (Mesh, Option<Mesh>) {
     build_chunk_mesh_neighbors_inner(chunk, atlas, neighbors)
 }
 
 /// Inner greedy meshing with cross-chunk neighbor awareness.
+///
+/// Produces two meshes: opaque (solid blocks) and water (transparent).
+/// Water faces are directed to separate buffers so they can be rendered
+/// with `AlphaMode::Blend` on a child entity, while the main chunk entity
+/// uses `AlphaMode::Opaque` for reliable depth writes.
 #[allow(clippy::needless_range_loop)]
 fn build_chunk_mesh_neighbors_inner(
     chunk: &Chunk, atlas: Option<AtlasConfig>, neighbors: &ChunkNeighbors,
-) -> Mesh {
+) -> (Mesh, Option<Mesh>) {
     let world_offset = chunk.world_position();
+
+    // Opaque mesh buffers (solid blocks)
     let mut positions: Vec<[f32; 3]> = Vec::new();
     let mut normals: Vec<[f32; 3]> = Vec::new();
     let mut colors: Vec<[f32; 4]> = Vec::new();
     let mut uvs: Vec<[f32; 2]> = Vec::new();
     let mut uv1s: Vec<[f32; 2]> = Vec::new();
     let mut indices: Vec<u32> = Vec::new();
+
+    // Water mesh buffers (transparent blocks)
+    let mut w_positions: Vec<[f32; 3]> = Vec::new();
+    let mut w_normals: Vec<[f32; 3]> = Vec::new();
+    let mut w_colors: Vec<[f32; 4]> = Vec::new();
+    let mut w_uvs: Vec<[f32; 2]> = Vec::new();
+    let mut w_uv1s: Vec<[f32; 2]> = Vec::new();
+    let mut w_indices: Vec<u32> = Vec::new();
+
     let faces = [Face::Top, Face::Bottom, Face::North, Face::South, Face::East, Face::West];
     for face in faces {
         for slice in 0..CHUNK_SIZE {
@@ -764,16 +786,29 @@ fn build_chunk_mesh_neighbors_inner(
                         Face::East | Face::West => (slice, v, u),
                     };
                     let color = block_color(block_type);
-                    add_greedy_face(
-                        &mut positions, &mut normals, &mut colors,
-                        &mut uvs, &mut uv1s, &mut indices,
-                        x as f32, y as f32, z as f32, w as f32, h as f32,
-                        face, color, ao, atlas, block_type, world_offset,
-                    );
+
+                    // Route water faces to the water mesh buffers
+                    if block_type == BlockType::Water {
+                        add_greedy_face(
+                            &mut w_positions, &mut w_normals, &mut w_colors,
+                            &mut w_uvs, &mut w_uv1s, &mut w_indices,
+                            x as f32, y as f32, z as f32, w as f32, h as f32,
+                            face, color, ao, atlas, block_type, world_offset,
+                        );
+                    } else {
+                        add_greedy_face(
+                            &mut positions, &mut normals, &mut colors,
+                            &mut uvs, &mut uv1s, &mut indices,
+                            x as f32, y as f32, z as f32, w as f32, h as f32,
+                            face, color, ao, atlas, block_type, world_offset,
+                        );
+                    }
                 }
             }
         }
     }
+
+    // Build opaque mesh
     let mut mesh = Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::default());
     mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
     mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, normals);
@@ -781,7 +816,22 @@ fn build_chunk_mesh_neighbors_inner(
     mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, uvs);
     if atlas.is_some() { mesh.insert_attribute(Mesh::ATTRIBUTE_UV_1, uv1s); }
     mesh.insert_indices(Indices::U32(indices));
-    mesh
+
+    // Build water mesh (only if there are water faces)
+    let water_mesh = if !w_positions.is_empty() {
+        let mut wm = Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::default());
+        wm.insert_attribute(Mesh::ATTRIBUTE_POSITION, w_positions);
+        wm.insert_attribute(Mesh::ATTRIBUTE_NORMAL, w_normals);
+        wm.insert_attribute(Mesh::ATTRIBUTE_COLOR, w_colors);
+        wm.insert_attribute(Mesh::ATTRIBUTE_UV_0, w_uvs);
+        if atlas.is_some() { wm.insert_attribute(Mesh::ATTRIBUTE_UV_1, w_uv1s); }
+        wm.insert_indices(Indices::U32(w_indices));
+        Some(wm)
+    } else {
+        None
+    };
+
+    (mesh, water_mesh)
 }
 
 /// Build a mesh for a chunk using **greedy meshing**.
