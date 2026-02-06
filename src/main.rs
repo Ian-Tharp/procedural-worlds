@@ -43,6 +43,7 @@ fn main() {
         // Our custom plugins
         .add_plugins(editor::EditorPlugin)
         .add_plugins(editor::DebugOverlayPlugin)
+        .add_plugins(editor::DebugConsolePlugin)
         .add_plugins(editor::ChunkDebugPlugin)
         .add_plugins(editor::PerformanceDashboardPlugin)
         .add_plugins(editor::HudPlugin)
