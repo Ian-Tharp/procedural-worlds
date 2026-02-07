@@ -319,6 +319,20 @@ pub struct DebugConfig {
     /// reducing overhead in release / performance-sensitive scenarios.
     /// The total-chunks-loaded counter is always maintained regardless.
     pub collect_chunk_metrics: bool,
+    /// Whether the performance dashboard (F8) is visible on startup (default: false).
+    pub dashboard_visible: bool,
+    /// Whether the minimal performance overlay (F2) is visible on startup (default: false).
+    pub perf_overlay_visible: bool,
+    /// Whether the system profiler (F4) is visible on startup (default: false).
+    pub profiler_visible: bool,
+    /// FPS threshold below which a warning is shown (default: 60.0).
+    pub fps_warning_threshold: f64,
+    /// FPS threshold below which a critical warning is shown (default: 30.0).
+    pub fps_critical_threshold: f64,
+    /// Memory threshold (MB) above which a warning is shown (default: 2048.0).
+    pub memory_warning_threshold_mb: f64,
+    /// Memory threshold (MB) above which a critical warning is shown (default: 4096.0).
+    pub memory_critical_threshold_mb: f64,
 }
 
 /// Save system configuration
@@ -501,6 +515,13 @@ impl Default for DebugConfig {
             show_chunks: true,
             show_render: true,
             collect_chunk_metrics: true,
+            dashboard_visible: false,
+            perf_overlay_visible: false,
+            profiler_visible: false,
+            fps_warning_threshold: 60.0,
+            fps_critical_threshold: 30.0,
+            memory_warning_threshold_mb: 2048.0,
+            memory_critical_threshold_mb: 4096.0,
         }
     }
 }
