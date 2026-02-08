@@ -6,6 +6,7 @@ pub mod debug_console;
 pub mod debug_overlay;
 pub mod hud;
 pub mod performance;
+pub mod worldgen_panel;
 
 pub use block_highlight::BlockHighlightPlugin;
 pub use chunk_debug::ChunkDebugPlugin;
@@ -13,7 +14,9 @@ pub use debug_console::DebugConsolePlugin;
 pub use debug_overlay::DebugOverlayPlugin;
 pub use hud::HudPlugin;
 pub use performance::PerformanceDashboardPlugin;
+pub use worldgen_panel::WorldGenPanelPlugin;
 
+use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 use bevy::diagnostic::FrameTimeDiagnosticsPlugin;
 use bevy_egui::{egui, EguiContexts};
@@ -25,6 +28,8 @@ use crate::engine::lighting::DayNightCycle;
 use crate::engine::profiler::ProfilerState;
 use crate::engine::raycast::CurrentTarget;
 use crate::world::ChunkLoadMetrics;
+
+use worldgen_panel::{WorldGenPanelState, RegenerateWorldEvent};
 
 /// System set for editor UI (runs in Update).
 ///
@@ -40,6 +45,7 @@ impl Plugin for EditorPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins(FrameTimeDiagnosticsPlugin::default())
             .add_plugins(BlockHighlightPlugin)
+            .add_plugins(WorldGenPanelPlugin)
             .init_resource::<EditorState>()
             .add_systems(
                 Update,
@@ -492,45 +498,58 @@ fn scope_time_color(us: f64) -> egui::Color32 {
     }
 }
 
+/// Bundled panel state resources to reduce system parameter count
+#[derive(SystemParam)]
+pub struct EditorPanelStates<'w> {
+    pub editor: ResMut<'w, EditorState>,
+    pub overlay: ResMut<'w, debug_overlay::DebugOverlayState>,
+    pub chunk_debug: ResMut<'w, chunk_debug::ChunkDebugState>,
+    pub audio: ResMut<'w, AudioSettingsPanelState>,
+    pub worldgen: ResMut<'w, WorldGenPanelState>,
+    pub regenerate_events: EventWriter<'w, RegenerateWorldEvent>,
+}
+
+/// Bundled optional resources to reduce system parameter count
+#[derive(SystemParam)]
+pub struct EditorOptionalRes<'w> {
+    pub profiler: Option<Res<'w, ProfilerState>>,
+    pub physics: Option<Res<'w, crate::physics::PlayerPhysics>>,
+    pub current_target: Option<Res<'w, CurrentTarget>>,
+    pub day_night: Option<Res<'w, DayNightCycle>>,
+    pub action_states: Option<Res<'w, ActionStates>>,
+    pub load_metrics: Option<Res<'w, ChunkLoadMetrics>>,
+}
+
 /// Main editor UI system
 #[allow(clippy::too_many_arguments)]
 fn editor_ui_system(
     mut contexts: EguiContexts,
-    mut editor_state: ResMut<EditorState>,
-    mut overlay_state: ResMut<debug_overlay::DebugOverlayState>,
-    mut chunk_debug_state: ResMut<chunk_debug::ChunkDebugState>,
-    mut audio_panel_state: ResMut<AudioSettingsPanelState>,
-    _perf_dashboard: Option<Res<performance::PerformanceDashboard>>,
-    profiler_state: Option<Res<ProfilerState>>,
+    mut panels: EditorPanelStates,
+    optional: EditorOptionalRes,
     camera_query: Query<&GlobalTransform, With<Camera3d>>,
     mut chunk_manager: Option<ResMut<crate::world::ChunkManager>>,
-    physics: Option<Res<crate::physics::PlayerPhysics>>,
     player_transform_query: Query<&GlobalTransform, With<Player>>,
     mut player_query: Query<&mut Movement, With<Player>>,
-    current_target: Option<Res<CurrentTarget>>,
-    day_night: Option<Res<DayNightCycle>>,
-    action_states: Option<Res<ActionStates>>,
-    load_metrics: Option<Res<ChunkLoadMetrics>>,
 ) {
     // Update player position for display (world-space, robust to parenting)
     if let Ok(player_global) = player_transform_query.get_single() {
-        editor_state.player_position = player_global.translation();
+        panels.editor.player_position = player_global.translation();
     }
 
     // Update camera position and rotation for display (world-space)
     if let Ok(camera_global) = camera_query.get_single() {
-        editor_state.camera_position = camera_global.translation();
+        panels.editor.camera_position = camera_global.translation();
         // Extract yaw from camera rotation
         let camera_transform = camera_global.compute_transform();
         let (yaw, _pitch, _roll) = camera_transform
             .rotation
             .to_euler(bevy::math::EulerRot::YXZ);
-        editor_state.camera_yaw = yaw.to_degrees();
+        panels.editor.camera_yaw = yaw.to_degrees();
     }
 
     // Update chunk count
     if let Some(ref cm) = chunk_manager {
-        editor_state.chunk_count = cm.chunks.len();
+        panels.editor.chunk_count = cm.chunks.len();
     }
 
     // Top menu bar
@@ -556,12 +575,12 @@ fn editor_ui_system(
             });
 
             ui.menu_button("View", |ui| {
-                ui.checkbox(&mut editor_state.show_inspector, "Inspector");
-                ui.checkbox(&mut editor_state.show_world_settings, "World Settings");
+                ui.checkbox(&mut panels.editor.show_inspector, "Inspector");
+                ui.checkbox(&mut panels.editor.show_world_settings, "World Settings");
                 ui.separator();
-                ui.checkbox(&mut audio_panel_state.visible, "Audio Settings (F9)");
+                ui.checkbox(&mut panels.audio.visible, "Audio Settings (F9)");
                 ui.separator();
-                ui.checkbox(&mut overlay_state.visible, "Debug (F3)");
+                ui.checkbox(&mut panels.overlay.visible, "Debug (F3)");
             });
 
             ui.menu_button("Help", |ui| {
@@ -573,7 +592,7 @@ fn editor_ui_system(
 
             // Right-aligned FPS counter (smoothed, from debug overlay state)
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                let fps = overlay_state.cached_fps;
+                let fps = panels.overlay.cached_fps;
                 let fps_color = if fps >= 60.0 {
                     egui::Color32::from_rgb(100, 255, 100)
                 } else if fps >= 30.0 {
@@ -587,7 +606,7 @@ fn editor_ui_system(
     });
 
     // Left panel - Inspector (includes debug sections when enabled)
-    if editor_state.show_inspector {
+    if panels.editor.show_inspector {
         egui::SidePanel::left("inspector")
             .default_width(280.0)
             .show(contexts.ctx_mut(), |ui| {
@@ -599,19 +618,19 @@ fn editor_ui_system(
                     egui::CollapsingHeader::new("Player")
                         .default_open(true)
                         .show(ui, |ui| {
-                            let pos = editor_state.player_position;
+                            let pos = panels.editor.player_position;
                             ui.label(format!(
                                 "Feet: ({:.1}, {:.1}, {:.1})",
                                 pos.x, pos.y, pos.z
                             ));
-                            let cam = editor_state.camera_position;
+                            let cam = panels.editor.camera_position;
                             ui.label(format!(
                                 "Camera: ({:.1}, {:.1}, {:.1})",
                                 cam.x, cam.y, cam.z
                             ));
 
                             // Compass direction
-                            let cardinal = yaw_to_cardinal(editor_state.camera_yaw);
+                            let cardinal = yaw_to_cardinal(panels.editor.camera_yaw);
                             ui.horizontal(|ui| {
                                 ui.label("Facing:");
                                 ui.label(
@@ -619,7 +638,7 @@ fn editor_ui_system(
                                         .strong()
                                         .color(egui::Color32::from_rgb(100, 200, 255))
                                 );
-                                ui.label(format!("({:.0}°)", editor_state.camera_yaw));
+                                ui.label(format!("({:.0}°)", panels.editor.camera_yaw));
                             });
 
                             ui.separator();
@@ -647,7 +666,7 @@ fn editor_ui_system(
 
                             ui.label("Controls:");
                             ui.label("  WASD - Move");
-                            if let Some(ref phys) = physics {
+                            if let Some(ref phys) = optional.physics {
                                 if phys.flying {
                                     ui.label("  Space/Ctrl - Up/Down");
                                 } else {
@@ -673,8 +692,15 @@ fn editor_ui_system(
                             ui.label("No selection");
                         });
 
+                    ui.separator();
+
+                    // ── World Generation Config Panel ──
+                    if worldgen_panel::draw_worldgen_panel(ui, &mut panels.worldgen) {
+                        panels.regenerate_events.send(RegenerateWorldEvent);
+                    }
+
                     // ── Debug sections (toggled via F3 or View menu) ──
-                    if overlay_state.visible {
+                    if panels.overlay.visible {
                         ui.separator();
                         ui.heading("Debug");
                         ui.separator();
@@ -687,25 +713,25 @@ fn editor_ui_system(
 
                         debug_overlay::draw_debug_ui(
                             ui,
-                            &mut overlay_state,
-                            editor_state.player_position,
+                            &mut panels.overlay,
+                            panels.editor.player_position,
                             chunk_count,
                             render_distance,
                             ld,
                             vert_up,
                             vert_down,
-                            current_target.as_deref(),
-                            day_night.as_deref(),
-                            action_states.as_deref(),
-                            load_metrics.as_deref(),
+                            optional.current_target.as_deref(),
+                            optional.day_night.as_deref(),
+                            optional.action_states.as_deref(),
+                            optional.load_metrics.as_deref(),
                         );
 
                         // Chunk border legend (shows when F4 overlay is active)
-                        if chunk_debug_state.visible {
+                        if panels.chunk_debug.visible {
                             ui.separator();
                             chunk_debug::draw_chunk_state_legend(
                                 ui,
-                                &mut chunk_debug_state,
+                                &mut panels.chunk_debug,
                             );
                         }
                     }
@@ -714,7 +740,7 @@ fn editor_ui_system(
     }
 
     // Right panel - World Settings (no bottom debug bar — all debug info is in the inspector now)
-    if editor_state.show_world_settings {
+    if panels.editor.show_world_settings {
         egui::SidePanel::right("world_settings")
             .default_width(250.0)
             .show(contexts.ctx_mut(), |ui| {
@@ -761,7 +787,7 @@ fn editor_ui_system(
     // the 16-parameter system limit.
 
     // ── Floating Profiler Overlay (F4) ──
-    if let Some(ref profiler) = profiler_state
+    if let Some(ref profiler) = optional.profiler
         && profiler.overlay_visible
     {
         draw_profiler_overlay(contexts.ctx_mut(), profiler);
