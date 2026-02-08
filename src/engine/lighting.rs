@@ -379,10 +379,16 @@ fn update_shadow_casters(
             let dz = (chunk.position.z - cam_chunk_z).abs();
             let dist = dx.max(dz);
 
+            // Use try_insert to safely handle entities that may be despawned
+            // by other systems (e.g., world regeneration). remove() is already
+            // safe if the component doesn't exist.
             if dist > shadow_dist {
-                commands.entity(entity).insert(NotShadowCaster);
+                commands.entity(entity).try_insert(NotShadowCaster);
             } else {
-                commands.entity(entity).remove::<NotShadowCaster>();
+                // This may fail silently if entity is despawned, which is fine
+                if let Some(mut entity_commands) = commands.get_entity(entity) {
+                    entity_commands.remove::<NotShadowCaster>();
+                }
             }
         }
     }
