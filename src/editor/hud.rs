@@ -227,8 +227,9 @@ fn hud_system(
                 egui::Frame::none()
                     .fill(egui::Color32::from_rgba_premultiplied(0, 0, 0, 160))
                     .rounding(egui::Rounding::same(4.0))
-                    .inner_margin(egui::Margin::symmetric(6.0, 3.0))
+                    .inner_margin(egui::Margin::symmetric(10.0, 5.0))
                     .show(ui, |ui| {
+                        ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
                         ui.label(
                             egui::RichText::new(label_text)
                                 .color(egui::Color32::from_rgb(220, 220, 220))
@@ -243,16 +244,17 @@ fn hud_system(
         let sel_text = format!("Selected: {}", sel.block_type.display_name());
 
         egui::Area::new(egui::Id::new("hud_selected_block"))
-            .fixed_pos(egui::pos2(center.x, screen_rect.max.y - 40.0))
+            .fixed_pos(egui::pos2(center.x, screen_rect.max.y - 48.0))
             .anchor(egui::Align2::CENTER_BOTTOM, egui::vec2(0.0, 0.0))
             .order(egui::Order::Foreground)
             .interactable(false)
             .show(ctx, |ui| {
                 egui::Frame::none()
                     .fill(egui::Color32::from_rgba_premultiplied(0, 0, 0, 180))
-                    .rounding(egui::Rounding::same(4.0))
-                    .inner_margin(egui::Margin::symmetric(10.0, 5.0))
+                    .rounding(egui::Rounding::same(6.0))
+                    .inner_margin(egui::Margin::symmetric(14.0, 8.0))
                     .show(ui, |ui| {
+                        ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
                         ui.label(
                             egui::RichText::new(sel_text)
                                 .color(egui::Color32::from_rgb(255, 255, 200))
@@ -384,9 +386,10 @@ fn chunk_loading_progress_system(
             // Background frame
             egui::Frame::none()
                 .fill(egui::Color32::from_rgba_unmultiplied(0, 0, 0, alpha / 2))
-                .rounding(egui::Rounding::same(6.0))
-                .inner_margin(egui::Margin::symmetric(10.0, 6.0))
+                .rounding(egui::Rounding::same(8.0))
+                .inner_margin(egui::Margin::symmetric(12.0, 8.0))
                 .show(ui, |ui| {
+                    ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
                     // Label above bar
                     ui.label(
                         egui::RichText::new(&label_text)
@@ -556,7 +559,7 @@ fn biome_indicator_system(
     let display_text = format!("{} {}", biome.icon(), biome.display_name());
 
     egui::Area::new(egui::Id::new("hud_biome_indicator"))
-        .fixed_pos(egui::pos2(screen_rect.center().x, 50.0))
+        .fixed_pos(egui::pos2(screen_rect.center().x, 24.0))
         .anchor(egui::Align2::CENTER_TOP, egui::vec2(0.0, 0.0))
         .order(egui::Order::Foreground)
         .interactable(false)
@@ -564,8 +567,9 @@ fn biome_indicator_system(
             egui::Frame::none()
                 .fill(egui::Color32::from_rgba_unmultiplied(0, 0, 0, alpha / 3))
                 .rounding(egui::Rounding::same(8.0))
-                .inner_margin(egui::Margin::symmetric(16.0, 8.0))
+                .inner_margin(egui::Margin::symmetric(20.0, 10.0))
                 .show(ui, |ui| {
+                    ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
                     ui.label(
                         egui::RichText::new(display_text)
                             .color(egui::Color32::from_rgba_unmultiplied(
