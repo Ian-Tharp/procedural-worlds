@@ -2,12 +2,14 @@
 
 pub mod block_highlight;
 pub mod chunk_debug;
+pub mod debug_console;
 pub mod debug_overlay;
 pub mod hud;
 pub mod performance;
 
 pub use block_highlight::BlockHighlightPlugin;
 pub use chunk_debug::ChunkDebugPlugin;
+pub use debug_console::DebugConsolePlugin;
 pub use debug_overlay::DebugOverlayPlugin;
 pub use hud::HudPlugin;
 pub use performance::PerformanceDashboardPlugin;
