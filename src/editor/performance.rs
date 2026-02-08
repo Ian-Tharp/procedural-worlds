@@ -6,12 +6,16 @@
 //! - Frame budget visualization (% of 16.67ms target)
 //! - Chunk loading throughput and latency
 //! - Process memory usage with trend detection
+//! - **Export to JSON/CSV** for external analysis
 //!
 //! Toggle with **F8**. Operates independently of the F3 debug overlay.
 
 use bevy::diagnostic::{DiagnosticsStore, FrameTimeDiagnosticsPlugin};
 use bevy::prelude::*;
 use bevy_egui::egui;
+use serde::{Deserialize, Serialize};
+use std::fs;
+use std::path::{Path, PathBuf};
 
 use crate::engine::memory;
 use crate::world::ChunkLoadMetrics;
@@ -35,9 +39,101 @@ const MEMORY_TREND_INTERVAL: f32 = 2.0;
 /// Number of memory snapshots kept for trend analysis.
 const MEMORY_TREND_SAMPLES: usize = 30;
 
+/// Default directory for performance metric exports.
+const EXPORTS_DIR: &str = "exports/performance";
+
+// ============================================================================
+// Export Types
+// ============================================================================
+
+/// Exportable snapshot of performance metrics.
+///
+/// This struct captures a point-in-time view of all dashboard metrics
+/// in a serializable format for JSON/CSV export.
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct MetricsSnapshot {
+    /// ISO 8601 timestamp when the snapshot was taken.
+    pub timestamp: String,
+    /// Current FPS (smoothed).
+    pub fps: f64,
+    /// Current frame time in milliseconds.
+    pub frame_time_ms: f64,
+    /// Minimum frame time in the graph window.
+    pub frame_time_min_ms: f32,
+    /// Maximum frame time in the graph window.
+    pub frame_time_max_ms: f32,
+    /// Average frame time in the graph window.
+    pub frame_time_avg_ms: f32,
+    /// 1% low frame time (P99).
+    pub p1_frame_time_ms: f32,
+    /// 0.1% low frame time (P99.9).
+    pub p01_frame_time_ms: f32,
+    /// 1% low FPS.
+    pub fps_1_low: f32,
+    /// 0.1% low FPS.
+    pub fps_01_low: f32,
+    /// Frame budget usage as percentage.
+    pub budget_usage_percent: f64,
+    /// Number of frames over budget in the window.
+    pub frames_over_budget: u32,
+    /// Current RSS memory in bytes.
+    pub memory_rss_bytes: usize,
+    /// Peak RSS memory in bytes (if available).
+    pub memory_peak_bytes: Option<usize>,
+    /// Memory trend in MB/s.
+    pub memory_trend_mb_per_sec: f64,
+    /// Active chunk count (if provided).
+    pub active_chunks: Option<usize>,
+    /// Chunks loaded per second (if metrics available).
+    pub chunks_per_second: Option<f32>,
+    /// Average chunk load time in ms (if metrics available).
+    pub avg_chunk_load_time_ms: Option<f32>,
+}
+
+/// Result of an export operation.
+#[derive(Debug)]
+pub struct ExportResult {
+    /// Path where the file was saved.
+    pub path: PathBuf,
+    /// Format of the export.
+    pub format: ExportFormat,
+}
+
+/// Supported export formats.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExportFormat {
+    Json,
+    Csv,
+}
+
+impl std::fmt::Display for ExportFormat {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ExportFormat::Json => write!(f, "JSON"),
+            ExportFormat::Csv => write!(f, "CSV"),
+        }
+    }
+}
+
 // ============================================================================
 // Resource
 // ============================================================================
+
+/// Pending export request for the dashboard.
+///
+/// Since the drawing function uses an immutable borrow, we queue export
+/// requests here and process them in a system with mutable access.
+#[derive(Resource, Default)]
+pub struct PendingExport {
+    /// Export JSON metrics snapshot.
+    pub export_json: bool,
+    /// Export CSV metrics snapshot.
+    pub export_csv: bool,
+    /// Export frame history CSV.
+    pub export_frame_history: bool,
+    /// Last export result message (for UI feedback).
+    pub last_result: Option<String>,
+}
 
 /// Central resource tracking all dashboard-level performance metrics.
 #[derive(Resource)]
@@ -236,6 +332,239 @@ impl PerformanceDashboard {
             }
         }
     }
+
+    /// Create a snapshot of current metrics for export.
+    ///
+    /// Optionally includes chunk metrics if provided.
+    pub fn create_snapshot(
+        &self,
+        chunk_count: Option<usize>,
+        load_metrics: Option<&ChunkLoadMetrics>,
+    ) -> MetricsSnapshot {
+        // Generate ISO 8601 timestamp
+        let timestamp = generate_timestamp();
+
+        MetricsSnapshot {
+            timestamp,
+            fps: self.fps,
+            frame_time_ms: self.frame_time_ms,
+            frame_time_min_ms: self.frame_time_min_ms,
+            frame_time_max_ms: self.frame_time_max_ms,
+            frame_time_avg_ms: self.frame_time_avg_ms,
+            p1_frame_time_ms: self.p1_frame_time_ms,
+            p01_frame_time_ms: self.p01_frame_time_ms,
+            fps_1_low: self.fps_1_low,
+            fps_01_low: self.fps_01_low,
+            budget_usage_percent: self.budget_usage * 100.0,
+            frames_over_budget: self.frames_over_budget,
+            memory_rss_bytes: self.current_rss_bytes,
+            memory_peak_bytes: self.peak_rss_bytes,
+            memory_trend_mb_per_sec: self.memory_trend_mb_per_sec,
+            active_chunks: chunk_count,
+            chunks_per_second: load_metrics.map(|m| m.chunks_per_second),
+            avg_chunk_load_time_ms: load_metrics.map(|m| m.avg_load_time_ms),
+        }
+    }
+
+    /// Export current metrics to a JSON file.
+    ///
+    /// Returns the path where the file was saved.
+    pub fn export_json(
+        &self,
+        chunk_count: Option<usize>,
+        load_metrics: Option<&ChunkLoadMetrics>,
+    ) -> Result<ExportResult, String> {
+        let snapshot = self.create_snapshot(chunk_count, load_metrics);
+        let json = serde_json::to_string_pretty(&snapshot)
+            .map_err(|e| format!("Failed to serialize metrics: {}", e))?;
+
+        let path = generate_export_path(ExportFormat::Json);
+        ensure_export_dir(&path)?;
+
+        fs::write(&path, json).map_err(|e| format!("Failed to write file: {}", e))?;
+
+        info!("Exported performance metrics to {}", path.display());
+        Ok(ExportResult {
+            path,
+            format: ExportFormat::Json,
+        })
+    }
+
+    /// Export current metrics to a CSV file.
+    ///
+    /// Returns the path where the file was saved.
+    pub fn export_csv(
+        &self,
+        chunk_count: Option<usize>,
+        load_metrics: Option<&ChunkLoadMetrics>,
+    ) -> Result<ExportResult, String> {
+        let snapshot = self.create_snapshot(chunk_count, load_metrics);
+        let csv = snapshot_to_csv(&snapshot);
+
+        let path = generate_export_path(ExportFormat::Csv);
+        ensure_export_dir(&path)?;
+
+        fs::write(&path, csv).map_err(|e| format!("Failed to write file: {}", e))?;
+
+        info!("Exported performance metrics to {}", path.display());
+        Ok(ExportResult {
+            path,
+            format: ExportFormat::Csv,
+        })
+    }
+
+    /// Export frame time history to CSV for detailed analysis.
+    ///
+    /// This exports the raw frame time samples rather than aggregated metrics.
+    pub fn export_frame_history_csv(&self) -> Result<ExportResult, String> {
+        let history = self.ordered_graph_history();
+        let mut csv = String::from("sample_index,frame_time_ms\n");
+
+        for (i, ft) in history.iter().enumerate() {
+            csv.push_str(&format!("{},{:.3}\n", i, ft));
+        }
+
+        let path = generate_export_path_with_suffix("frame_history", ExportFormat::Csv);
+        ensure_export_dir(&path)?;
+
+        fs::write(&path, csv).map_err(|e| format!("Failed to write file: {}", e))?;
+
+        info!("Exported frame history to {}", path.display());
+        Ok(ExportResult {
+            path,
+            format: ExportFormat::Csv,
+        })
+    }
+}
+
+// ============================================================================
+// Export Helpers
+// ============================================================================
+
+/// Generate ISO 8601 timestamp string.
+fn generate_timestamp() -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    
+    let now = SystemTime::now();
+    let duration = now.duration_since(UNIX_EPOCH).unwrap_or_default();
+    let secs = duration.as_secs();
+    
+    // Calculate date/time components from Unix timestamp
+    // This is a simplified calculation - for production, consider using chrono crate
+    let days = secs / 86400;
+    let remaining = secs % 86400;
+    let hours = remaining / 3600;
+    let minutes = (remaining % 3600) / 60;
+    let seconds = remaining % 60;
+    
+    // Approximate year/month/day (simplified leap year handling)
+    let mut year = 1970;
+    let mut remaining_days = days as i64;
+    
+    loop {
+        let days_in_year = if year % 4 == 0 && (year % 100 != 0 || year % 400 == 0) {
+            366
+        } else {
+            365
+        };
+        if remaining_days < days_in_year {
+            break;
+        }
+        remaining_days -= days_in_year;
+        year += 1;
+    }
+    
+    let days_in_months: [i64; 12] = if year % 4 == 0 && (year % 100 != 0 || year % 400 == 0) {
+        [31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
+    } else {
+        [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
+    };
+    
+    let mut month = 1;
+    for &days in &days_in_months {
+        if remaining_days < days {
+            break;
+        }
+        remaining_days -= days;
+        month += 1;
+    }
+    let day = remaining_days + 1;
+    
+    format!(
+        "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z",
+        year, month, day, hours, minutes, seconds
+    )
+}
+
+/// Generate a timestamped export file path.
+fn generate_export_path(format: ExportFormat) -> PathBuf {
+    generate_export_path_with_suffix("metrics", format)
+}
+
+/// Generate a timestamped export file path with a custom suffix.
+fn generate_export_path_with_suffix(suffix: &str, format: ExportFormat) -> PathBuf {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    
+    let now = SystemTime::now();
+    let duration = now.duration_since(UNIX_EPOCH).unwrap_or_default();
+    let timestamp = duration.as_secs();
+
+    let extension = match format {
+        ExportFormat::Json => "json",
+        ExportFormat::Csv => "csv",
+    };
+
+    PathBuf::from(EXPORTS_DIR).join(format!("perf_{}_{}.{}", suffix, timestamp, extension))
+}
+
+/// Ensure the export directory exists.
+fn ensure_export_dir(path: &Path) -> Result<(), String> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|e| format!("Failed to create export directory: {}", e))?;
+    }
+    Ok(())
+}
+
+/// Convert a metrics snapshot to CSV format.
+fn snapshot_to_csv(snapshot: &MetricsSnapshot) -> String {
+    let mut csv = String::new();
+
+    // Header
+    csv.push_str("metric,value\n");
+
+    // Values
+    csv.push_str(&format!("timestamp,{}\n", snapshot.timestamp));
+    csv.push_str(&format!("fps,{:.2}\n", snapshot.fps));
+    csv.push_str(&format!("frame_time_ms,{:.3}\n", snapshot.frame_time_ms));
+    csv.push_str(&format!("frame_time_min_ms,{:.3}\n", snapshot.frame_time_min_ms));
+    csv.push_str(&format!("frame_time_max_ms,{:.3}\n", snapshot.frame_time_max_ms));
+    csv.push_str(&format!("frame_time_avg_ms,{:.3}\n", snapshot.frame_time_avg_ms));
+    csv.push_str(&format!("p1_frame_time_ms,{:.3}\n", snapshot.p1_frame_time_ms));
+    csv.push_str(&format!("p01_frame_time_ms,{:.3}\n", snapshot.p01_frame_time_ms));
+    csv.push_str(&format!("fps_1_low,{:.2}\n", snapshot.fps_1_low));
+    csv.push_str(&format!("fps_01_low,{:.2}\n", snapshot.fps_01_low));
+    csv.push_str(&format!("budget_usage_percent,{:.2}\n", snapshot.budget_usage_percent));
+    csv.push_str(&format!("frames_over_budget,{}\n", snapshot.frames_over_budget));
+    csv.push_str(&format!("memory_rss_bytes,{}\n", snapshot.memory_rss_bytes));
+    csv.push_str(&format!(
+        "memory_peak_bytes,{}\n",
+        snapshot.memory_peak_bytes.map_or(String::new(), |v| v.to_string())
+    ));
+    csv.push_str(&format!("memory_trend_mb_per_sec,{:.4}\n", snapshot.memory_trend_mb_per_sec));
+    csv.push_str(&format!(
+        "active_chunks,{}\n",
+        snapshot.active_chunks.map_or(String::new(), |v| v.to_string())
+    ));
+    csv.push_str(&format!(
+        "chunks_per_second,{}\n",
+        snapshot.chunks_per_second.map_or(String::new(), |v| format!("{:.2}", v))
+    ));
+    csv.push_str(&format!(
+        "avg_chunk_load_time_ms,{}\n",
+        snapshot.avg_chunk_load_time_ms.map_or(String::new(), |v| format!("{:.2}", v))
+    ));
+
+    csv
 }
 
 // ============================================================================
@@ -280,7 +609,7 @@ pub fn update_performance_dashboard(
     }
 }
 
-/// Toggle dashboard visibility with F4.
+/// Toggle dashboard visibility with F8.
 pub fn dashboard_keyboard_input(
     keyboard: Res<ButtonInput<KeyCode>>,
     mut dashboard: ResMut<PerformanceDashboard>,
@@ -290,12 +619,92 @@ pub fn dashboard_keyboard_input(
     }
 }
 
+/// Standalone system that renders the dashboard with export controls.
+///
+/// This is separate from the main editor UI to avoid the 16-parameter limit.
+/// Runs after the main editor UI system.
+pub fn render_dashboard_with_exports(
+    mut contexts: bevy_egui::EguiContexts,
+    dashboard: Res<PerformanceDashboard>,
+    mut pending: ResMut<PendingExport>,
+    chunk_manager: Option<Res<crate::world::ChunkManager>>,
+    load_metrics: Option<Res<ChunkLoadMetrics>>,
+) {
+    if !dashboard.visible {
+        return;
+    }
+
+    let chunk_count = chunk_manager.as_ref().map(|cm| cm.chunks.len()).unwrap_or(0);
+    draw_performance_dashboard(
+        contexts.ctx_mut(),
+        &dashboard,
+        chunk_count,
+        load_metrics.as_deref(),
+        Some(&mut pending),
+    );
+}
+
+/// Process pending export requests.
+///
+/// Runs after the UI system to handle export button clicks.
+pub fn process_pending_exports(
+    dashboard: Res<PerformanceDashboard>,
+    mut pending: ResMut<PendingExport>,
+    chunk_manager: Option<Res<crate::world::ChunkManager>>,
+    load_metrics: Option<Res<ChunkLoadMetrics>>,
+) {
+    let chunk_count = chunk_manager.as_ref().map(|cm| cm.chunks.len());
+
+    if pending.export_json {
+        pending.export_json = false;
+        match dashboard.export_json(chunk_count, load_metrics.as_deref()) {
+            Ok(result) => {
+                pending.last_result = Some(format!("✓ Exported to {}", result.path.display()));
+            }
+            Err(e) => {
+                pending.last_result = Some(format!("✗ Export failed: {}", e));
+                error!("Export failed: {}", e);
+            }
+        }
+    }
+
+    if pending.export_csv {
+        pending.export_csv = false;
+        match dashboard.export_csv(chunk_count, load_metrics.as_deref()) {
+            Ok(result) => {
+                pending.last_result = Some(format!("✓ Exported to {}", result.path.display()));
+            }
+            Err(e) => {
+                pending.last_result = Some(format!("✗ Export failed: {}", e));
+                error!("Export failed: {}", e);
+            }
+        }
+    }
+
+    if pending.export_frame_history {
+        pending.export_frame_history = false;
+        match dashboard.export_frame_history_csv() {
+            Ok(result) => {
+                pending.last_result = Some(format!("✓ Exported to {}", result.path.display()));
+            }
+            Err(e) => {
+                pending.last_result = Some(format!("✗ Export failed: {}", e));
+                error!("Export failed: {}", e);
+            }
+        }
+    }
+}
+
 /// Render the floating performance dashboard window.
+///
+/// Optionally takes a `pending_export` to handle export button clicks.
+/// Pass `None` if export controls are not needed.
 pub fn draw_performance_dashboard(
     ui_ctx: &mut egui::Context,
     dashboard: &PerformanceDashboard,
     chunk_count: usize,
     load_metrics: Option<&ChunkLoadMetrics>,
+    pending_export: Option<&mut PendingExport>,
 ) {
     egui::Window::new("⚡ Performance Dashboard")
         .default_pos([400.0, 20.0])
@@ -586,6 +995,49 @@ pub fn draw_performance_dashboard(
                 });
 
             ui.separator();
+
+            // ── Export controls ─────────────────────────────
+            if let Some(pending) = pending_export {
+                egui::CollapsingHeader::new("📤 Export")
+                    .default_open(false)
+                    .show(ui, |ui| {
+                        // Show last result if available
+                        if let Some(ref result) = pending.last_result {
+                            let color = if result.starts_with('✓') {
+                                egui::Color32::from_rgb(100, 255, 100)
+                            } else {
+                                egui::Color32::from_rgb(255, 100, 100)
+                            };
+                            ui.colored_label(color, result);
+                            ui.add_space(4.0);
+                        }
+
+                        ui.horizontal(|ui| {
+                            ui.label("Metrics:");
+                            if ui.button("JSON").clicked() {
+                                pending.export_json = true;
+                                pending.last_result = None;
+                            }
+                            if ui.button("CSV").clicked() {
+                                pending.export_csv = true;
+                                pending.last_result = None;
+                            }
+                        });
+
+                        ui.horizontal(|ui| {
+                            ui.label("Frame history:");
+                            if ui.button("CSV (raw)").clicked() {
+                                pending.export_frame_history = true;
+                                pending.last_result = None;
+                            }
+                        });
+
+                        ui.small(format!("Saves to: {}/", EXPORTS_DIR));
+                    });
+
+                ui.separator();
+            }
+
             ui.small("F8 toggle | Updates every frame");
         });
 }
@@ -629,9 +1081,16 @@ pub struct PerformanceDashboardPlugin;
 impl Plugin for PerformanceDashboardPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<PerformanceDashboard>()
+            .init_resource::<PendingExport>()
             .add_systems(
                 Update,
-                (update_performance_dashboard, dashboard_keyboard_input),
+                (
+                    update_performance_dashboard,
+                    dashboard_keyboard_input,
+                    render_dashboard_with_exports,
+                    process_pending_exports,
+                )
+                    .chain(),
             );
     }
 }
@@ -829,5 +1288,181 @@ mod tests {
         assert_eq!(green, egui::Color32::from_rgb(100, 255, 100));
         assert_eq!(yellow, egui::Color32::from_rgb(255, 255, 100));
         assert_eq!(red, egui::Color32::from_rgb(255, 100, 100));
+    }
+
+    // ========================================================================
+    // CSV Export and Metrics Snapshot Tests
+    // ========================================================================
+
+    #[test]
+    fn test_create_snapshot() {
+        let mut d = PerformanceDashboard::default();
+
+        // Set some test values
+        d.fps = 60.0;
+        d.frame_time_ms = 16.67;
+        d.frame_time_min_ms = 14.0;
+        d.frame_time_max_ms = 20.0;
+        d.frame_time_avg_ms = 16.5;
+        d.budget_usage = 1.0;
+        d.current_rss_bytes = 500_000_000;
+
+        let snapshot = d.create_snapshot(Some(100), None);
+
+        assert!((snapshot.fps - 60.0).abs() < 0.01);
+        assert!((snapshot.frame_time_ms - 16.67).abs() < 0.01);
+        assert_eq!(snapshot.active_chunks, Some(100));
+        assert_eq!(snapshot.memory_rss_bytes, 500_000_000);
+        assert!(snapshot.chunks_per_second.is_none());
+        assert!((snapshot.budget_usage_percent - 100.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_snapshot_to_csv_format() {
+        let snapshot = MetricsSnapshot {
+            timestamp: "2026-02-07T12:00:00Z".to_string(),
+            fps: 60.0,
+            frame_time_ms: 16.67,
+            frame_time_min_ms: 14.0,
+            frame_time_max_ms: 20.0,
+            frame_time_avg_ms: 16.5,
+            p1_frame_time_ms: 18.0,
+            p01_frame_time_ms: 19.0,
+            fps_1_low: 55.5,
+            fps_01_low: 52.6,
+            budget_usage_percent: 100.0,
+            frames_over_budget: 5,
+            memory_rss_bytes: 500_000_000,
+            memory_peak_bytes: Some(600_000_000),
+            memory_trend_mb_per_sec: 0.5,
+            active_chunks: Some(100),
+            chunks_per_second: Some(10.0),
+            avg_chunk_load_time_ms: Some(15.5),
+        };
+
+        let csv = snapshot_to_csv(&snapshot);
+
+        // Verify CSV structure
+        assert!(csv.starts_with("metric,value\n"));
+        assert!(csv.contains("fps,60.00\n"));
+        assert!(csv.contains("frame_time_ms,16.670\n"));
+        assert!(csv.contains("active_chunks,100\n"));
+        assert!(csv.contains("memory_rss_bytes,500000000\n"));
+        assert!(csv.contains("chunks_per_second,10.00\n"));
+    }
+
+    #[test]
+    fn test_snapshot_to_csv_handles_none_values() {
+        let snapshot = MetricsSnapshot {
+            timestamp: "2026-02-07T12:00:00Z".to_string(),
+            fps: 60.0,
+            frame_time_ms: 16.67,
+            frame_time_min_ms: 14.0,
+            frame_time_max_ms: 20.0,
+            frame_time_avg_ms: 16.5,
+            p1_frame_time_ms: 18.0,
+            p01_frame_time_ms: 19.0,
+            fps_1_low: 55.5,
+            fps_01_low: 52.6,
+            budget_usage_percent: 100.0,
+            frames_over_budget: 0,
+            memory_rss_bytes: 100_000_000,
+            memory_peak_bytes: None,
+            memory_trend_mb_per_sec: 0.0,
+            active_chunks: None,
+            chunks_per_second: None,
+            avg_chunk_load_time_ms: None,
+        };
+
+        let csv = snapshot_to_csv(&snapshot);
+
+        // None values should produce empty strings after the comma
+        assert!(csv.contains("memory_peak_bytes,\n"));
+        assert!(csv.contains("active_chunks,\n"));
+        assert!(csv.contains("chunks_per_second,\n"));
+        assert!(csv.contains("avg_chunk_load_time_ms,\n"));
+    }
+
+    #[test]
+    fn test_export_format_display() {
+        assert_eq!(format!("{}", ExportFormat::Json), "JSON");
+        assert_eq!(format!("{}", ExportFormat::Csv), "CSV");
+    }
+
+    #[test]
+    fn test_generate_export_path() {
+        let path = generate_export_path(ExportFormat::Json);
+        let path_str = path.to_string_lossy();
+        
+        assert!(path_str.contains("exports"));
+        assert!(path_str.contains("performance"));
+        assert!(path_str.ends_with(".json"));
+
+        let csv_path = generate_export_path(ExportFormat::Csv);
+        assert!(csv_path.to_string_lossy().ends_with(".csv"));
+    }
+
+    #[test]
+    fn test_generate_export_path_with_suffix() {
+        let path = generate_export_path_with_suffix("frame_history", ExportFormat::Csv);
+        let path_str = path.to_string_lossy();
+        
+        assert!(path_str.contains("frame_history"));
+        assert!(path_str.ends_with(".csv"));
+    }
+
+    #[test]
+    fn test_generate_timestamp() {
+        let ts = generate_timestamp();
+        
+        // Should be in ISO 8601 format
+        assert!(ts.contains('T'));
+        assert!(ts.ends_with('Z'));
+        // Year should be reasonable (2020+)
+        assert!(ts.starts_with("202"));
+    }
+
+    #[test]
+    fn test_pending_export_default() {
+        let pending = PendingExport::default();
+        assert!(!pending.export_json);
+        assert!(!pending.export_csv);
+        assert!(!pending.export_frame_history);
+        assert!(pending.last_result.is_none());
+    }
+
+    #[test]
+    fn test_metrics_snapshot_serialization() {
+        let snapshot = MetricsSnapshot {
+            timestamp: "2026-02-07T12:00:00Z".to_string(),
+            fps: 60.0,
+            frame_time_ms: 16.67,
+            frame_time_min_ms: 14.0,
+            frame_time_max_ms: 20.0,
+            frame_time_avg_ms: 16.5,
+            p1_frame_time_ms: 18.0,
+            p01_frame_time_ms: 19.0,
+            fps_1_low: 55.5,
+            fps_01_low: 52.6,
+            budget_usage_percent: 100.0,
+            frames_over_budget: 5,
+            memory_rss_bytes: 500_000_000,
+            memory_peak_bytes: Some(600_000_000),
+            memory_trend_mb_per_sec: 0.5,
+            active_chunks: Some(100),
+            chunks_per_second: Some(10.0),
+            avg_chunk_load_time_ms: Some(15.5),
+        };
+
+        // Test JSON serialization
+        let json = serde_json::to_string(&snapshot).expect("Should serialize to JSON");
+        assert!(json.contains("\"fps\":60.0"));
+        assert!(json.contains("\"active_chunks\":100"));
+        
+        // Test deserialization roundtrip
+        let deserialized: MetricsSnapshot = serde_json::from_str(&json)
+            .expect("Should deserialize from JSON");
+        assert!((deserialized.fps - 60.0).abs() < 0.01);
+        assert_eq!(deserialized.active_chunks, Some(100));
     }
 }

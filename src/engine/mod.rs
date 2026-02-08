@@ -31,11 +31,12 @@ use bevy::prelude::*;
 // Submodules
 pub mod controller;
 pub mod input;
+pub mod lighting;
 pub mod memory;
+pub mod metrics;
 pub mod post_processing;
 pub mod profiler;
 pub mod raycast;
-pub mod lighting;
 
 // Re-export commonly used items for backward compatibility
 // These re-exports maintain the public API even if not used internally
@@ -61,6 +62,16 @@ pub use profiler::{
     ChunkMetricsSnapshot,
     ProfilerPlugin,
     ProfilerState,
+};
+
+#[allow(unused_imports)]
+pub use metrics::{
+    MetricsPlugin,
+    MetricWarnings,
+    PerformanceMetrics,
+    PerformanceOverlay,
+    PerformanceThresholds,
+    WarningLevel,
 };
 
 #[allow(unused_imports)]

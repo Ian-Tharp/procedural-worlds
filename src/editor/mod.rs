@@ -498,7 +498,7 @@ fn editor_ui_system(
     mut overlay_state: ResMut<debug_overlay::DebugOverlayState>,
     mut chunk_debug_state: ResMut<chunk_debug::ChunkDebugState>,
     mut audio_panel_state: ResMut<AudioSettingsPanelState>,
-    perf_dashboard: Option<Res<performance::PerformanceDashboard>>,
+    _perf_dashboard: Option<Res<performance::PerformanceDashboard>>,
     profiler_state: Option<Res<ProfilerState>>,
     camera_query: Query<&GlobalTransform, With<Camera3d>>,
     mut chunk_manager: Option<ResMut<crate::world::ChunkManager>>,
@@ -754,17 +754,9 @@ fn editor_ui_system(
     }
 
     // ── Floating Performance Dashboard (F8) ──
-    if let Some(ref dashboard) = perf_dashboard
-        && dashboard.visible
-    {
-        let chunk_count = chunk_manager.as_ref().map(|cm| cm.chunks.len()).unwrap_or(0);
-        performance::draw_performance_dashboard(
-            contexts.ctx_mut(),
-            dashboard,
-            chunk_count,
-            load_metrics.as_deref(),
-        );
-    }
+    // Note: Dashboard rendering is now handled by render_dashboard_with_exports
+    // in the performance module to support export controls without hitting
+    // the 16-parameter system limit.
 
     // ── Floating Profiler Overlay (F4) ──
     if let Some(ref profiler) = profiler_state
