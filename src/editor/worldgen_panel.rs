@@ -4,9 +4,10 @@
 //! Changes can be applied immediately by regenerating the world.
 
 use bevy::prelude::*;
-use bevy_egui::egui;
+use bevy_egui::{egui, EguiContexts};
 
 use crate::generation::TerrainConfig;
+use crate::world::{ChunkMesh, PendingChunk, PendingMesh};
 
 /// State for the world generation configuration panel.
 #[derive(Resource)]
@@ -98,6 +99,17 @@ impl WorldGenPanelState {
 /// Event sent when the world should be regenerated with new config
 #[derive(Event)]
 pub struct RegenerateWorldEvent;
+
+/// State for the regeneration loading screen
+#[derive(Resource, Default)]
+pub struct RegenerationState {
+    /// Whether we're currently regenerating the world
+    pub regenerating: bool,
+    /// Timer for minimum loading screen display (prevents flicker)
+    pub min_display_timer: f32,
+    /// Fade-in/out animation progress (0.0 = invisible, 1.0 = fully visible)
+    pub fade: f32,
+}
 
 /// Draw the world generation config UI section.
 ///
@@ -296,9 +308,14 @@ pub struct WorldGenPanelPlugin;
 impl Plugin for WorldGenPanelPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<WorldGenPanelState>()
+            .init_resource::<RegenerationState>()
             .add_event::<RegenerateWorldEvent>()
             .add_systems(Startup, sync_panel_from_config)
-            .add_systems(Update, handle_regenerate_event);
+            .add_systems(Update, (
+                handle_regenerate_event,
+                update_regeneration_state,
+                draw_loading_screen,
+            ).chain());
     }
 }
 
@@ -312,14 +329,25 @@ fn sync_panel_from_config(
     }
 }
 
-/// Handle regenerate world events
+/// Handle regenerate world events - despawn all chunk entities and clear manager
 fn handle_regenerate_event(
+    mut commands: Commands,
     mut events: EventReader<RegenerateWorldEvent>,
     panel_state: Res<WorldGenPanelState>,
     mut terrain_config: Option<ResMut<TerrainConfig>>,
     mut chunk_manager: Option<ResMut<crate::world::ChunkManager>>,
+    mut regen_state: ResMut<RegenerationState>,
+    // Query all chunk-related entities to despawn
+    chunk_mesh_query: Query<Entity, With<ChunkMesh>>,
+    pending_chunk_query: Query<Entity, With<PendingChunk>>,
+    pending_mesh_query: Query<Entity, With<PendingMesh>>,
 ) {
     for _ in events.read() {
+        // Start regeneration state
+        regen_state.regenerating = true;
+        regen_state.min_display_timer = 0.5; // Minimum display time to prevent flicker
+        regen_state.fade = 0.0;
+
         // Apply panel config to terrain config
         if let Some(ref mut config) = terrain_config {
             panel_state.apply_to_config(config);
@@ -329,12 +357,170 @@ fn handle_regenerate_event(
             );
         }
 
-        // Clear all chunks to trigger regeneration
+        // Despawn all chunk mesh entities
+        let mut despawned = 0;
+        for entity in chunk_mesh_query.iter() {
+            commands.entity(entity).despawn_recursive();
+            despawned += 1;
+        }
+        
+        // Despawn pending chunk generation tasks
+        for entity in pending_chunk_query.iter() {
+            commands.entity(entity).despawn_recursive();
+        }
+        
+        // Despawn pending mesh tasks
+        for entity in pending_mesh_query.iter() {
+            commands.entity(entity).despawn_recursive();
+        }
+
+        // Clear chunk manager data structures
         if let Some(ref mut cm) = chunk_manager {
-            let chunk_count = cm.chunks.len();
             cm.chunks.clear();
             cm.pending.clear();
-            info!("Cleared {} chunks for world regeneration", chunk_count);
+            info!("Despawned {} chunk entities, cleared manager for regeneration", despawned);
         }
+    }
+}
+
+/// Update regeneration state - track when loading is complete
+fn update_regeneration_state(
+    mut regen_state: ResMut<RegenerationState>,
+    chunk_manager: Option<Res<crate::world::ChunkManager>>,
+    pending_mesh_query: Query<(), With<PendingMesh>>,
+    time: Res<Time>,
+) {
+    if !regen_state.regenerating {
+        // Fade out
+        regen_state.fade = (regen_state.fade - time.delta_secs() * 3.0).max(0.0);
+        return;
+    }
+
+    // Fade in
+    regen_state.fade = (regen_state.fade + time.delta_secs() * 5.0).min(1.0);
+
+    // Update minimum display timer
+    regen_state.min_display_timer -= time.delta_secs();
+
+    // Check if loading is complete
+    if regen_state.min_display_timer <= 0.0 {
+        if let Some(ref cm) = chunk_manager {
+            let pending_chunks = cm.pending.len();
+            let pending_meshes = pending_mesh_query.iter().count();
+            
+            // Consider loading "mostly done" when pending work is low
+            // and we have some chunks loaded
+            let has_chunks = cm.chunks.len() > 0;
+            let low_pending = pending_chunks < 5 && pending_meshes < 3;
+            
+            if has_chunks && low_pending {
+                regen_state.regenerating = false;
+                info!("World regeneration complete: {} chunks loaded", cm.chunks.len());
+            }
+        }
+    }
+}
+
+/// Draw the loading screen overlay during regeneration
+fn draw_loading_screen(
+    mut contexts: EguiContexts,
+    regen_state: Res<RegenerationState>,
+    chunk_manager: Option<Res<crate::world::ChunkManager>>,
+    pending_mesh_query: Query<(), With<PendingMesh>>,
+) {
+    // Don't draw if fully faded out
+    if regen_state.fade < 0.01 {
+        return;
+    }
+
+    let ctx = contexts.ctx_mut();
+    let screen_rect = ctx.screen_rect();
+    let alpha = (regen_state.fade * 220.0) as u8;
+
+    // Full-screen overlay
+    egui::Area::new(egui::Id::new("worldgen_loading_screen"))
+        .fixed_pos(egui::pos2(0.0, 0.0))
+        .order(egui::Order::Foreground)
+        .interactable(false)
+        .show(ctx, |ui| {
+            // Dark background overlay
+            let painter = ui.painter();
+            painter.rect_filled(
+                screen_rect,
+                0.0,
+                egui::Color32::from_rgba_unmultiplied(10, 10, 20, alpha),
+            );
+        });
+
+    // Centered loading panel
+    egui::Area::new(egui::Id::new("worldgen_loading_panel"))
+        .fixed_pos(screen_rect.center())
+        .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
+        .order(egui::Order::Foreground)
+        .interactable(false)
+        .show(ctx, |ui| {
+            let text_alpha = (regen_state.fade * 255.0) as u8;
+
+            egui::Frame::none()
+                .fill(egui::Color32::from_rgba_unmultiplied(20, 20, 30, alpha))
+                .rounding(egui::Rounding::same(12.0))
+                .inner_margin(egui::Margin::symmetric(40.0, 30.0))
+                .show(ui, |ui| {
+                    ui.vertical_centered(|ui| {
+                        ui.label(
+                            egui::RichText::new("🌍 Regenerating World...")
+                                .color(egui::Color32::from_rgba_unmultiplied(255, 255, 255, text_alpha))
+                                .size(24.0)
+                                .strong(),
+                        );
+
+                        ui.add_space(16.0);
+
+                        // Progress info
+                        if let Some(ref cm) = chunk_manager {
+                            let loaded = cm.chunks.len();
+                            let pending_gen = cm.pending.len();
+                            let pending_mesh = pending_mesh_query.iter().count();
+
+                            ui.label(
+                                egui::RichText::new(format!("Chunks loaded: {}", loaded))
+                                    .color(egui::Color32::from_rgba_unmultiplied(180, 180, 180, text_alpha))
+                                    .size(14.0),
+                            );
+
+                            if pending_gen > 0 || pending_mesh > 0 {
+                                ui.label(
+                                    egui::RichText::new(format!(
+                                        "Generating: {}  Meshing: {}",
+                                        pending_gen, pending_mesh
+                                    ))
+                                    .color(egui::Color32::from_rgba_unmultiplied(150, 150, 150, text_alpha))
+                                    .size(12.0),
+                                );
+                            }
+                        }
+
+                        ui.add_space(12.0);
+
+                        // Animated dots
+                        let dots = match ((ui.ctx().input(|i| i.time) * 2.0) as usize) % 4 {
+                            0 => "",
+                            1 => ".",
+                            2 => "..",
+                            _ => "...",
+                        };
+                        ui.label(
+                            egui::RichText::new(format!("Please wait{}", dots))
+                                .color(egui::Color32::from_rgba_unmultiplied(120, 120, 120, text_alpha))
+                                .size(12.0)
+                                .italics(),
+                        );
+                    });
+                });
+        });
+
+    // Request continuous repaints during loading for animation
+    if regen_state.regenerating || regen_state.fade > 0.01 {
+        ctx.request_repaint();
     }
 }
