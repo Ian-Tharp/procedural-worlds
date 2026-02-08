@@ -6,6 +6,7 @@
 use bevy::prelude::*;
 use bevy_egui::{egui, EguiContexts};
 
+use crate::actors::Player;
 use crate::generation::TerrainConfig;
 use crate::world::{ChunkMesh, PendingChunk, PendingMesh};
 
@@ -341,6 +342,8 @@ fn handle_regenerate_event(
     chunk_mesh_query: Query<Entity, With<ChunkMesh>>,
     pending_chunk_query: Query<Entity, With<PendingChunk>>,
     pending_mesh_query: Query<Entity, With<PendingMesh>>,
+    // Query player to teleport
+    mut player_query: Query<&mut Transform, With<Player>>,
 ) {
     for _ in events.read() {
         // Start regeneration state
@@ -349,11 +352,27 @@ fn handle_regenerate_event(
         regen_state.fade = 0.0;
 
         // Apply panel config to terrain config
+        let new_base_height = panel_state.base_height;
         if let Some(ref mut config) = terrain_config {
             panel_state.apply_to_config(config);
             info!(
-                "Applied new terrain config: seed={}, biome_scale={:.4}, sea_level={}",
-                config.seed, config.biome_scale, config.sea_level
+                "Applied new terrain config: seed={}, biome_scale={:.4}, sea_level={}, base_height={}",
+                config.seed, config.biome_scale, config.sea_level, config.base_height
+            );
+        }
+
+        // Teleport player to new spawn height (base_height + buffer for hills + player height)
+        // This ensures the player is above the new terrain surface
+        let spawn_y = new_base_height + 30.0; // 30 blocks above base to clear hills
+        if let Ok(mut player_transform) = player_query.get_single_mut() {
+            let old_y = player_transform.translation.y;
+            player_transform.translation.y = spawn_y;
+            // Keep X/Z position, or reset to origin for fresh start
+            player_transform.translation.x = 0.0;
+            player_transform.translation.z = 0.0;
+            info!(
+                "Teleported player from Y={:.1} to Y={:.1} (spawn at origin)",
+                old_y, spawn_y
             );
         }
 
