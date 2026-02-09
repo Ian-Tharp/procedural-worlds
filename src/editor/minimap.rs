@@ -1,7 +1,8 @@
 //! Minimap System - Real-time overhead terrain view
 //!
 //! Renders a top-down view of the terrain around the player,
-//! showing biome colors, player position, and direction.
+//! showing actual block colors from loaded chunks, with biome-based
+//! fallback for unloaded areas. Similar to Xaero's Minimap.
 //!
 //! Toggle: M key
 //! Zoom: Mouse wheel when hovering (or +/- keys)
@@ -11,7 +12,7 @@ use bevy_egui::{egui, EguiContexts};
 
 use crate::generation::biome::{biome_at, BiomeType};
 use crate::generation::TerrainConfig;
-use crate::world::{ChunkManager, CHUNK_SIZE};
+use crate::world::{BlockType, Chunk, ChunkManager, CHUNK_SIZE};
 
 // ============================================================================
 // CONFIGURATION
@@ -128,6 +129,7 @@ fn minimap_update_system(
     chunk_manager: Res<ChunkManager>,
     terrain_config: Res<TerrainConfig>,
     player_query: Query<&GlobalTransform, With<Camera3d>>,
+    chunk_query: Query<&Chunk>,
 ) {
     if !config.visible {
         return;
@@ -171,7 +173,8 @@ fn minimap_update_system(
             let (r, g, b) = get_terrain_color(
                 world_x, 
                 world_z, 
-                &chunk_manager, 
+                &chunk_manager,
+                &chunk_query,
                 &terrain_config
             );
             
@@ -192,47 +195,80 @@ fn minimap_update_system(
     texture.texture_id = None; // Will be recreated in render
 }
 
-/// Get terrain color at a world position
+/// Get terrain color at a world position by reading actual block data
 fn get_terrain_color(
     world_x: i32,
     world_z: i32,
     chunk_manager: &ChunkManager,
+    chunk_query: &Query<&Chunk>,
     terrain_config: &TerrainConfig,
 ) -> (u8, u8, u8) {
-    // First try to get actual block from loaded chunks
     let chunk_x = world_x.div_euclid(CHUNK_SIZE as i32);
     let chunk_z = world_z.div_euclid(CHUNK_SIZE as i32);
-    let _local_x = world_x.rem_euclid(CHUNK_SIZE as i32) as usize;
-    let _local_z = world_z.rem_euclid(CHUNK_SIZE as i32) as usize;
+    let local_x = world_x.rem_euclid(CHUNK_SIZE as i32) as usize;
+    let local_z = world_z.rem_euclid(CHUNK_SIZE as i32) as usize;
     
-    // Check multiple Y levels to find the surface
-    for chunk_y in (-2..=4).rev() {
+    // Scan from top chunk down to find surface block
+    // Start high and work down to find the first non-air block
+    for chunk_y in (chunk_manager.vertical_load_down..=chunk_manager.vertical_load_up).rev() {
         let chunk_pos = IVec3::new(chunk_x, chunk_y, chunk_z);
         
-        if let Some(&_entity) = chunk_manager.chunks.get(&chunk_pos) {
-            // Chunk is loaded - we'd need actual block data access here
-            // For now, fall back to biome color
-            // TODO: Access actual chunk block data for accurate colors
-            break;
+        if let Some(&entity) = chunk_manager.chunks.get(&chunk_pos) {
+            // Chunk is loaded - get the actual block data
+            if let Ok(chunk) = chunk_query.get(entity) {
+                // Scan from top of chunk down to find surface
+                for local_y in (0..CHUNK_SIZE).rev() {
+                    let block = chunk.get_block(local_x, local_y, local_z);
+                    if block != BlockType::Air {
+                        return block_to_color(block);
+                    }
+                }
+                // This chunk is all air at this column, continue to lower chunks
+            }
         }
     }
     
-    // Fall back to biome-based color
+    // No loaded chunks or all air - fall back to biome-based color
     let biome_noise = noise::Simplex::new(terrain_config.seed.wrapping_add(terrain_config.biome_seed_offset));
     let biome = biome_at(world_x, world_z, &biome_noise, terrain_config.biome_scale);
     
     biome_to_color(biome)
 }
 
-/// Map biome type to minimap color
+/// Map block type to minimap color (like Xaero's minimap)
+fn block_to_color(block: BlockType) -> (u8, u8, u8) {
+    match block {
+        BlockType::Air => (135, 206, 235),        // Sky blue (shouldn't happen)
+        BlockType::Stone => (128, 128, 128),      // Gray
+        BlockType::Dirt => (134, 96, 67),         // Brown
+        BlockType::Grass => (86, 152, 59),        // Green (grass top color)
+        BlockType::Sand => (219, 207, 163),       // Sandy tan
+        BlockType::Water => (64, 100, 170),       // Blue
+        BlockType::Wood => (156, 127, 78),        // Brown wood
+        BlockType::Leaves => (56, 118, 29),       // Dark green
+        BlockType::Sandstone => (216, 199, 150),  // Light tan
+        BlockType::Snow => (250, 250, 255),       // White
+        BlockType::Ice => (160, 200, 255),        // Light blue
+        BlockType::Obsidian => (20, 18, 30),      // Very dark purple
+        BlockType::VolcanicRock => (60, 45, 45),  // Dark reddish gray
+        BlockType::Cactus => (85, 140, 70),       // Cactus green
+        BlockType::SandDunes => (230, 215, 170),  // Light sand
+        BlockType::CopperOre => (184, 115, 81),   // Copper orange-brown
+        BlockType::IronOre => (136, 130, 127),    // Iron gray with rust hints
+        BlockType::SilverOre => (192, 192, 200),  // Silver
+        BlockType::GoldOre => (255, 215, 80),     // Gold
+    }
+}
+
+/// Map biome type to minimap color (fallback for unloaded chunks)
 fn biome_to_color(biome: BiomeType) -> (u8, u8, u8) {
     match biome {
-        BiomeType::Plains => (120, 180, 80),      // Light green
-        BiomeType::Forest => (60, 120, 50),       // Dark green
-        BiomeType::Desert => (210, 190, 130),     // Sandy tan
-        BiomeType::Mountains => (140, 140, 150),  // Grey
-        BiomeType::Tundra => (220, 230, 240),     // White-ish
-        BiomeType::Volcanic => (80, 50, 40),      // Dark brown-red
+        BiomeType::Plains => (100, 160, 70),      // Light green (grass-like)
+        BiomeType::Forest => (56, 118, 29),       // Dark green (leaves-like)
+        BiomeType::Desert => (219, 207, 163),     // Sandy tan
+        BiomeType::Mountains => (128, 128, 128),  // Stone gray
+        BiomeType::Tundra => (240, 245, 250),     // Snowy white
+        BiomeType::Volcanic => (60, 45, 45),      // Volcanic rock
     }
 }
 
