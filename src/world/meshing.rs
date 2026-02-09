@@ -68,6 +68,11 @@ pub fn block_color(block: BlockType) -> [f32; 4] {
         BlockType::VolcanicRock => [0.3, 0.18, 0.15, 1.0],
         BlockType::Cactus => [0.25, 0.55, 0.2, 1.0],
         BlockType::SandDunes => [0.85, 0.78, 0.55, 1.0],
+        // Ores - base stone color with hint of ore
+        BlockType::CopperOre => [0.55, 0.42, 0.35, 1.0],  // Orange-brown tint
+        BlockType::IronOre => [0.45, 0.40, 0.38, 1.0],    // Dark grey-brown tint
+        BlockType::SilverOre => [0.65, 0.68, 0.72, 1.0],  // Silver-blue tint
+        BlockType::GoldOre => [0.65, 0.55, 0.30, 1.0],    // Golden tint
     }
 }
 

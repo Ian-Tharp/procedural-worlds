@@ -17,6 +17,8 @@ use noise::{NoiseFn, Perlin, Simplex};
 use crate::world::{BlockType, Chunk, CHUNK_SIZE};
 use biome::{biome_at, BiomeParams, BiomeType};
 
+pub use self::OreSpawnConfig as OreConfig;
+
 /// Configuration for terrain generation
 #[derive(Resource, Clone)]
 pub struct TerrainConfig {
@@ -773,6 +775,214 @@ pub fn generate_cacti(chunk: &mut Chunk, config: &TerrainConfig) {
             }
         }
     }
+}
+
+// ============================================================================
+// ORE GENERATION
+// ============================================================================
+
+/// Ore spawn configuration - matches data from OreRegistry
+#[derive(Debug, Clone)]
+pub struct OreSpawnConfig {
+    /// Unique identifier
+    pub id: String,
+    /// Which block type to place
+    pub block_type: BlockType,
+    /// Minimum Y level for spawning
+    pub min_y: i32,
+    /// Maximum Y level for spawning
+    pub max_y: i32,
+    /// Average blocks per vein
+    pub vein_size: u32,
+    /// Spawn frequency (0.0-1.0, typical: 0.001-0.05)
+    pub frequency: f64,
+}
+
+/// Generate ores in a chunk based on ore spawn configurations.
+///
+/// For each ore type, uses 3D noise to determine placement locations,
+/// then grows veins by replacing Stone blocks with ore blocks.
+pub fn generate_ores(chunk: &mut Chunk, config: &TerrainConfig, ore_configs: &[OreSpawnConfig]) {
+    let world_pos = chunk.world_position();
+    
+    for (ore_index, ore) in ore_configs.iter().enumerate() {
+        // Each ore type gets its own noise with a unique seed offset
+        let ore_seed = config.seed.wrapping_add(5000 + ore_index as u32 * 100);
+        let noise = Perlin::new(ore_seed);
+        
+        // Vein center noise (determines where veins start)
+        let vein_noise = Simplex::new(ore_seed.wrapping_add(1));
+        
+        // Frequency for finding vein centers
+        let vein_freq = 0.08; // Controls vein spacing
+        
+        for x in 0..CHUNK_SIZE {
+            for z in 0..CHUNK_SIZE {
+                let world_x = world_pos.x + x as i32;
+                let world_z = world_pos.z + z as i32;
+                
+                for y in 0..CHUNK_SIZE {
+                    let world_y = world_pos.y + y as i32;
+                    
+                    // Skip if outside Y range
+                    if world_y < ore.min_y || world_y > ore.max_y {
+                        continue;
+                    }
+                    
+                    // Skip if not stone (ores only replace stone)
+                    if chunk.get_block(x, y, z) != BlockType::Stone {
+                        continue;
+                    }
+                    
+                    // 3D noise for vein center detection
+                    let center_noise = vein_noise.get([
+                        world_x as f64 * vein_freq,
+                        world_y as f64 * vein_freq,
+                        world_z as f64 * vein_freq,
+                    ]);
+                    
+                    // Only consider as vein center if noise is above threshold
+                    // Threshold based on ore frequency
+                    let center_threshold = 1.0 - (ore.frequency * 10.0).min(0.8);
+                    if center_noise < center_threshold {
+                        continue;
+                    }
+                    
+                    // This is a vein center - grow the vein
+                    grow_ore_vein(chunk, x, y, z, ore.block_type, ore.vein_size, &noise, ore_seed);
+                }
+            }
+        }
+    }
+}
+
+/// Grow an ore vein from a center point, replacing stone with ore.
+fn grow_ore_vein(
+    chunk: &mut Chunk,
+    center_x: usize,
+    center_y: usize,
+    center_z: usize,
+    ore_type: BlockType,
+    target_size: u32,
+    noise: &Perlin,
+    seed: u32,
+) {
+    let mut placed = 0u32;
+    let max_radius = (target_size as f64).sqrt().ceil() as i32 + 1;
+    
+    // Place center block
+    chunk.set_block(center_x, center_y, center_z, ore_type);
+    placed += 1;
+    
+    // Grow outward in a roughly spherical pattern
+    for dx in -max_radius..=max_radius {
+        for dy in -max_radius..=max_radius {
+            for dz in -max_radius..=max_radius {
+                if placed >= target_size {
+                    return;
+                }
+                
+                let nx = center_x as i32 + dx;
+                let ny = center_y as i32 + dy;
+                let nz = center_z as i32 + dz;
+                
+                // Skip if out of chunk bounds
+                if nx < 0 || nx >= CHUNK_SIZE as i32 ||
+                   ny < 0 || ny >= CHUNK_SIZE as i32 ||
+                   nz < 0 || nz >= CHUNK_SIZE as i32 {
+                    continue;
+                }
+                
+                // Skip center (already placed)
+                if dx == 0 && dy == 0 && dz == 0 {
+                    continue;
+                }
+                
+                // Calculate distance-based probability
+                let dist_sq = (dx * dx + dy * dy + dz * dz) as f64;
+                let max_dist_sq = (max_radius * max_radius) as f64;
+                let dist_factor = 1.0 - (dist_sq / max_dist_sq).sqrt();
+                
+                // Add noise variation
+                let noise_val = noise.get([
+                    (center_x as i32 + dx) as f64 * 0.5,
+                    (center_y as i32 + dy) as f64 * 0.5,
+                    (center_z as i32 + dz) as f64 * 0.5,
+                ]) * 0.5 + 0.5;
+                
+                // Probability based on distance and noise
+                let prob = dist_factor * noise_val;
+                
+                // Deterministic check using position hash
+                let hash = ore_placement_hash(
+                    nx, ny, nz, seed
+                );
+                let hash_prob = hash as f64 / u64::MAX as f64;
+                
+                if hash_prob < prob {
+                    let ux = nx as usize;
+                    let uy = ny as usize;
+                    let uz = nz as usize;
+                    
+                    // Only replace stone
+                    if chunk.get_block(ux, uy, uz) == BlockType::Stone {
+                        chunk.set_block(ux, uy, uz, ore_type);
+                        placed += 1;
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Deterministic hash for ore placement decisions
+fn ore_placement_hash(x: i32, y: i32, z: i32, seed: u32) -> u64 {
+    let mut hasher = DefaultHasher::new();
+    "ore_vein".hash(&mut hasher);
+    seed.hash(&mut hasher);
+    x.hash(&mut hasher);
+    y.hash(&mut hasher);
+    z.hash(&mut hasher);
+    hasher.finish()
+}
+
+/// Get default ore spawn configurations for the base game ores.
+/// These match the OreDefinition defaults in the content module.
+pub fn default_ore_configs() -> Vec<OreSpawnConfig> {
+    vec![
+        OreSpawnConfig {
+            id: "copper_ore".to_string(),
+            block_type: BlockType::CopperOre,
+            min_y: 16,
+            max_y: 96,
+            vein_size: 12,
+            frequency: 0.035,
+        },
+        OreSpawnConfig {
+            id: "iron_ore".to_string(),
+            block_type: BlockType::IronOre,
+            min_y: 0,
+            max_y: 64,
+            vein_size: 8,
+            frequency: 0.025,
+        },
+        OreSpawnConfig {
+            id: "silver_ore".to_string(),
+            block_type: BlockType::SilverOre,
+            min_y: 0,
+            max_y: 40,
+            vein_size: 5,
+            frequency: 0.012,
+        },
+        OreSpawnConfig {
+            id: "gold_ore".to_string(),
+            block_type: BlockType::GoldOre,
+            min_y: 0,
+            max_y: 32,
+            vein_size: 4,
+            frequency: 0.006,
+        },
+    ]
 }
 
 #[cfg(test)]

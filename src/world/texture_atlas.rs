@@ -92,11 +92,17 @@ pub fn block_textures(block: BlockType) -> BlockTextures {
 
         // SandDunes — all faces: tile 16 (golden wave pattern)
         BlockType::SandDunes => BlockTextures { top: 16, bottom: 16, side: 16 },
+
+        // Ores - distinct tile indices for each
+        BlockType::CopperOre => BlockTextures { top: 17, bottom: 17, side: 17 },
+        BlockType::IronOre => BlockTextures { top: 18, bottom: 18, side: 18 },
+        BlockType::SilverOre => BlockTextures { top: 19, bottom: 19, side: 19 },
+        BlockType::GoldOre => BlockTextures { top: 20, bottom: 20, side: 20 },
     }
 }
 
 /// The highest tile index used by any block face.
-pub const MAX_TILE_INDEX: u32 = 16;
+pub const MAX_TILE_INDEX: u32 = 20;
 
 // ============================================================================
 // UV COMPUTATION
@@ -1220,6 +1226,166 @@ fn generate_tile_rgba(tile_index: u32, tile_size: u32) -> Vec<u8> {
             }
         }
 
+        // ── 17: CopperOre — stone base with orange-brown copper veins ──
+        17 => {
+            for y in 0..ts {
+                for x in 0..ts {
+                    let mn = multi_noise(x, y, 370);
+                    let cn = cell_noise(x, y, ts, 371, 6);
+                    
+                    // Copper veins appear at cell boundaries
+                    let vein_threshold = 0.52;
+                    let is_vein = cn > vein_threshold;
+                    
+                    let (mut r, mut g, mut b) = if is_vein {
+                        // Orange-brown copper with metallic sheen
+                        let intensity = ((cn - vein_threshold) / (1.0 - vein_threshold)).min(1.0);
+                        (
+                            180.0 + intensity * 35.0 + (mn - 0.5) * 15.0,
+                            95.0 + intensity * 25.0 + (mn - 0.5) * 10.0,
+                            55.0 + intensity * 15.0 + (mn - 0.5) * 8.0,
+                        )
+                    } else {
+                        // Stone base (darker than pure stone)
+                        (
+                            105.0 + (mn - 0.5) * 18.0,
+                            100.0 + (mn - 0.5) * 16.0,
+                            98.0 + (mn - 0.5) * 14.0,
+                        )
+                    };
+                    
+                    // Oxidation patches (green tint)
+                    let oxidize = noise_hash(x / 3, y / 3, 372) as f32 / 255.0;
+                    if oxidize < 0.15 && is_vein {
+                        g += 25.0;
+                        b += 15.0;
+                        r -= 20.0;
+                    }
+                    
+                    set(&mut data, x, y, r.clamp(0.0, 255.0) as u8, g.clamp(0.0, 255.0) as u8, b.clamp(0.0, 255.0) as u8, 255, ts);
+                }
+            }
+        }
+        
+        // ── 18: IronOre — stone base with dark grey-brown iron deposits ──
+        18 => {
+            for y in 0..ts {
+                for x in 0..ts {
+                    let mn = multi_noise(x, y, 380);
+                    let cn = cell_noise(x, y, ts, 381, 5);
+                    
+                    let vein_threshold = 0.48;
+                    let is_vein = cn > vein_threshold;
+                    
+                    let (mut r, mut g, b) = if is_vein {
+                        // Dark iron deposits with reddish-brown tint
+                        let intensity = ((cn - vein_threshold) / (1.0 - vein_threshold)).min(1.0);
+                        (
+                            85.0 + intensity * 20.0 + (mn - 0.5) * 12.0,
+                            65.0 + intensity * 15.0 + (mn - 0.5) * 10.0,
+                            55.0 + intensity * 10.0 + (mn - 0.5) * 8.0,
+                        )
+                    } else {
+                        // Stone base
+                        (
+                            108.0 + (mn - 0.5) * 18.0,
+                            103.0 + (mn - 0.5) * 16.0,
+                            100.0 + (mn - 0.5) * 14.0,
+                        )
+                    };
+                    
+                    // Rust spots
+                    let rust = noise_hash(x.wrapping_mul(3), y.wrapping_mul(5), 382);
+                    if rust < 8 && is_vein {
+                        r += 30.0;
+                        g -= 10.0;
+                    }
+                    
+                    set(&mut data, x, y, r.clamp(0.0, 255.0) as u8, g.clamp(0.0, 255.0) as u8, b.clamp(0.0, 255.0) as u8, 255, ts);
+                }
+            }
+        }
+        
+        // ── 19: SilverOre — stone base with bright silver-white veins ──
+        19 => {
+            for y in 0..ts {
+                for x in 0..ts {
+                    let mn = multi_noise(x, y, 390);
+                    let cn = cell_noise(x, y, ts, 391, 4);
+                    
+                    let vein_threshold = 0.55;
+                    let is_vein = cn > vein_threshold;
+                    
+                    let (mut r, mut g, mut b) = if is_vein {
+                        // Bright silver with slight blue tint (magical)
+                        let intensity = ((cn - vein_threshold) / (1.0 - vein_threshold)).min(1.0);
+                        (
+                            185.0 + intensity * 45.0 + (mn - 0.5) * 12.0,
+                            190.0 + intensity * 50.0 + (mn - 0.5) * 14.0,
+                            205.0 + intensity * 40.0 + (mn - 0.5) * 10.0,
+                        )
+                    } else {
+                        // Darker stone base for contrast
+                        (
+                            95.0 + (mn - 0.5) * 16.0,
+                            92.0 + (mn - 0.5) * 14.0,
+                            90.0 + (mn - 0.5) * 12.0,
+                        )
+                    };
+                    
+                    // Sparkle highlights
+                    let sparkle = noise_hash(x.wrapping_mul(7), y.wrapping_mul(11), 392);
+                    if sparkle < 4 && is_vein {
+                        r = 255.0;
+                        g = 255.0;
+                        b = 255.0;
+                    }
+                    
+                    set(&mut data, x, y, r.clamp(0.0, 255.0) as u8, g.clamp(0.0, 255.0) as u8, b.clamp(0.0, 255.0) as u8, 255, ts);
+                }
+            }
+        }
+        
+        // ── 20: GoldOre — stone base with rich golden veins ──
+        20 => {
+            for y in 0..ts {
+                for x in 0..ts {
+                    let mn = multi_noise(x, y, 400);
+                    let cn = cell_noise(x, y, ts, 401, 4);
+                    
+                    let vein_threshold = 0.58;
+                    let is_vein = cn > vein_threshold;
+                    
+                    let (mut r, mut g, mut b) = if is_vein {
+                        // Rich golden yellow
+                        let intensity = ((cn - vein_threshold) / (1.0 - vein_threshold)).min(1.0);
+                        (
+                            220.0 + intensity * 30.0 + (mn - 0.5) * 14.0,
+                            175.0 + intensity * 35.0 + (mn - 0.5) * 12.0,
+                            45.0 + intensity * 20.0 + (mn - 0.5) * 8.0,
+                        )
+                    } else {
+                        // Stone base
+                        (
+                            100.0 + (mn - 0.5) * 16.0,
+                            96.0 + (mn - 0.5) * 14.0,
+                            92.0 + (mn - 0.5) * 12.0,
+                        )
+                    };
+                    
+                    // Golden sparkles
+                    let sparkle = noise_hash(x.wrapping_mul(5), y.wrapping_mul(7), 402);
+                    if sparkle < 3 && is_vein {
+                        r = 255.0;
+                        g = 230.0;
+                        b = 120.0;
+                    }
+                    
+                    set(&mut data, x, y, r.clamp(0.0, 255.0) as u8, g.clamp(0.0, 255.0) as u8, b.clamp(0.0, 255.0) as u8, 255, ts);
+                }
+            }
+        }
+
         // ── Unused tiles: magenta debug fill ────────────
         _ => {
             for y in 0..ts {
@@ -1285,6 +1451,10 @@ mod tests {
             BlockType::VolcanicRock,
             BlockType::Cactus,
             BlockType::SandDunes,
+            BlockType::CopperOre,
+            BlockType::IronOre,
+            BlockType::SilverOre,
+            BlockType::GoldOre,
         ];
 
         let faces = [Face::Top, Face::Bottom, Face::North, Face::South, Face::East, Face::West];
@@ -1335,6 +1505,10 @@ mod tests {
             BlockType::VolcanicRock,
             BlockType::Cactus,
             BlockType::SandDunes,
+            BlockType::CopperOre,
+            BlockType::IronOre,
+            BlockType::SilverOre,
+            BlockType::GoldOre,
         ];
 
         for block in &block_types {

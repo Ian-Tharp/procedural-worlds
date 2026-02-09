@@ -9,6 +9,7 @@ use bevy_egui::EguiPlugin;
 use procedural_worlds::actors;
 use procedural_worlds::audio;
 use procedural_worlds::config;
+use procedural_worlds::content;
 use procedural_worlds::editor;
 use procedural_worlds::engine;
 use procedural_worlds::physics;
@@ -47,6 +48,7 @@ fn main() {
         .add_plugins(editor::ChunkDebugPlugin)
         .add_plugins(editor::PerformanceDashboardPlugin)
         .add_plugins(editor::HudPlugin)
+        .add_plugins(editor::ContentEditorPlugin)
         .add_plugins(engine::CameraPlugin)
         .add_plugins(engine::profiler::ProfilerPlugin)
         .add_plugins(engine::RaycastPlugin)
@@ -61,6 +63,8 @@ fn main() {
         .add_plugins(config::ConfigPlugin)
         // Audio configuration plugin (settings panel, persistence)
         .add_plugins(config::audio::AudioConfigPlugin)
+        // Content system (ores, blocks, etc. - data-driven definitions)
+        .add_plugins(content::ContentPlugin)
         // Startup systems
         .add_systems(Startup, setup_scene)
         .run();
