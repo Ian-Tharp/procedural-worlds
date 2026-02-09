@@ -1,0 +1,21 @@
+(
+    id: "iron_ore",
+    display_name: "Iron Ore",
+    texture_index: 2,
+    hardness: 3.0,
+    tool_required: "pickaxe",
+    generation: (
+        min_y: 0,
+        max_y: 64,
+        vein_size: 8,
+        frequency: 0.025,
+        biomes: All,
+    ),
+    drop: (
+        item: "raw_iron",
+        min_count: 1,
+        max_count: 2,
+    ),
+    user_content: true,
+    description: "Strong and reliable. The backbone of industry.",
+)

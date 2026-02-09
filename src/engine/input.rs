@@ -277,29 +277,37 @@ impl Plugin for InputPlugin {
 /// Process raw input into action states
 ///
 /// Runs in PreUpdate so action states are available for all game systems.
+/// Skips keyboard input when egui has focus (e.g., typing in text fields).
 fn process_input_system(
     keyboard: Res<ButtonInput<KeyCode>>,
     mouse_buttons: Res<ButtonInput<MouseButton>>,
     input_map: Res<InputMap>,
     mut action_states: ResMut<ActionStates>,
+    mut egui_contexts: bevy_egui::EguiContexts,
 ) {
     // Transition existing states
     action_states.tick();
     
-    // Process all keyboard inputs
-    for key in keyboard.get_just_pressed() {
-        if let Some(action) = input_map.get_action(&InputBinding::Key(*key)) {
-            action_states.set(action, ActionState::JustPressed);
+    // Check if egui wants keyboard input (user is typing in a text field)
+    let ctx = egui_contexts.ctx_mut();
+    let egui_wants_keyboard = ctx.wants_keyboard_input();
+    
+    // Process keyboard inputs only if egui doesn't want them
+    if !egui_wants_keyboard {
+        for key in keyboard.get_just_pressed() {
+            if let Some(action) = input_map.get_action(&InputBinding::Key(*key)) {
+                action_states.set(action, ActionState::JustPressed);
+            }
+        }
+        
+        for key in keyboard.get_just_released() {
+            if let Some(action) = input_map.get_action(&InputBinding::Key(*key)) {
+                action_states.set(action, ActionState::JustReleased);
+            }
         }
     }
     
-    for key in keyboard.get_just_released() {
-        if let Some(action) = input_map.get_action(&InputBinding::Key(*key)) {
-            action_states.set(action, ActionState::JustReleased);
-        }
-    }
-    
-    // Process mouse buttons
+    // Process mouse buttons (always, even when typing)
     for button in mouse_buttons.get_just_pressed() {
         if let Some(action) = input_map.get_action(&InputBinding::MouseButton(*button)) {
             action_states.set(action, ActionState::JustPressed);

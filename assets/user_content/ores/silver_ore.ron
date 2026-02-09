@@ -1,0 +1,21 @@
+(
+    id: "silver_ore",
+    display_name: "Silver Ore",
+    texture_index: 3,
+    hardness: 2.5,
+    tool_required: "pickaxe",
+    generation: (
+        min_y: 0,
+        max_y: 40,
+        vein_size: 5,
+        frequency: 0.012,
+        biomes: All,
+    ),
+    drop: (
+        item: "raw_silver",
+        min_count: 1,
+        max_count: 2,
+    ),
+    user_content: true,
+    description: "Lustrous and magical. Said to ward off dark creatures.",
+)

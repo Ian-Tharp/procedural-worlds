@@ -1,0 +1,21 @@
+(
+    id: "gold_ore",
+    display_name: "Gold Ore",
+    texture_index: 4,
+    hardness: 2.5,
+    tool_required: "pickaxe",
+    generation: (
+        min_y: 0,
+        max_y: 32,
+        vein_size: 4,
+        frequency: 0.006,
+        biomes: All,
+    ),
+    drop: (
+        item: "raw_gold",
+        min_count: 1,
+        max_count: 1,
+    ),
+    user_content: true,
+    description: "Precious and coveted. Currency of kingdoms.",
+)
