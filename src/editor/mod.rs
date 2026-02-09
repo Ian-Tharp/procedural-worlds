@@ -2,6 +2,7 @@
 
 pub mod block_highlight;
 pub mod chunk_debug;
+pub mod content_editor;
 pub mod debug_console;
 pub mod debug_overlay;
 pub mod hud;
@@ -10,6 +11,7 @@ pub mod worldgen_panel;
 
 pub use block_highlight::BlockHighlightPlugin;
 pub use chunk_debug::ChunkDebugPlugin;
+pub use content_editor::ContentEditorPlugin;
 pub use debug_console::DebugConsolePlugin;
 pub use debug_overlay::DebugOverlayPlugin;
 pub use hud::HudPlugin;
