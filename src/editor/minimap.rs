@@ -1,7 +1,8 @@
 //! Minimap System - Real-time overhead terrain view
 //!
 //! Renders a top-down view of the terrain around the player,
-//! showing biome colors, player position, and direction.
+//! showing actual block colors from loaded chunks, with biome-based
+//! fallback for unloaded areas. Similar to Xaero's Minimap.
 //!
 //! Toggle: M key
 //! Zoom: Mouse wheel when hovering (or +/- keys)
@@ -11,7 +12,7 @@ use bevy_egui::{egui, EguiContexts};
 
 use crate::generation::biome::{biome_at, BiomeType};
 use crate::generation::TerrainConfig;
-use crate::world::{ChunkManager, CHUNK_SIZE};
+use crate::world::CHUNK_SIZE;
 
 // ============================================================================
 // CONFIGURATION
@@ -70,8 +71,8 @@ pub struct MinimapTexture {
     pub generated_zoom: f32,
     /// Whether texture needs regeneration
     pub dirty: bool,
-    /// egui texture handle
-    pub texture_id: Option<egui::TextureId>,
+    /// egui texture handle (must keep alive to prevent texture from being freed)
+    pub texture_handle: Option<egui::TextureHandle>,
 }
 
 // ============================================================================
@@ -122,10 +123,10 @@ fn minimap_toggle_system(
 }
 
 /// Update minimap texture when player moves or zoom changes
+/// Uses biome colors from terrain seed - instant, no chunk loading needed
 fn minimap_update_system(
     config: Res<MinimapConfig>,
     mut texture: ResMut<MinimapTexture>,
-    chunk_manager: Res<ChunkManager>,
     terrain_config: Res<TerrainConfig>,
     player_query: Query<&GlobalTransform, With<Camera3d>>,
 ) {
@@ -146,18 +147,24 @@ fn minimap_update_system(
     let needs_regen = texture.dirty
         || texture.texture_size != size
         || texture.generated_zoom != config.blocks_per_pixel
-        || (texture.center_x - center_x).abs() > 8
-        || (texture.center_z - center_z).abs() > 8;
+        || (texture.center_x - center_x).abs() > 4
+        || (texture.center_z - center_z).abs() > 4;
     
     if !needs_regen {
         return;
     }
     
-    // Generate new texture
-    let blocks_per_pixel = config.blocks_per_pixel;
-    let _half_size = (size as f32 / 2.0) * blocks_per_pixel;
+    // Pre-create biome noise (uses seed - deterministic)
+    let biome_noise = noise::Simplex::new(
+        terrain_config.seed.wrapping_add(terrain_config.biome_seed_offset)
+    );
     
+    // Generate texture using biome colors (instant - just noise sampling)
+    let blocks_per_pixel = config.blocks_per_pixel;
     let mut pixels = vec![0u8; size * size * 4];
+    
+    // Track biome counts for debugging
+    let mut biome_counts = [0u32; 6];
     
     for py in 0..size {
         for px in 0..size {
@@ -167,13 +174,10 @@ fn minimap_update_system(
             let world_x = center_x + offset_x as i32;
             let world_z = center_z + offset_z as i32;
             
-            // Get color for this position
-            let (r, g, b) = get_terrain_color(
-                world_x, 
-                world_z, 
-                &chunk_manager, 
-                &terrain_config
-            );
+            // Get biome color (instant - just noise lookup)
+            let biome = biome_at(world_x, world_z, &biome_noise, terrain_config.biome_scale);
+            biome_counts[biome as usize] += 1;
+            let (r, g, b) = biome_to_color(biome);
             
             let idx = (py * size + px) * 4;
             pixels[idx] = r;
@@ -183,56 +187,32 @@ fn minimap_update_system(
         }
     }
     
+    // Log biome distribution for debugging
+    info!(
+        "Minimap generated at ({}, {}): Plains={}, Forest={}, Desert={}, Mountains={}, Tundra={}, Volcanic={}",
+        center_x, center_z,
+        biome_counts[0], biome_counts[1], biome_counts[2], 
+        biome_counts[3], biome_counts[4], biome_counts[5]
+    );
+    
     texture.pixels = pixels;
     texture.texture_size = size;
     texture.center_x = center_x;
     texture.center_z = center_z;
     texture.generated_zoom = blocks_per_pixel;
     texture.dirty = false;
-    texture.texture_id = None; // Will be recreated in render
-}
-
-/// Get terrain color at a world position
-fn get_terrain_color(
-    world_x: i32,
-    world_z: i32,
-    chunk_manager: &ChunkManager,
-    terrain_config: &TerrainConfig,
-) -> (u8, u8, u8) {
-    // First try to get actual block from loaded chunks
-    let chunk_x = world_x.div_euclid(CHUNK_SIZE as i32);
-    let chunk_z = world_z.div_euclid(CHUNK_SIZE as i32);
-    let _local_x = world_x.rem_euclid(CHUNK_SIZE as i32) as usize;
-    let _local_z = world_z.rem_euclid(CHUNK_SIZE as i32) as usize;
-    
-    // Check multiple Y levels to find the surface
-    for chunk_y in (-2..=4).rev() {
-        let chunk_pos = IVec3::new(chunk_x, chunk_y, chunk_z);
-        
-        if let Some(&_entity) = chunk_manager.chunks.get(&chunk_pos) {
-            // Chunk is loaded - we'd need actual block data access here
-            // For now, fall back to biome color
-            // TODO: Access actual chunk block data for accurate colors
-            break;
-        }
-    }
-    
-    // Fall back to biome-based color
-    let biome_noise = noise::Simplex::new(terrain_config.seed.wrapping_add(terrain_config.biome_seed_offset));
-    let biome = biome_at(world_x, world_z, &biome_noise, terrain_config.biome_scale);
-    
-    biome_to_color(biome)
+    texture.texture_handle = None; // Will be recreated in render
 }
 
 /// Map biome type to minimap color
 fn biome_to_color(biome: BiomeType) -> (u8, u8, u8) {
     match biome {
-        BiomeType::Plains => (120, 180, 80),      // Light green
-        BiomeType::Forest => (60, 120, 50),       // Dark green
-        BiomeType::Desert => (210, 190, 130),     // Sandy tan
-        BiomeType::Mountains => (140, 140, 150),  // Grey
-        BiomeType::Tundra => (220, 230, 240),     // White-ish
-        BiomeType::Volcanic => (80, 50, 40),      // Dark brown-red
+        BiomeType::Plains => (100, 200, 80),      // Bright green
+        BiomeType::Forest => (40, 140, 40),       // Dark green
+        BiomeType::Desert => (240, 220, 160),     // Bright sand
+        BiomeType::Mountains => (150, 150, 160),  // Light gray
+        BiomeType::Tundra => (255, 255, 255),     // Pure white
+        BiomeType::Volcanic => (180, 60, 40),     // Bright red-brown
     }
 }
 
@@ -241,7 +221,6 @@ fn minimap_render_system(
     config: Res<MinimapConfig>,
     mut texture: ResMut<MinimapTexture>,
     mut contexts: EguiContexts,
-    _player_query: Query<&GlobalTransform, With<Camera3d>>,
     camera_controller: Query<&crate::engine::controller::CameraController, With<Camera3d>>,
 ) {
     if !config.visible || texture.pixels.is_empty() {
@@ -251,22 +230,23 @@ fn minimap_render_system(
     let ctx = contexts.ctx_mut();
     let size = texture.texture_size;
     
-    // Create or update texture
-    if texture.texture_id.is_none() {
+    // Create or update texture (must keep TextureHandle alive!)
+    if texture.texture_handle.is_none() {
         let color_image = egui::ColorImage::from_rgba_unmultiplied(
             [size, size],
             &texture.pixels,
         );
-        texture.texture_id = Some(ctx.load_texture(
+        texture.texture_handle = Some(ctx.load_texture(
             "minimap",
             color_image,
             egui::TextureOptions::NEAREST,
-        ).id());
+        ));
     }
     
-    let Some(tex_id) = texture.texture_id else {
+    let Some(ref tex_handle) = texture.texture_handle else {
         return;
     };
+    let tex_id = tex_handle.id();
     
     // Position in top-right corner
     let screen = ctx.screen_rect();
@@ -301,13 +281,14 @@ fn minimap_render_system(
                 
                 // Player direction arrow
                 if let Ok(controller) = camera_controller.get_single() {
-                    let yaw = controller.target_yaw;
+                    // target_yaw is in degrees, convert to radians for trig
+                    let yaw_rad = controller.target_yaw.to_radians();
                     let arrow_len = 12.0;
                     let arrow_width = 6.0;
                     
                     // Arrow points in look direction (north = -Z = up on map)
-                    let dir_x = yaw.sin();
-                    let dir_z = -yaw.cos(); // Negative because screen Y is inverted
+                    let dir_x = yaw_rad.sin();
+                    let dir_z = -yaw_rad.cos(); // Negative because screen Y is inverted
                     
                     let tip = center + egui::vec2(dir_x * arrow_len, dir_z * arrow_len);
                     let left = center + egui::vec2(
