@@ -128,7 +128,10 @@ pub fn draw_worldgen_panel(
 
             // ── Seed ──
             ui.horizontal(|ui| {
-                ui.label("Seed:");
+                ui.label("Seed:").on_hover_text(
+                    "The world seed determines all terrain generation.\n\
+                    Same seed = same world every time."
+                );
                 let response = ui.add(
                     egui::TextEdit::singleline(&mut state.seed_text)
                         .desired_width(100.0)
@@ -140,7 +143,7 @@ pub fn draw_worldgen_panel(
                         state.dirty = true;
                     }
                 }
-                if ui.button("🎲").on_hover_text("Random seed").clicked() {
+                if ui.button("🎲").on_hover_text("Generate a random seed").clicked() {
                     state.seed = rand::random();
                     state.seed_text = state.seed.to_string();
                     state.dirty = true;
@@ -153,22 +156,43 @@ pub fn draw_worldgen_panel(
             ui.label(egui::RichText::new("Terrain Shape").strong());
 
             ui.horizontal(|ui| {
-                ui.label("Base Height:");
-                if ui.add(egui::Slider::new(&mut state.base_height, 16.0..=128.0)).changed() {
+                ui.label("Base Height:").on_hover_text(
+                    "The average ground level in blocks.\n\
+                    Higher values raise the entire world.\n\
+                    Default: 32"
+                );
+                if ui.add(egui::Slider::new(&mut state.base_height, 16.0..=128.0))
+                    .on_hover_text("Average terrain elevation")
+                    .changed()
+                {
                     state.dirty = true;
                 }
             });
 
             ui.horizontal(|ui| {
-                ui.label("Height Scale:");
-                if ui.add(egui::Slider::new(&mut state.height_scale, 4.0..=64.0)).changed() {
+                ui.label("Height Scale:").on_hover_text(
+                    "How much terrain varies from the base height.\n\
+                    Low = flat plains, High = dramatic mountains.\n\
+                    Default: 16"
+                );
+                if ui.add(egui::Slider::new(&mut state.height_scale, 4.0..=64.0))
+                    .on_hover_text("Terrain height variation")
+                    .changed()
+                {
                     state.dirty = true;
                 }
             });
 
             ui.horizontal(|ui| {
-                ui.label("Sea Level:");
-                if ui.add(egui::Slider::new(&mut state.sea_level, 0..=64)).changed() {
+                ui.label("Sea Level:").on_hover_text(
+                    "Blocks below this Y-level become water.\n\
+                    Set lower than Base Height for oceans.\n\
+                    Default: 28"
+                );
+                if ui.add(egui::Slider::new(&mut state.sea_level, 0..=64))
+                    .on_hover_text("Water fills below this level")
+                    .changed()
+                {
                     state.dirty = true;
                 }
             });
@@ -179,7 +203,12 @@ pub fn draw_worldgen_panel(
             ui.label(egui::RichText::new("Biomes").strong());
 
             ui.horizontal(|ui| {
-                ui.label("Biome Size:");
+                ui.label("Biome Size:").on_hover_text(
+                    "How large biomes are across the world.\n\
+                    Small = frequent biome changes.\n\
+                    Large = vast continuous regions.\n\
+                    Default: 2x"
+                );
                 // Convert scale to a more intuitive "size" (inverse relationship)
                 // biome_scale 0.002 = huge biomes, 0.02 = tiny biomes
                 let mut biome_size = 1.0 / (state.biome_scale * 100.0);
@@ -187,30 +216,51 @@ pub fn draw_worldgen_panel(
                     egui::Slider::new(&mut biome_size, 0.5..=10.0)
                         .logarithmic(true)
                         .suffix("x")
-                ).changed() {
+                ).on_hover_text("Biome scale multiplier").changed() {
                     state.biome_scale = 1.0 / (biome_size * 100.0);
                     state.dirty = true;
                 }
             });
-            ui.small("Larger = bigger biomes");
 
             ui.horizontal(|ui| {
-                if ui.checkbox(&mut state.blend_enabled, "Blend Boundaries").changed() {
+                if ui.checkbox(&mut state.blend_enabled, "Blend Boundaries")
+                    .on_hover_text(
+                        "Smoothly blend terrain between biomes.\n\
+                        Creates gradual transitions instead of\n\
+                        hard edges at biome borders."
+                    )
+                    .changed()
+                {
                     state.dirty = true;
                 }
             });
 
             if state.blend_enabled {
                 ui.horizontal(|ui| {
-                    ui.label("  Blend Distance:");
-                    if ui.add(egui::Slider::new(&mut state.blend_distance, 8.0..=128.0)).changed() {
+                    ui.label("  Blend Distance:").on_hover_text(
+                        "Width of the transition zone between biomes.\n\
+                        Larger = smoother, wider gradients.\n\
+                        Default: 32 blocks"
+                    );
+                    if ui.add(egui::Slider::new(&mut state.blend_distance, 8.0..=128.0))
+                        .on_hover_text("Transition zone width in blocks")
+                        .changed()
+                    {
                         state.dirty = true;
                     }
                 });
 
                 ui.horizontal(|ui| {
-                    ui.label("  Edge Noise:");
-                    if ui.add(egui::Slider::new(&mut state.transition_noise_amplitude, 0.0..=1.0)).changed() {
+                    ui.label("  Edge Noise:").on_hover_text(
+                        "How irregular biome boundaries are.\n\
+                        0 = smooth geometric edges.\n\
+                        1 = jagged, organic-looking borders.\n\
+                        Default: 0.45"
+                    );
+                    if ui.add(egui::Slider::new(&mut state.transition_noise_amplitude, 0.0..=1.0))
+                        .on_hover_text("Boundary irregularity")
+                        .changed()
+                    {
                         state.dirty = true;
                     }
                 });
@@ -222,13 +272,18 @@ pub fn draw_worldgen_panel(
             ui.label(egui::RichText::new("Vegetation").strong());
 
             ui.horizontal(|ui| {
-                ui.label("Tree Density:");
+                ui.label("Tree Density:").on_hover_text(
+                    "Probability of trees spawning on valid surfaces.\n\
+                    Affects forests, plains, and other tree-supporting biomes.\n\
+                    0% = no trees, 20% = dense forest.\n\
+                    Default: 2%"
+                );
                 // Show as percentage
                 let mut density_pct = state.tree_density * 100.0;
                 if ui.add(
                     egui::Slider::new(&mut density_pct, 0.0..=20.0)
                         .suffix("%")
-                ).changed() {
+                ).on_hover_text("Tree spawn probability").changed() {
                     state.tree_density = density_pct / 100.0;
                     state.dirty = true;
                 }
@@ -240,30 +295,51 @@ pub fn draw_worldgen_panel(
             egui::CollapsingHeader::new("⚙ Advanced")
                 .default_open(false)
                 .show(ui, |ui| {
+                    ui.small("⚠ These settings require understanding of noise-based terrain generation.");
+                    ui.add_space(4.0);
+
                     ui.horizontal(|ui| {
-                        ui.label("Noise Frequency:");
+                        ui.label("Noise Frequency:").on_hover_text(
+                            "Base frequency of the terrain noise.\n\
+                            Lower = larger, smoother features.\n\
+                            Higher = smaller, more detailed terrain.\n\
+                            Default: 0.02"
+                        );
                         if ui.add(
                             egui::Slider::new(&mut state.frequency, 0.005..=0.1)
                                 .logarithmic(true)
-                        ).changed() {
+                        ).on_hover_text("Terrain detail frequency").changed() {
                             state.dirty = true;
                         }
                     });
 
                     ui.horizontal(|ui| {
-                        ui.label("Octaves:");
+                        ui.label("Octaves:").on_hover_text(
+                            "Number of noise layers combined.\n\
+                            More octaves = more detail at multiple scales.\n\
+                            Higher values are more expensive to compute.\n\
+                            Default: 4"
+                        );
                         let mut octaves_i32 = state.octaves as i32;
-                        if ui.add(egui::Slider::new(&mut octaves_i32, 1..=8)).changed() {
+                        if ui.add(egui::Slider::new(&mut octaves_i32, 1..=8))
+                            .on_hover_text("Noise detail layers")
+                            .changed()
+                        {
                             state.octaves = octaves_i32 as usize;
                             state.dirty = true;
                         }
                     });
 
                     ui.horizontal(|ui| {
-                        ui.label("Transition Noise Scale:");
+                        ui.label("Transition Noise Scale:").on_hover_text(
+                            "Frequency of the noise used to warp biome edges.\n\
+                            Higher = more jagged, detailed borders.\n\
+                            Lower = smoother, broader edge variations.\n\
+                            Default: 0.08"
+                        );
                         if ui.add(
                             egui::Slider::new(&mut state.transition_noise_scale, 0.01..=0.2)
-                        ).changed() {
+                        ).on_hover_text("Edge warping frequency").changed() {
                             state.dirty = true;
                         }
                     });
