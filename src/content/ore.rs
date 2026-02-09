@@ -348,32 +348,34 @@ impl OreRegistry {
 /// Generate default ore definitions if none exist
 pub fn create_default_ores(registry: &mut OreRegistry) {
     let defaults = vec![
+        // Tier 1: Common metals (surface to mid-depth)
         OreDefinition {
-            id: "coal_ore".to_string(),
-            display_name: "Coal Ore".to_string(),
+            id: "copper_ore".to_string(),
+            display_name: "Copper Ore".to_string(),
             texture_index: 1,
             hardness: 2.0,
-            description: "Common fuel source, found throughout the underground.".to_string(),
+            description: "Soft, abundant metal. The foundation of early crafting.".to_string(),
             generation: OreGeneration {
-                min_y: 0,
-                max_y: 80,
+                min_y: 16,
+                max_y: 96,
                 vein_size: 12,
-                frequency: 0.04,
+                frequency: 0.035,
                 biomes: BiomeFilter::All,
             },
             drop: OreDrop {
-                item: "coal".to_string(),
-                min_count: 1,
-                max_count: 2,
+                item: "raw_copper".to_string(),
+                min_count: 2,
+                max_count: 4,
             },
             ..Default::default()
         },
+        // Tier 2: Standard metals (mid-depth)
         OreDefinition {
             id: "iron_ore".to_string(),
             display_name: "Iron Ore".to_string(),
             texture_index: 2,
             hardness: 3.0,
-            description: "Essential metal ore for tools and armor.".to_string(),
+            description: "Strong and reliable. The backbone of industry.".to_string(),
             generation: OreGeneration {
                 min_y: 0,
                 max_y: 64,
@@ -384,87 +386,49 @@ pub fn create_default_ores(registry: &mut OreRegistry) {
             drop: OreDrop {
                 item: "raw_iron".to_string(),
                 min_count: 1,
-                max_count: 1,
+                max_count: 2,
             },
             ..Default::default()
         },
+        // Tier 3: Precious metals (deeper)
+        OreDefinition {
+            id: "silver_ore".to_string(),
+            display_name: "Silver Ore".to_string(),
+            texture_index: 3,
+            hardness: 2.5,
+            description: "Lustrous and magical. Said to ward off dark creatures.".to_string(),
+            generation: OreGeneration {
+                min_y: 0,
+                max_y: 40,
+                vein_size: 5,
+                frequency: 0.012,
+                biomes: BiomeFilter::All,
+            },
+            drop: OreDrop {
+                item: "raw_silver".to_string(),
+                min_count: 1,
+                max_count: 2,
+            },
+            ..Default::default()
+        },
+        // Tier 4: Rare metals (deep)
         OreDefinition {
             id: "gold_ore".to_string(),
             display_name: "Gold Ore".to_string(),
-            texture_index: 3,
-            hardness: 3.0,
-            description: "Precious metal, rarer than iron.".to_string(),
+            texture_index: 4,
+            hardness: 2.5,
+            description: "Precious and coveted. Currency of kingdoms.".to_string(),
             generation: OreGeneration {
                 min_y: 0,
                 max_y: 32,
-                vein_size: 6,
-                frequency: 0.008,
+                vein_size: 4,
+                frequency: 0.006,
                 biomes: BiomeFilter::All,
             },
             drop: OreDrop {
                 item: "raw_gold".to_string(),
                 min_count: 1,
                 max_count: 1,
-            },
-            ..Default::default()
-        },
-        OreDefinition {
-            id: "diamond_ore".to_string(),
-            display_name: "Diamond Ore".to_string(),
-            texture_index: 4,
-            hardness: 5.0,
-            description: "Extremely rare gemstone, found deep underground.".to_string(),
-            generation: OreGeneration {
-                min_y: 0,
-                max_y: 16,
-                vein_size: 4,
-                frequency: 0.002,
-                biomes: BiomeFilter::All,
-            },
-            drop: OreDrop {
-                item: "diamond".to_string(),
-                min_count: 1,
-                max_count: 1,
-            },
-            ..Default::default()
-        },
-        OreDefinition {
-            id: "emerald_ore".to_string(),
-            display_name: "Emerald Ore".to_string(),
-            texture_index: 5,
-            hardness: 5.0,
-            description: "Rare gem found only in mountainous regions.".to_string(),
-            generation: OreGeneration {
-                min_y: 0,
-                max_y: 32,
-                vein_size: 1,
-                frequency: 0.001,
-                biomes: BiomeFilter::Only(vec!["mountains".to_string()]),
-            },
-            drop: OreDrop {
-                item: "emerald".to_string(),
-                min_count: 1,
-                max_count: 1,
-            },
-            ..Default::default()
-        },
-        OreDefinition {
-            id: "copper_ore".to_string(),
-            display_name: "Copper Ore".to_string(),
-            texture_index: 6,
-            hardness: 2.5,
-            description: "Common metal used for wiring and bronze.".to_string(),
-            generation: OreGeneration {
-                min_y: 0,
-                max_y: 72,
-                vein_size: 10,
-                frequency: 0.03,
-                biomes: BiomeFilter::All,
-            },
-            drop: OreDrop {
-                item: "raw_copper".to_string(),
-                min_count: 2,
-                max_count: 4,
             },
             ..Default::default()
         },
