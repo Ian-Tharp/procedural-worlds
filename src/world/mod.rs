@@ -19,7 +19,7 @@ use serde::{Deserialize, Serialize};
 use crate::engine::memory::ChunkMeshPool;
 use crate::generation::{
     generate_cacti, generate_caves, generate_chunk_terrain, generate_ores, generate_trees,
-    default_ore_configs, TerrainConfig,
+    default_ore_configs, ore_configs_from_definitions, OreSpawnConfig, TerrainConfig,
 };
 
 pub mod atlas_material;
@@ -800,6 +800,7 @@ fn chunk_streaming_system(
     chunk_storage: Res<ChunkStorage>,
     priority_config: Res<chunk_priority::ChunkPriorityConfig>,
     camera_query: Query<&crate::engine::controller::CameraController, With<Camera3d>>,
+    ore_registry: Option<Res<crate::content::OreRegistry>>,
 ) {
     // Reset per-frame spawn counter
     chunk_manager.tasks_spawned_this_frame = 0;
@@ -811,6 +812,16 @@ fn chunk_streaming_system(
     let vert_up = chunk_manager.vertical_load_up;
 
     let task_pool = AsyncComputeTaskPool::get();
+    
+    // Extract ore configs from registry (or use defaults if not available)
+    // This is done once per frame, not per-chunk, for efficiency
+    let ore_configs: Vec<OreSpawnConfig> = ore_registry
+        .as_ref()
+        .map(|registry| {
+            let definitions: Vec<_> = registry.iter().cloned().collect();
+            ore_configs_from_definitions(&definitions)
+        })
+        .unwrap_or_else(default_ore_configs);
 
     // Get camera forward direction for priority sorting
     let forward_dir = if priority_config.enabled {
@@ -846,6 +857,7 @@ fn chunk_streaming_system(
         // Clone resources for the background task
         let config = (*terrain_config).clone();
         let storage = ChunkStorage::new(chunk_storage.save_dir.clone());
+        let ores = ore_configs.clone();  // Clone ore configs for this task
 
         // Spawn async task: try loading from disk first, generate if not found
         let task = task_pool.spawn(async move {
@@ -857,7 +869,7 @@ fn chunk_streaming_system(
             let mut chunk = Chunk::new(chunk_pos);
             generate_chunk_terrain(&mut chunk, &config);
             generate_caves(&mut chunk, &config);
-            generate_ores(&mut chunk, &config, &default_ore_configs());
+            generate_ores(&mut chunk, &config, &ores);  // Use registry-derived configs
             generate_trees(&mut chunk, &config);
             generate_cacti(&mut chunk, &config);
             ChunkLoadResult { chunk, from_cache: false }

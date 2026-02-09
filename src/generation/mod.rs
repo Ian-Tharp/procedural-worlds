@@ -782,6 +782,9 @@ pub fn generate_cacti(chunk: &mut Chunk, config: &TerrainConfig) {
 // ============================================================================
 
 /// Ore spawn configuration - matches data from OreRegistry
+/// 
+/// This is a lightweight struct that can be cloned and passed
+/// to async chunk generation tasks.
 #[derive(Debug, Clone)]
 pub struct OreSpawnConfig {
     /// Unique identifier
@@ -946,8 +949,45 @@ fn ore_placement_hash(x: i32, y: i32, z: i32, seed: u32) -> u64 {
     hasher.finish()
 }
 
-/// Get default ore spawn configurations for the base game ores.
-/// These match the OreDefinition defaults in the content module.
+/// Map ore ID to BlockType.
+/// 
+/// Note: This is a temporary bridge until BlockType becomes data-driven.
+/// Currently only the 4 built-in ores are supported. Custom ores created
+/// in the editor won't spawn until we refactor BlockType to be dynamic.
+pub fn ore_id_to_block_type(id: &str) -> Option<BlockType> {
+    match id {
+        "copper_ore" => Some(BlockType::CopperOre),
+        "iron_ore" => Some(BlockType::IronOre),
+        "silver_ore" => Some(BlockType::SilverOre),
+        "gold_ore" => Some(BlockType::GoldOre),
+        _ => None, // Custom ores not yet supported
+    }
+}
+
+/// Convert OreDefinitions from the content system into spawn configs.
+/// 
+/// This reads from the OreRegistry so changes made in the editor
+/// affect world generation (after chunk regeneration).
+pub fn ore_configs_from_definitions(definitions: &[crate::content::OreDefinition]) -> Vec<OreSpawnConfig> {
+    definitions
+        .iter()
+        .filter_map(|def| {
+            ore_id_to_block_type(&def.id).map(|block_type| OreSpawnConfig {
+                id: def.id.clone(),
+                block_type,
+                min_y: def.generation.min_y,
+                max_y: def.generation.max_y,
+                vein_size: def.generation.vein_size,
+                frequency: def.generation.frequency,
+            })
+        })
+        .collect()
+}
+
+/// Get default ore spawn configurations.
+/// 
+/// DEPRECATED: Use `ore_configs_from_definitions()` with OreRegistry instead.
+/// This exists as a fallback when the registry isn't available.
 pub fn default_ore_configs() -> Vec<OreSpawnConfig> {
     vec![
         OreSpawnConfig {
