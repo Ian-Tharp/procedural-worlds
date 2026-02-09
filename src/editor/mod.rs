@@ -6,6 +6,7 @@ pub mod content_editor;
 pub mod debug_console;
 pub mod debug_overlay;
 pub mod hud;
+pub mod minimap;
 pub mod performance;
 pub mod worldgen_panel;
 
@@ -15,6 +16,7 @@ pub use content_editor::ContentEditorPlugin;
 pub use debug_console::DebugConsolePlugin;
 pub use debug_overlay::DebugOverlayPlugin;
 pub use hud::HudPlugin;
+pub use minimap::MinimapPlugin;
 pub use performance::PerformanceDashboardPlugin;
 pub use worldgen_panel::WorldGenPanelPlugin;
 

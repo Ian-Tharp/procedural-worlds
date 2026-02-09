@@ -49,6 +49,7 @@ fn main() {
         .add_plugins(editor::PerformanceDashboardPlugin)
         .add_plugins(editor::HudPlugin)
         .add_plugins(editor::ContentEditorPlugin)
+        .add_plugins(editor::MinimapPlugin)
         .add_plugins(engine::CameraPlugin)
         .add_plugins(engine::profiler::ProfilerPlugin)
         .add_plugins(engine::RaycastPlugin)
