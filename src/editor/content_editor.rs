@@ -189,26 +189,34 @@ fn draw_floating_editor(
         });
 }
 
-/// Draw the fullscreen editor
+/// Draw the fullscreen editor (covers entire screen)
 fn draw_fullscreen_editor(
     ctx: &egui::Context,
     state: &mut ContentEditorState,
     ore_registry: Option<&mut OreRegistry>,
 ) {
-    let screen = ctx.screen_rect();
-    let margin = 40.0;
-
-    egui::Window::new("📦 Content Editor")
-        .id(egui::Id::new("content_editor_fullscreen"))
-        .fixed_pos(egui::pos2(margin, margin))
-        .fixed_size(egui::vec2(
-            screen.width() - margin * 2.0,
-            screen.height() - margin * 2.0,
-        ))
-        .title_bar(true)
-        .resizable(false)
-        .collapsible(false)
+    // Use CentralPanel for true fullscreen - covers entire screen
+    egui::CentralPanel::default()
+        .frame(egui::Frame::none()
+            .fill(egui::Color32::from_rgba_unmultiplied(20, 22, 28, 250))
+            .inner_margin(egui::Margin::same(20.0)))
         .show(ctx, |ui| {
+            // Title bar
+            ui.horizontal(|ui| {
+                ui.heading("📦 Content Editor");
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui.button("✕ Close").clicked() {
+                        state.visible = false;
+                        state.fullscreen = false;
+                    }
+                    if ui.button("⊟ Exit Fullscreen").clicked() {
+                        state.fullscreen = false;
+                    }
+                });
+            });
+            ui.separator();
+            
+            // Main content
             draw_editor_content(ui, state, ore_registry);
         });
 }

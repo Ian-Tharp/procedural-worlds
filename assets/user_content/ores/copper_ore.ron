@@ -1,0 +1,21 @@
+(
+    id: "copper_ore",
+    display_name: "Copper Ore",
+    texture_index: 1,
+    hardness: 2.0,
+    tool_required: "pickaxe",
+    generation: (
+        min_y: 16,
+        max_y: 96,
+        vein_size: 12,
+        frequency: 0.035,
+        biomes: All,
+    ),
+    drop: (
+        item: "raw_copper",
+        min_count: 2,
+        max_count: 4,
+    ),
+    user_content: true,
+    description: "Soft, abundant metal. The foundation of early crafting.",
+)
