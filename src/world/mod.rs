@@ -17,7 +17,10 @@ use bevy::tasks::{block_on, futures_lite::future, AsyncComputeTaskPool, Task};
 use serde::{Deserialize, Serialize};
 
 use crate::engine::memory::ChunkMeshPool;
-use crate::generation::{generate_cacti, generate_caves, generate_chunk_terrain, generate_trees, TerrainConfig};
+use crate::generation::{
+    generate_cacti, generate_caves, generate_chunk_terrain, generate_ores, generate_trees,
+    default_ore_configs, TerrainConfig,
+};
 
 pub mod atlas_material;
 pub mod chunk_priority;
@@ -60,6 +63,11 @@ pub enum BlockType {
     VolcanicRock = 12,
     Cactus = 13,
     SandDunes = 14,
+    // Ores
+    CopperOre = 15,
+    IronOre = 16,
+    SilverOre = 17,
+    GoldOre = 18,
 }
 
 impl From<BlockType> for u16 {
@@ -86,6 +94,10 @@ impl From<u16> for BlockType {
             12 => BlockType::VolcanicRock,
             13 => BlockType::Cactus,
             14 => BlockType::SandDunes,
+            15 => BlockType::CopperOre,
+            16 => BlockType::IronOre,
+            17 => BlockType::SilverOre,
+            18 => BlockType::GoldOre,
             _ => BlockType::Air, // Unknown block types default to Air
         }
     }
@@ -120,6 +132,10 @@ impl BlockType {
             BlockType::VolcanicRock => "Volcanic Rock",
             BlockType::Cactus => "Cactus",
             BlockType::SandDunes => "Sand Dunes",
+            BlockType::CopperOre => "Copper Ore",
+            BlockType::IronOre => "Iron Ore",
+            BlockType::SilverOre => "Silver Ore",
+            BlockType::GoldOre => "Gold Ore",
         }
     }
 }
@@ -841,6 +857,7 @@ fn chunk_streaming_system(
             let mut chunk = Chunk::new(chunk_pos);
             generate_chunk_terrain(&mut chunk, &config);
             generate_caves(&mut chunk, &config);
+            generate_ores(&mut chunk, &config, &default_ore_configs());
             generate_trees(&mut chunk, &config);
             generate_cacti(&mut chunk, &config);
             ChunkLoadResult { chunk, from_cache: false }
@@ -1498,6 +1515,7 @@ mod tests {
         let mut reference = Chunk::new(chunk_pos);
         generate_chunk_terrain(&mut reference, &config);
         generate_caves(&mut reference, &config);
+        generate_ores(&mut reference, &config, &default_ore_configs());
         generate_trees(&mut reference, &config);
         generate_cacti(&mut reference, &config);
 
@@ -1508,6 +1526,7 @@ mod tests {
             let mut chunk = Chunk::new(chunk_pos);
             generate_chunk_terrain(&mut chunk, &config_clone);
             generate_caves(&mut chunk, &config_clone);
+            generate_ores(&mut chunk, &config_clone, &default_ore_configs());
             generate_trees(&mut chunk, &config_clone);
             generate_cacti(&mut chunk, &config_clone);
             chunk
@@ -1591,6 +1610,7 @@ mod tests {
                     let mut chunk = Chunk::new(pos);
                     generate_chunk_terrain(&mut chunk, &cfg);
                     generate_caves(&mut chunk, &cfg);
+                    generate_ores(&mut chunk, &cfg, &default_ore_configs());
                     generate_trees(&mut chunk, &cfg);
                     generate_cacti(&mut chunk, &cfg);
                     chunk
@@ -1663,6 +1683,7 @@ mod tests {
             let mut c = Chunk::new(chunk_pos);
             generate_chunk_terrain(&mut c, &config);
             generate_caves(&mut c, &config);
+            generate_ores(&mut c, &config, &default_ore_configs());
             generate_trees(&mut c, &config);
             generate_cacti(&mut c, &config);
             c
@@ -1704,6 +1725,7 @@ mod tests {
             let mut c = Chunk::new(chunk_pos);
             generate_chunk_terrain(&mut c, &config);
             generate_caves(&mut c, &config);
+            generate_ores(&mut c, &config, &default_ore_configs());
             generate_trees(&mut c, &config);
             generate_cacti(&mut c, &config);
             c
@@ -1716,6 +1738,7 @@ mod tests {
         let mut reference = Chunk::new(chunk_pos);
         generate_chunk_terrain(&mut reference, &config_ref);
         generate_caves(&mut reference, &config_ref);
+        generate_ores(&mut reference, &config_ref, &default_ore_configs());
         generate_trees(&mut reference, &config_ref);
         generate_cacti(&mut reference, &config_ref);
 
