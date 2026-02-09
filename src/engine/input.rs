@@ -292,8 +292,21 @@ fn process_input_system(
     let ctx = egui_contexts.ctx_mut();
     let egui_wants_keyboard = ctx.wants_keyboard_input();
     
-    // Process keyboard inputs only if egui doesn't want them
-    if !egui_wants_keyboard {
+    // When egui takes keyboard focus, clear all pressed keyboard states
+    // to prevent "stuck keys" when user releases while typing
+    if egui_wants_keyboard {
+        // Release all currently pressed keyboard-bound actions
+        for key in keyboard.get_pressed() {
+            if let Some(action) = input_map.get_action(&InputBinding::Key(*key)) {
+                if action_states.is_active(action) {
+                    action_states.set(action, ActionState::JustReleased);
+                }
+            }
+        }
+        // Don't process any new keyboard input while egui has focus
+        // (but still process mouse below)
+    } else {
+        // Normal keyboard processing when egui doesn't want input
         for key in keyboard.get_just_pressed() {
             if let Some(action) = input_map.get_action(&InputBinding::Key(*key)) {
                 action_states.set(action, ActionState::JustPressed);

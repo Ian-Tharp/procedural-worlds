@@ -92,10 +92,18 @@ impl Plugin for ContentEditorPlugin {
 }
 
 /// Handle keyboard toggle for content editor (F10)
+/// Only responds when egui doesn't want keyboard input (not typing in text fields)
 fn content_editor_toggle_system(
     keyboard: Res<ButtonInput<KeyCode>>,
     mut state: ResMut<ContentEditorState>,
+    mut egui_contexts: EguiContexts,
 ) {
+    // Don't process hotkeys when user is typing in a text field
+    let egui_wants_keyboard = egui_contexts.ctx_mut().wants_keyboard_input();
+    if egui_wants_keyboard {
+        return;
+    }
+    
     if keyboard.just_pressed(KeyCode::F10) {
         state.visible = !state.visible;
         if !state.visible {
