@@ -71,8 +71,8 @@ pub struct MinimapTexture {
     pub generated_zoom: f32,
     /// Whether texture needs regeneration
     pub dirty: bool,
-    /// egui texture handle
-    pub texture_id: Option<egui::TextureId>,
+    /// egui texture handle (must keep alive to prevent texture from being freed)
+    pub texture_handle: Option<egui::TextureHandle>,
 }
 
 // ============================================================================
@@ -163,6 +163,9 @@ fn minimap_update_system(
     let blocks_per_pixel = config.blocks_per_pixel;
     let mut pixels = vec![0u8; size * size * 4];
     
+    // Track biome counts for debugging
+    let mut biome_counts = [0u32; 6];
+    
     for py in 0..size {
         for px in 0..size {
             // Map pixel to world position
@@ -173,6 +176,7 @@ fn minimap_update_system(
             
             // Get biome color (instant - just noise lookup)
             let biome = biome_at(world_x, world_z, &biome_noise, terrain_config.biome_scale);
+            biome_counts[biome as usize] += 1;
             let (r, g, b) = biome_to_color(biome);
             
             let idx = (py * size + px) * 4;
@@ -183,24 +187,32 @@ fn minimap_update_system(
         }
     }
     
+    // Log biome distribution for debugging
+    info!(
+        "Minimap generated at ({}, {}): Plains={}, Forest={}, Desert={}, Mountains={}, Tundra={}, Volcanic={}",
+        center_x, center_z,
+        biome_counts[0], biome_counts[1], biome_counts[2], 
+        biome_counts[3], biome_counts[4], biome_counts[5]
+    );
+    
     texture.pixels = pixels;
     texture.texture_size = size;
     texture.center_x = center_x;
     texture.center_z = center_z;
     texture.generated_zoom = blocks_per_pixel;
     texture.dirty = false;
-    texture.texture_id = None; // Will be recreated in render
+    texture.texture_handle = None; // Will be recreated in render
 }
 
 /// Map biome type to minimap color
 fn biome_to_color(biome: BiomeType) -> (u8, u8, u8) {
     match biome {
-        BiomeType::Plains => (100, 160, 70),      // Light green (grass-like)
-        BiomeType::Forest => (56, 118, 29),       // Dark green (leaves-like)
-        BiomeType::Desert => (219, 207, 163),     // Sandy tan
-        BiomeType::Mountains => (128, 128, 128),  // Stone gray
-        BiomeType::Tundra => (240, 245, 250),     // Snowy white
-        BiomeType::Volcanic => (60, 45, 45),      // Volcanic rock
+        BiomeType::Plains => (100, 200, 80),      // Bright green
+        BiomeType::Forest => (40, 140, 40),       // Dark green
+        BiomeType::Desert => (240, 220, 160),     // Bright sand
+        BiomeType::Mountains => (150, 150, 160),  // Light gray
+        BiomeType::Tundra => (255, 255, 255),     // Pure white
+        BiomeType::Volcanic => (180, 60, 40),     // Bright red-brown
     }
 }
 
@@ -218,22 +230,23 @@ fn minimap_render_system(
     let ctx = contexts.ctx_mut();
     let size = texture.texture_size;
     
-    // Create or update texture
-    if texture.texture_id.is_none() {
+    // Create or update texture (must keep TextureHandle alive!)
+    if texture.texture_handle.is_none() {
         let color_image = egui::ColorImage::from_rgba_unmultiplied(
             [size, size],
             &texture.pixels,
         );
-        texture.texture_id = Some(ctx.load_texture(
+        texture.texture_handle = Some(ctx.load_texture(
             "minimap",
             color_image,
             egui::TextureOptions::NEAREST,
-        ).id());
+        ));
     }
     
-    let Some(tex_id) = texture.texture_id else {
+    let Some(ref tex_handle) = texture.texture_handle else {
         return;
     };
+    let tex_id = tex_handle.id();
     
     // Position in top-right corner
     let screen = ctx.screen_rect();
@@ -268,13 +281,14 @@ fn minimap_render_system(
                 
                 // Player direction arrow
                 if let Ok(controller) = camera_controller.get_single() {
-                    let yaw = controller.target_yaw;
+                    // target_yaw is in degrees, convert to radians for trig
+                    let yaw_rad = controller.target_yaw.to_radians();
                     let arrow_len = 12.0;
                     let arrow_width = 6.0;
                     
                     // Arrow points in look direction (north = -Z = up on map)
-                    let dir_x = yaw.sin();
-                    let dir_z = -yaw.cos(); // Negative because screen Y is inverted
+                    let dir_x = yaw_rad.sin();
+                    let dir_z = -yaw_rad.cos(); // Negative because screen Y is inverted
                     
                     let tip = center + egui::vec2(dir_x * arrow_len, dir_z * arrow_len);
                     let left = center + egui::vec2(
