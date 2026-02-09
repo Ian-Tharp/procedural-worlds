@@ -29,10 +29,12 @@
 //! }
 //! ```
 
+pub mod block;
 pub mod ore;
 
 use bevy::prelude::*;
 
+pub use block::{BlockDefinition, BlockRegistry, BlockCategory, BlockPlugin};
 pub use ore::{OreDefinition, OreGeneration, OreRegistry, BiomeFilter};
 
 /// Plugin that initializes all content registries
@@ -41,5 +43,6 @@ pub struct ContentPlugin;
 impl Plugin for ContentPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins(ore::OrePlugin);
+        app.add_plugins(block::BlockPlugin);
     }
 }
