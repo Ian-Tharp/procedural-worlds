@@ -12,7 +12,7 @@ use bevy_egui::{egui, EguiContexts};
 
 use crate::generation::biome::{biome_at, BiomeType};
 use crate::generation::TerrainConfig;
-use crate::world::{BlockType, Chunk, ChunkManager, CHUNK_SIZE};
+use crate::world::CHUNK_SIZE;
 
 // ============================================================================
 // CONFIGURATION
@@ -73,10 +73,6 @@ pub struct MinimapTexture {
     pub dirty: bool,
     /// egui texture handle
     pub texture_id: Option<egui::TextureId>,
-    /// Number of loaded chunks when texture was last generated
-    pub chunks_at_generation: usize,
-    /// Percentage of minimap pixels that had loaded chunk data (0.0-1.0)
-    pub loaded_coverage: f32,
 }
 
 // ============================================================================
@@ -127,13 +123,12 @@ fn minimap_toggle_system(
 }
 
 /// Update minimap texture when player moves or zoom changes
+/// Uses biome colors from terrain seed - instant, no chunk loading needed
 fn minimap_update_system(
     config: Res<MinimapConfig>,
     mut texture: ResMut<MinimapTexture>,
-    chunk_manager: Res<ChunkManager>,
     terrain_config: Res<TerrainConfig>,
     player_query: Query<&GlobalTransform, With<Camera3d>>,
-    chunk_query: Query<&Chunk>,
 ) {
     if !config.visible {
         return;
@@ -147,30 +142,26 @@ fn minimap_update_system(
     let center_x = player_pos.x.floor() as i32;
     let center_z = player_pos.z.floor() as i32;
     
-    // Current chunk count - regenerate if more chunks have loaded
-    let current_chunk_count = chunk_manager.chunks.len();
-    let chunks_changed = current_chunk_count != texture.chunks_at_generation;
-    
     // Check if we need to regenerate
     let size = config.size as usize;
     let needs_regen = texture.dirty
         || texture.texture_size != size
         || texture.generated_zoom != config.blocks_per_pixel
-        || (texture.center_x - center_x).abs() > 8
-        || (texture.center_z - center_z).abs() > 8
-        || (chunks_changed && texture.loaded_coverage < 0.95); // Regenerate while loading
+        || (texture.center_x - center_x).abs() > 4
+        || (texture.center_z - center_z).abs() > 4;
     
     if !needs_regen {
         return;
     }
     
-    // Generate new texture
-    let blocks_per_pixel = config.blocks_per_pixel;
-    let _half_size = (size as f32 / 2.0) * blocks_per_pixel;
+    // Pre-create biome noise (uses seed - deterministic)
+    let biome_noise = noise::Simplex::new(
+        terrain_config.seed.wrapping_add(terrain_config.biome_seed_offset)
+    );
     
+    // Generate texture using biome colors (instant - just noise sampling)
+    let blocks_per_pixel = config.blocks_per_pixel;
     let mut pixels = vec![0u8; size * size * 4];
-    let mut loaded_pixels = 0usize;
-    let total_pixels = size * size;
     
     for py in 0..size {
         for px in 0..size {
@@ -180,18 +171,9 @@ fn minimap_update_system(
             let world_x = center_x + offset_x as i32;
             let world_z = center_z + offset_z as i32;
             
-            // Get color for this position (returns loaded flag too)
-            let (r, g, b, from_chunk) = get_terrain_color_with_source(
-                world_x, 
-                world_z, 
-                &chunk_manager,
-                &chunk_query,
-                &terrain_config
-            );
-            
-            if from_chunk {
-                loaded_pixels += 1;
-            }
+            // Get biome color (instant - just noise lookup)
+            let biome = biome_at(world_x, world_z, &biome_noise, terrain_config.biome_scale);
+            let (r, g, b) = biome_to_color(biome);
             
             let idx = (py * size + px) * 4;
             pixels[idx] = r;
@@ -208,79 +190,9 @@ fn minimap_update_system(
     texture.generated_zoom = blocks_per_pixel;
     texture.dirty = false;
     texture.texture_id = None; // Will be recreated in render
-    texture.chunks_at_generation = current_chunk_count;
-    texture.loaded_coverage = loaded_pixels as f32 / total_pixels as f32;
 }
 
-/// Get terrain color at a world position by reading actual block data
-/// Returns (r, g, b, from_loaded_chunk)
-fn get_terrain_color_with_source(
-    world_x: i32,
-    world_z: i32,
-    chunk_manager: &ChunkManager,
-    chunk_query: &Query<&Chunk>,
-    terrain_config: &TerrainConfig,
-) -> (u8, u8, u8, bool) {
-    let chunk_x = world_x.div_euclid(CHUNK_SIZE as i32);
-    let chunk_z = world_z.div_euclid(CHUNK_SIZE as i32);
-    let local_x = world_x.rem_euclid(CHUNK_SIZE as i32) as usize;
-    let local_z = world_z.rem_euclid(CHUNK_SIZE as i32) as usize;
-    
-    // Scan from top chunk down to find surface block
-    // Start high and work down to find the first non-air block
-    for chunk_y in (chunk_manager.vertical_load_down..=chunk_manager.vertical_load_up).rev() {
-        let chunk_pos = IVec3::new(chunk_x, chunk_y, chunk_z);
-        
-        if let Some(&entity) = chunk_manager.chunks.get(&chunk_pos) {
-            // Chunk is loaded - get the actual block data
-            if let Ok(chunk) = chunk_query.get(entity) {
-                // Scan from top of chunk down to find surface
-                for local_y in (0..CHUNK_SIZE).rev() {
-                    let block = chunk.get_block(local_x, local_y, local_z);
-                    if block != BlockType::Air {
-                        let (r, g, b) = block_to_color(block);
-                        return (r, g, b, true);
-                    }
-                }
-                // This chunk is all air at this column, continue to lower chunks
-            }
-        }
-    }
-    
-    // No loaded chunks or all air - fall back to biome-based color
-    let biome_noise = noise::Simplex::new(terrain_config.seed.wrapping_add(terrain_config.biome_seed_offset));
-    let biome = biome_at(world_x, world_z, &biome_noise, terrain_config.biome_scale);
-    
-    let (r, g, b) = biome_to_color(biome);
-    (r, g, b, false)
-}
-
-/// Map block type to minimap color (like Xaero's minimap)
-fn block_to_color(block: BlockType) -> (u8, u8, u8) {
-    match block {
-        BlockType::Air => (135, 206, 235),        // Sky blue (shouldn't happen)
-        BlockType::Stone => (128, 128, 128),      // Gray
-        BlockType::Dirt => (134, 96, 67),         // Brown
-        BlockType::Grass => (86, 152, 59),        // Green (grass top color)
-        BlockType::Sand => (219, 207, 163),       // Sandy tan
-        BlockType::Water => (64, 100, 170),       // Blue
-        BlockType::Wood => (156, 127, 78),        // Brown wood
-        BlockType::Leaves => (56, 118, 29),       // Dark green
-        BlockType::Sandstone => (216, 199, 150),  // Light tan
-        BlockType::Snow => (250, 250, 255),       // White
-        BlockType::Ice => (160, 200, 255),        // Light blue
-        BlockType::Obsidian => (20, 18, 30),      // Very dark purple
-        BlockType::VolcanicRock => (60, 45, 45),  // Dark reddish gray
-        BlockType::Cactus => (85, 140, 70),       // Cactus green
-        BlockType::SandDunes => (230, 215, 170),  // Light sand
-        BlockType::CopperOre => (184, 115, 81),   // Copper orange-brown
-        BlockType::IronOre => (136, 130, 127),    // Iron gray with rust hints
-        BlockType::SilverOre => (192, 192, 200),  // Silver
-        BlockType::GoldOre => (255, 215, 80),     // Gold
-    }
-}
-
-/// Map biome type to minimap color (fallback for unloaded chunks)
+/// Map biome type to minimap color
 fn biome_to_color(biome: BiomeType) -> (u8, u8, u8) {
     match biome {
         BiomeType::Plains => (100, 160, 70),      // Light green (grass-like)
@@ -297,8 +209,6 @@ fn minimap_render_system(
     config: Res<MinimapConfig>,
     mut texture: ResMut<MinimapTexture>,
     mut contexts: EguiContexts,
-    time: Res<Time>,
-    _player_query: Query<&GlobalTransform, With<Camera3d>>,
     camera_controller: Query<&crate::engine::controller::CameraController, With<Camera3d>>,
 ) {
     if !config.visible || texture.pixels.is_empty() {
@@ -333,8 +243,6 @@ fn minimap_render_system(
         config.margin,
     );
     
-    let coverage = texture.loaded_coverage;
-    
     egui::Area::new(egui::Id::new("minimap"))
         .fixed_pos(pos)
         .order(egui::Order::Foreground)
@@ -354,45 +262,6 @@ fn minimap_render_system(
                 
                 let rect = response.rect;
                 let painter = ui.painter_at(rect);
-                
-                // Loading indicator (spinner + percentage) when chunks are still loading
-                if coverage < 0.95 {
-                    let center = rect.center();
-                    let t = time.elapsed_secs();
-                    
-                    // Spinning arc
-                    let radius = 20.0;
-                    let start_angle = t * 3.0; // Rotation speed
-                    let arc_length = std::f32::consts::PI * 1.5; // 3/4 circle
-                    
-                    // Draw arc segments
-                    let segments = 24;
-                    for i in 0..segments {
-                        let frac = i as f32 / segments as f32;
-                        let angle = start_angle + frac * arc_length;
-                        let next_angle = start_angle + (frac + 1.0 / segments as f32) * arc_length;
-                        
-                        let p1 = center + egui::vec2(angle.cos() * radius, angle.sin() * radius);
-                        let p2 = center + egui::vec2(next_angle.cos() * radius, next_angle.sin() * radius);
-                        
-                        // Fade alpha along arc
-                        let alpha = ((1.0 - frac) * 200.0) as u8;
-                        painter.line_segment(
-                            [p1, p2],
-                            egui::Stroke::new(3.0, egui::Color32::from_rgba_unmultiplied(255, 255, 255, alpha)),
-                        );
-                    }
-                    
-                    // Loading percentage text
-                    let pct = (coverage * 100.0) as u32;
-                    painter.text(
-                        center + egui::vec2(0.0, radius + 12.0),
-                        egui::Align2::CENTER_CENTER,
-                        format!("{}%", pct),
-                        egui::FontId::proportional(11.0),
-                        egui::Color32::from_rgba_unmultiplied(255, 255, 255, 200),
-                    );
-                }
                 
                 // Draw player indicator (center)
                 let center = rect.center();
