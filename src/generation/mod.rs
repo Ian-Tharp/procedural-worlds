@@ -70,6 +70,35 @@ pub struct TerrainConfig {
     /// At 1.0, noise can shift the effective boundary by up to one full
     /// `blend_distance`. Default: 0.45.
     pub transition_noise_amplitude: f64,
+
+    // ── Cave Generation ──
+
+    /// Whether cave generation is enabled.
+    pub caves_enabled: bool,
+    /// Noise threshold for cave generation (0.0–1.0).
+    ///
+    /// Higher values = fewer, smaller caves.
+    /// 0.5 = lots of caves, 0.8 = sparse caves.
+    /// Default: 0.7 (moderate caves).
+    pub cave_threshold: f64,
+    /// How many blocks below the surface are protected from caves.
+    ///
+    /// Prevents caves from breaking through grass/dirt layer.
+    /// Default: 5 blocks.
+    pub cave_surface_protection: i32,
+    /// Noise frequency for cave generation.
+    ///
+    /// Lower = larger cave systems, Higher = smaller tunnels.
+    /// Default: 0.05.
+    pub cave_frequency: f64,
+
+    // ── Vegetation ──
+
+    /// Cactus density multiplier (relative to biome defaults).
+    ///
+    /// Similar to tree_density but for desert cacti.
+    /// Default: 1.0 (use biome defaults).
+    pub cactus_density_multiplier: f64,
 }
 
 /// Default tree density value used as the scaling reference.
@@ -91,6 +120,11 @@ impl Default for TerrainConfig {
             blend_distance: 32.0,
             transition_noise_scale: 0.08,
             transition_noise_amplitude: 0.45,
+            caves_enabled: true,
+            cave_threshold: 0.7,
+            cave_surface_protection: 5,
+            cave_frequency: 0.05,
+            cactus_density_multiplier: 1.0,
         }
     }
 }
@@ -444,16 +478,20 @@ pub fn generate_chunk_terrain(chunk: &mut Chunk, config: &TerrainConfig) {
 /// Simple 3D noise for cave generation
 /// Protects the surface layer (grass and top dirt) from being carved
 pub fn generate_caves(chunk: &mut Chunk, config: &TerrainConfig) {
+    // Skip if caves are disabled
+    if !config.caves_enabled {
+        return;
+    }
+
     let noise = Perlin::new(config.seed.wrapping_add(1000));
     let terrain_noise = Simplex::new(config.seed);
     let biome_noise = Simplex::new(config.seed.wrapping_add(config.biome_seed_offset));
     let transition_noise = Perlin::new(config.seed.wrapping_add(config.biome_seed_offset + 500));
     let world_pos = chunk.world_position();
 
-    // Higher threshold = fewer caves (0.7 means only top 15% of noise creates caves)
-    let cave_threshold = 0.7;
-    // Protect this many blocks below the surface from caves
-    let surface_protection = 5;
+    let cave_threshold = config.cave_threshold;
+    let surface_protection = config.cave_surface_protection;
+    let cave_freq = config.cave_frequency;
 
     for x in 0..CHUNK_SIZE {
         for z in 0..CHUNK_SIZE {
@@ -480,9 +518,9 @@ pub fn generate_caves(chunk: &mut Chunk, config: &TerrainConfig) {
 
                 // 3D cave noise
                 let cave_noise = noise.get([
-                    world_x as f64 * 0.05,
-                    world_y as f64 * 0.05,
-                    world_z as f64 * 0.05,
+                    world_x as f64 * cave_freq,
+                    world_y as f64 * cave_freq,
+                    world_z as f64 * cave_freq,
                 ]);
 
                 if cave_noise > cave_threshold {
@@ -703,7 +741,7 @@ pub fn generate_cacti(chunk: &mut Chunk, config: &TerrainConfig) {
 
             // --- Biome-aware cactus density ---
             let biome = biome_at(world_x, world_z, &biome_noise, config.biome_scale);
-            let effective_density = biome.params().cactus_density;
+            let effective_density = biome.params().cactus_density * config.cactus_density_multiplier;
 
             if effective_density <= 0.0 {
                 continue;

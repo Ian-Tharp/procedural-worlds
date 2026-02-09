@@ -36,6 +36,15 @@ pub struct WorldGenPanelState {
     // ── Advanced noise settings ──
     pub frequency: f32,
     pub octaves: usize,
+
+    // ── Cave settings ──
+    pub caves_enabled: bool,
+    pub cave_threshold: f32,
+    pub cave_surface_protection: i32,
+    pub cave_frequency: f32,
+
+    // ── Additional vegetation ──
+    pub cactus_density_multiplier: f32,
 }
 
 impl Default for WorldGenPanelState {
@@ -57,6 +66,11 @@ impl Default for WorldGenPanelState {
             transition_noise_amplitude: config.transition_noise_amplitude as f32,
             frequency: config.frequency as f32,
             octaves: config.octaves,
+            caves_enabled: config.caves_enabled,
+            cave_threshold: config.cave_threshold as f32,
+            cave_surface_protection: config.cave_surface_protection,
+            cave_frequency: config.cave_frequency as f32,
+            cactus_density_multiplier: config.cactus_density_multiplier as f32,
         }
     }
 }
@@ -77,6 +91,11 @@ impl WorldGenPanelState {
         self.transition_noise_amplitude = config.transition_noise_amplitude as f32;
         self.frequency = config.frequency as f32;
         self.octaves = config.octaves;
+        self.caves_enabled = config.caves_enabled;
+        self.cave_threshold = config.cave_threshold as f32;
+        self.cave_surface_protection = config.cave_surface_protection;
+        self.cave_frequency = config.cave_frequency as f32;
+        self.cactus_density_multiplier = config.cactus_density_multiplier as f32;
         self.dirty = false;
     }
 
@@ -94,6 +113,11 @@ impl WorldGenPanelState {
         config.transition_noise_amplitude = self.transition_noise_amplitude as f64;
         config.frequency = self.frequency as f64;
         config.octaves = self.octaves;
+        config.caves_enabled = self.caves_enabled;
+        config.cave_threshold = self.cave_threshold as f64;
+        config.cave_surface_protection = self.cave_surface_protection;
+        config.cave_frequency = self.cave_frequency as f64;
+        config.cactus_density_multiplier = self.cactus_density_multiplier as f64;
     }
 }
 
@@ -156,13 +180,14 @@ pub fn draw_worldgen_panel(
             ui.label(egui::RichText::new("Terrain Shape").strong());
 
             ui.horizontal(|ui| {
-                ui.label("Base Height:").on_hover_text(
+                ui.label("Base Height:").on_hover_text(format!(
                     "The average ground level in blocks.\n\
                     Higher values raise the entire world.\n\
-                    Default: 32"
-                );
+                    Default: 32 | Current: {:.0}",
+                    state.base_height
+                ));
                 if ui.add(egui::Slider::new(&mut state.base_height, 16.0..=128.0))
-                    .on_hover_text("Average terrain elevation")
+                    .on_hover_text(format!("Current: {:.0} blocks", state.base_height))
                     .changed()
                 {
                     state.dirty = true;
@@ -170,13 +195,14 @@ pub fn draw_worldgen_panel(
             });
 
             ui.horizontal(|ui| {
-                ui.label("Height Scale:").on_hover_text(
+                ui.label("Height Scale:").on_hover_text(format!(
                     "How much terrain varies from the base height.\n\
                     Low = flat plains, High = dramatic mountains.\n\
-                    Default: 16"
-                );
+                    Default: 16 | Current: {:.0}",
+                    state.height_scale
+                ));
                 if ui.add(egui::Slider::new(&mut state.height_scale, 4.0..=64.0))
-                    .on_hover_text("Terrain height variation")
+                    .on_hover_text(format!("Current: {:.0} blocks variation", state.height_scale))
                     .changed()
                 {
                     state.dirty = true;
@@ -184,13 +210,14 @@ pub fn draw_worldgen_panel(
             });
 
             ui.horizontal(|ui| {
-                ui.label("Sea Level:").on_hover_text(
+                ui.label("Sea Level:").on_hover_text(format!(
                     "Blocks below this Y-level become water.\n\
                     Set lower than Base Height for oceans.\n\
-                    Default: 28"
-                );
+                    Default: 28 | Current: {}",
+                    state.sea_level
+                ));
                 if ui.add(egui::Slider::new(&mut state.sea_level, 0..=64))
-                    .on_hover_text("Water fills below this level")
+                    .on_hover_text(format!("Current: Y={}", state.sea_level))
                     .changed()
                 {
                     state.dirty = true;
@@ -203,32 +230,36 @@ pub fn draw_worldgen_panel(
             ui.label(egui::RichText::new("Biomes").strong());
 
             ui.horizontal(|ui| {
-                ui.label("Biome Size:").on_hover_text(
+                // Convert scale to a more intuitive "size" (inverse relationship)
+                // biome_scale 0.002 = huge biomes, 0.02 = tiny biomes
+                let biome_size = 1.0 / (state.biome_scale * 100.0);
+                ui.label("Biome Size:").on_hover_text(format!(
                     "How large biomes are across the world.\n\
                     Small = frequent biome changes.\n\
                     Large = vast continuous regions.\n\
-                    Default: 2x"
-                );
-                // Convert scale to a more intuitive "size" (inverse relationship)
-                // biome_scale 0.002 = huge biomes, 0.02 = tiny biomes
-                let mut biome_size = 1.0 / (state.biome_scale * 100.0);
+                    Default: 2.0x | Current: {:.1}x",
+                    biome_size
+                ));
+                let mut biome_size_mut = biome_size;
                 if ui.add(
-                    egui::Slider::new(&mut biome_size, 0.5..=10.0)
+                    egui::Slider::new(&mut biome_size_mut, 0.5..=10.0)
                         .logarithmic(true)
                         .suffix("x")
-                ).on_hover_text("Biome scale multiplier").changed() {
-                    state.biome_scale = 1.0 / (biome_size * 100.0);
+                ).on_hover_text(format!("Current: {:.1}x", biome_size_mut)).changed() {
+                    state.biome_scale = 1.0 / (biome_size_mut * 100.0);
                     state.dirty = true;
                 }
             });
 
             ui.horizontal(|ui| {
                 if ui.checkbox(&mut state.blend_enabled, "Blend Boundaries")
-                    .on_hover_text(
+                    .on_hover_text(format!(
                         "Smoothly blend terrain between biomes.\n\
                         Creates gradual transitions instead of\n\
-                        hard edges at biome borders."
-                    )
+                        hard edges at biome borders.\n\
+                        Current: {}",
+                        if state.blend_enabled { "Enabled" } else { "Disabled" }
+                    ))
                     .changed()
                 {
                     state.dirty = true;
@@ -237,13 +268,14 @@ pub fn draw_worldgen_panel(
 
             if state.blend_enabled {
                 ui.horizontal(|ui| {
-                    ui.label("  Blend Distance:").on_hover_text(
+                    ui.label("  Blend Distance:").on_hover_text(format!(
                         "Width of the transition zone between biomes.\n\
                         Larger = smoother, wider gradients.\n\
-                        Default: 32 blocks"
-                    );
+                        Default: 32 | Current: {:.0} blocks",
+                        state.blend_distance
+                    ));
                     if ui.add(egui::Slider::new(&mut state.blend_distance, 8.0..=128.0))
-                        .on_hover_text("Transition zone width in blocks")
+                        .on_hover_text(format!("Current: {:.0} blocks", state.blend_distance))
                         .changed()
                     {
                         state.dirty = true;
@@ -251,14 +283,86 @@ pub fn draw_worldgen_panel(
                 });
 
                 ui.horizontal(|ui| {
-                    ui.label("  Edge Noise:").on_hover_text(
+                    ui.label("  Edge Noise:").on_hover_text(format!(
                         "How irregular biome boundaries are.\n\
                         0 = smooth geometric edges.\n\
                         1 = jagged, organic-looking borders.\n\
-                        Default: 0.45"
-                    );
+                        Default: 0.45 | Current: {:.2}",
+                        state.transition_noise_amplitude
+                    ));
                     if ui.add(egui::Slider::new(&mut state.transition_noise_amplitude, 0.0..=1.0))
-                        .on_hover_text("Boundary irregularity")
+                        .on_hover_text(format!("Current: {:.2}", state.transition_noise_amplitude))
+                        .changed()
+                    {
+                        state.dirty = true;
+                    }
+                });
+            }
+
+            ui.add_space(4.0);
+
+            // ── Caves ──
+            ui.label(egui::RichText::new("Caves").strong());
+
+            ui.horizontal(|ui| {
+                if ui.checkbox(&mut state.caves_enabled, "Enable Caves")
+                    .on_hover_text(format!(
+                        "Generate underground cave systems.\n\
+                        Caves carve through stone below the surface.\n\
+                        Current: {}",
+                        if state.caves_enabled { "Enabled" } else { "Disabled" }
+                    ))
+                    .changed()
+                {
+                    state.dirty = true;
+                }
+            });
+
+            if state.caves_enabled {
+                ui.horizontal(|ui| {
+                    ui.label("  Cave Density:").on_hover_text(format!(
+                        "How common caves are underground.\n\
+                        Lower threshold = more caves.\n\
+                        Higher threshold = fewer, isolated caves.\n\
+                        Default: 0.70 | Current: {:.2}",
+                        state.cave_threshold
+                    ));
+                    if ui.add(egui::Slider::new(&mut state.cave_threshold, 0.5..=0.9))
+                        .on_hover_text(format!("Current: {:.2}", state.cave_threshold))
+                        .changed()
+                    {
+                        state.dirty = true;
+                    }
+                });
+
+                ui.horizontal(|ui| {
+                    ui.label("  Cave Size:").on_hover_text(format!(
+                        "Size of cave tunnels and chambers.\n\
+                        Lower = larger cave systems.\n\
+                        Higher = smaller, tighter tunnels.\n\
+                        Default: 0.05 | Current: {:.3}",
+                        state.cave_frequency
+                    ));
+                    if ui.add(
+                        egui::Slider::new(&mut state.cave_frequency, 0.02..=0.1)
+                            .logarithmic(true)
+                    )
+                    .on_hover_text(format!("Current: {:.3}", state.cave_frequency))
+                    .changed()
+                    {
+                        state.dirty = true;
+                    }
+                });
+
+                ui.horizontal(|ui| {
+                    ui.label("  Surface Protection:").on_hover_text(format!(
+                        "Blocks below surface protected from caves.\n\
+                        Prevents caves from breaking through grass/dirt.\n\
+                        Default: 5 | Current: {}",
+                        state.cave_surface_protection
+                    ));
+                    if ui.add(egui::Slider::new(&mut state.cave_surface_protection, 0..=15))
+                        .on_hover_text(format!("Current: {} blocks", state.cave_surface_protection))
                         .changed()
                     {
                         state.dirty = true;
@@ -272,19 +376,35 @@ pub fn draw_worldgen_panel(
             ui.label(egui::RichText::new("Vegetation").strong());
 
             ui.horizontal(|ui| {
-                ui.label("Tree Density:").on_hover_text(
+                ui.label("Tree Density:").on_hover_text(format!(
                     "Probability of trees spawning on valid surfaces.\n\
                     Affects forests, plains, and other tree-supporting biomes.\n\
                     0% = no trees, 20% = dense forest.\n\
-                    Default: 2%"
-                );
+                    Default: 2% | Current: {:.1}%",
+                    state.tree_density * 100.0
+                ));
                 // Show as percentage
                 let mut density_pct = state.tree_density * 100.0;
                 if ui.add(
                     egui::Slider::new(&mut density_pct, 0.0..=20.0)
                         .suffix("%")
-                ).on_hover_text("Tree spawn probability").changed() {
+                ).on_hover_text(format!("Current: {:.1}%", density_pct)).changed() {
                     state.tree_density = density_pct / 100.0;
+                    state.dirty = true;
+                }
+            });
+
+            ui.horizontal(|ui| {
+                ui.label("Cactus Density:").on_hover_text(format!(
+                    "Multiplier for cactus spawning in deserts.\n\
+                    0x = no cacti, 2x = double normal density.\n\
+                    Default: 1.0x | Current: {:.1}x",
+                    state.cactus_density_multiplier
+                ));
+                if ui.add(
+                    egui::Slider::new(&mut state.cactus_density_multiplier, 0.0..=5.0)
+                        .suffix("x")
+                ).on_hover_text(format!("Current: {:.1}x", state.cactus_density_multiplier)).changed() {
                     state.dirty = true;
                 }
             });
@@ -299,30 +419,32 @@ pub fn draw_worldgen_panel(
                     ui.add_space(4.0);
 
                     ui.horizontal(|ui| {
-                        ui.label("Noise Frequency:").on_hover_text(
+                        ui.label("Noise Frequency:").on_hover_text(format!(
                             "Base frequency of the terrain noise.\n\
                             Lower = larger, smoother features.\n\
                             Higher = smaller, more detailed terrain.\n\
-                            Default: 0.02"
-                        );
+                            Default: 0.02 | Current: {:.3}",
+                            state.frequency
+                        ));
                         if ui.add(
                             egui::Slider::new(&mut state.frequency, 0.005..=0.1)
                                 .logarithmic(true)
-                        ).on_hover_text("Terrain detail frequency").changed() {
+                        ).on_hover_text(format!("Current: {:.3}", state.frequency)).changed() {
                             state.dirty = true;
                         }
                     });
 
                     ui.horizontal(|ui| {
-                        ui.label("Octaves:").on_hover_text(
+                        ui.label("Octaves:").on_hover_text(format!(
                             "Number of noise layers combined.\n\
                             More octaves = more detail at multiple scales.\n\
                             Higher values are more expensive to compute.\n\
-                            Default: 4"
-                        );
+                            Default: 4 | Current: {}",
+                            state.octaves
+                        ));
                         let mut octaves_i32 = state.octaves as i32;
                         if ui.add(egui::Slider::new(&mut octaves_i32, 1..=8))
-                            .on_hover_text("Noise detail layers")
+                            .on_hover_text(format!("Current: {}", octaves_i32))
                             .changed()
                         {
                             state.octaves = octaves_i32 as usize;
@@ -331,15 +453,16 @@ pub fn draw_worldgen_panel(
                     });
 
                     ui.horizontal(|ui| {
-                        ui.label("Transition Noise Scale:").on_hover_text(
+                        ui.label("Transition Noise Scale:").on_hover_text(format!(
                             "Frequency of the noise used to warp biome edges.\n\
                             Higher = more jagged, detailed borders.\n\
                             Lower = smoother, broader edge variations.\n\
-                            Default: 0.08"
-                        );
+                            Default: 0.08 | Current: {:.2}",
+                            state.transition_noise_scale
+                        ));
                         if ui.add(
                             egui::Slider::new(&mut state.transition_noise_scale, 0.01..=0.2)
-                        ).on_hover_text("Edge warping frequency").changed() {
+                        ).on_hover_text(format!("Current: {:.2}", state.transition_noise_scale)).changed() {
                             state.dirty = true;
                         }
                     });
