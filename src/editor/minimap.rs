@@ -49,7 +49,7 @@ impl Default for MinimapConfig {
             blocks_per_pixel: 1.0,  // 1 block = 1 pixel
             min_zoom: 0.25,         // 4 pixels per block (zoomed in)
             max_zoom: 4.0,          // 0.25 pixels per block (zoomed out)
-            margin: 16.0,
+            margin: 28.0,
             opacity: 0.9,
             show_chunk_grid: false,
             show_compass: true,
@@ -287,8 +287,10 @@ fn minimap_render_system(
                     let arrow_width = 6.0;
                     
                     // Arrow points in look direction (north = -Z = up on map)
-                    let dir_x = yaw_rad.sin();
-                    let dir_z = -yaw_rad.cos(); // Negative because screen Y is inverted
+                    // Camera forward = (-sin(yaw), 0, -cos(yaw)) in world space
+                    // Minimap: world +X = screen right, world +Z = screen down
+                    let dir_x = -yaw_rad.sin();
+                    let dir_z = -yaw_rad.cos();
                     
                     let tip = center + egui::vec2(dir_x * arrow_len, dir_z * arrow_len);
                     let left = center + egui::vec2(
