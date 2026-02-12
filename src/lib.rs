@@ -13,4 +13,5 @@ pub mod editor;
 pub mod engine;
 pub mod generation;
 pub mod physics;
+pub mod rendering;
 pub mod world;

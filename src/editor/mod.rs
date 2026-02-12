@@ -50,6 +50,7 @@ impl Plugin for EditorPlugin {
         app.add_plugins(FrameTimeDiagnosticsPlugin::default())
             .add_plugins(BlockHighlightPlugin)
             .add_plugins(WorldGenPanelPlugin)
+            .add_plugins(crate::rendering::ShaderHotReloadPlugin)
             .init_resource::<EditorState>()
             .add_systems(
                 Update,

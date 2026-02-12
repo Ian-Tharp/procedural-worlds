@@ -65,7 +65,10 @@ impl Plugin for BlockAtlasMaterialPlugin {
     }
 }
 
-fn register_block_atlas_shader(mut shaders: ResMut<Assets<Shader>>) {
+fn register_block_atlas_shader(
+    mut shaders: ResMut<Assets<Shader>>,
+    registry: Option<ResMut<crate::rendering::shader_manager::ShaderRegistry>>,
+) {
     // Insert/overwrite is fine; handle is stable.
     shaders.insert(
         &BLOCK_ATLAS_SHADER_HANDLE,
@@ -74,6 +77,14 @@ fn register_block_atlas_shader(mut shaders: ResMut<Assets<Shader>>) {
             "embedded://shaders/block_atlas_material.wgsl",
         ),
     );
+
+    // Register for hot-reload (only present in debug/editor builds)
+    if let Some(mut reg) = registry {
+        reg.register(
+            "assets/shaders/block_atlas_material.wgsl",
+            BLOCK_ATLAS_SHADER_HANDLE.clone(),
+        );
+    }
 }
 
 /// Validate the embedded WGSL for common issues.
