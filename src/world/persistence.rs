@@ -176,12 +176,12 @@ pub fn compress_chunk_data(blocks: &[BlockType; CHUNK_VOLUME]) -> Option<(Vec<u1
     // First pass: build palette
     for block in blocks.iter() {
         let block_id = u16::from(*block);
-        if !type_to_index.contains_key(&block_id) {
+        if let std::collections::hash_map::Entry::Vacant(e) = type_to_index.entry(block_id) {
             if palette.len() >= 256 {
                 // Too many unique types for u8 indices
                 return None;
             }
-            type_to_index.insert(block_id, palette.len() as u8);
+            e.insert(palette.len() as u8);
             palette.push(block_id);
         }
     }
