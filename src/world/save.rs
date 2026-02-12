@@ -540,7 +540,7 @@ mod tests {
         assert_eq!(ss.auto_save_timer, 0.0);
         assert_eq!(ss.last_save_chunk_count, 0);
         assert!(!ss.save_requested);
-        assert_eq!(ss.chunk_format, SaveFormat::Binary);
+        assert_eq!(ss.chunk_format, SaveFormat::Compressed);
     }
 
     #[test]
@@ -936,7 +936,7 @@ mod tests {
     #[test]
     fn test_save_system_set_chunk_format() {
         let mut ss = SaveSystem::default();
-        assert_eq!(ss.chunk_format, SaveFormat::Binary);
+        assert_eq!(ss.chunk_format, SaveFormat::Compressed);
 
         ss.set_chunk_format_from_str("json");
         assert_eq!(ss.chunk_format, SaveFormat::Json);
@@ -947,9 +947,9 @@ mod tests {
         ss.set_chunk_format_from_str("bin");
         assert_eq!(ss.chunk_format, SaveFormat::Binary);
 
-        // Unknown defaults to binary
+        // Unknown defaults to compressed
         ss.set_chunk_format_from_str("xml");
-        assert_eq!(ss.chunk_format, SaveFormat::Binary);
+        assert_eq!(ss.chunk_format, SaveFormat::Compressed);
     }
 
     #[test]
