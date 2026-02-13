@@ -44,6 +44,9 @@ rand = "0.8"
 # WGSL parsing for shader validation (matches Bevy 0.15's naga)
 naga = "23.1.0"
 
+# Fast hashing for shader cache checksums
+xxhash-rust = { version = "0.8", features = ["xxh3"] }
+
 [dev-dependencies]
 criterion = "0.5"  # Benchmarking
 

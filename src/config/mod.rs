@@ -147,6 +147,8 @@ pub struct RenderConfig {
     pub atlas_grid_size: u32,
     /// Use textures (false = flat vertex colors like before). Default: true
     pub use_textures: bool,
+    /// Enable shader hot-reload caching (skip recompile when content unchanged). Default: true
+    pub shader_cache_enabled: bool,
 }
 
 /// Terrain generation settings
@@ -423,6 +425,7 @@ impl Default for RenderConfig {
             atlas_tile_size: 64,
             atlas_grid_size: 16,
             use_textures: true,
+            shader_cache_enabled: true,
         }
     }
 }

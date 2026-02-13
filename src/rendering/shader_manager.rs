@@ -13,6 +13,7 @@ use std::sync::{mpsc, Mutex};
 
 use bevy::prelude::*;
 use bevy::render::render_resource::Shader;
+use xxhash_rust::xxh3::xxh3_64;
 
 #[cfg(debug_assertions)]
 use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
@@ -102,6 +103,81 @@ impl ShaderRegistry {
 }
 
 // ============================================================================
+// SHADER CACHE
+// ============================================================================
+
+/// Caches content hashes of shader files to skip unnecessary recompilation.
+///
+/// When the file watcher fires, we hash the file content and compare against
+/// the cached value. If unchanged, we skip the expensive reload + validation.
+#[derive(Resource, Default, Debug)]
+pub struct ShaderCache {
+    /// Map from canonical file path → xxh3 hash of last-compiled content.
+    hashes: HashMap<PathBuf, u64>,
+    /// Whether caching is enabled (mirrors `RenderConfig::shader_cache_enabled`).
+    pub enabled: bool,
+}
+
+impl ShaderCache {
+    /// Create a new cache with caching enabled/disabled.
+    pub fn new(enabled: bool) -> Self {
+        Self {
+            hashes: HashMap::new(),
+            enabled,
+        }
+    }
+
+    /// Compute the xxh3 hash of a file's contents.
+    ///
+    /// Returns `None` if the file cannot be read.
+    pub fn compute_hash(path: &Path) -> Option<u64> {
+        let contents = std::fs::read(path).ok()?;
+        Some(xxh3_64(&contents))
+    }
+
+    /// Check whether a shader file has changed since it was last cached.
+    ///
+    /// Returns `true` if the file is new, unreadable, or its content differs
+    /// from the cached hash. Returns `false` only when the content hash matches.
+    pub fn has_changed(&self, path: &Path) -> bool {
+        if !self.enabled {
+            return true;
+        }
+        let canonical = match std::fs::canonicalize(path) {
+            Ok(p) => p,
+            Err(_) => return true,
+        };
+        let current_hash = match Self::compute_hash(&canonical) {
+            Some(h) => h,
+            None => return true,
+        };
+        match self.hashes.get(&canonical) {
+            Some(&cached) => cached != current_hash,
+            None => true,
+        }
+    }
+
+    /// Update the cached hash for a shader path (call after successful compile).
+    pub fn update(&mut self, path: &Path) {
+        if let Ok(canonical) = std::fs::canonicalize(path)
+            && let Some(hash) = Self::compute_hash(&canonical)
+        {
+            self.hashes.insert(canonical, hash);
+        }
+    }
+
+    /// Number of cached entries (for diagnostics).
+    pub fn len(&self) -> usize {
+        self.hashes.len()
+    }
+
+    /// Whether the cache is empty.
+    pub fn is_empty(&self) -> bool {
+        self.hashes.is_empty()
+    }
+}
+
+// ============================================================================
 // FILE WATCHER (debug only)
 // ============================================================================
 
@@ -170,11 +246,13 @@ impl ShaderWatcher {
 // SYSTEMS (debug only)
 // ============================================================================
 
-/// Startup system: initializes the shader watcher and registry.
+/// Startup system: initializes the shader watcher, registry, and cache.
 #[cfg(debug_assertions)]
 fn setup_shader_watcher(mut commands: Commands) {
     // Insert the registry (other plugins register their handles into it)
     commands.init_resource::<ShaderRegistry>();
+    // Insert shader cache (enabled by default; config can override)
+    commands.insert_resource(ShaderCache::new(true));
 
     if let Some(watcher) = ShaderWatcher::new() {
         commands.insert_resource(watcher);
@@ -189,6 +267,7 @@ fn setup_shader_watcher(mut commands: Commands) {
 fn poll_shader_changes(
     watcher: Res<ShaderWatcher>,
     registry: Res<ShaderRegistry>,
+    mut cache: ResMut<ShaderCache>,
     mut shaders: ResMut<Assets<Shader>>,
     mut reloaded_events: EventWriter<ShaderReloadedEvent>,
     mut error_events: EventWriter<ShaderErrorEvent>,
@@ -224,7 +303,16 @@ fn poll_shader_changes(
     changed_paths.dedup();
 
     for path in changed_paths {
-        reload_shader(&path, &registry, &mut shaders, &mut reloaded_events, &mut error_events);
+        // Check cache: skip reload if content hasn't actually changed
+        if !cache.has_changed(&path) {
+            debug!(
+                "Shader cache hit — skipping reload for {} (content unchanged)",
+                path.display()
+            );
+            continue;
+        }
+
+        reload_shader(&path, &registry, &mut cache, &mut shaders, &mut reloaded_events, &mut error_events);
     }
 }
 
@@ -233,6 +321,7 @@ fn poll_shader_changes(
 fn reload_shader(
     path: &Path,
     registry: &ShaderRegistry,
+    cache: &mut ShaderCache,
     shaders: &mut Assets<Shader>,
     reloaded_events: &mut EventWriter<ShaderReloadedEvent>,
     error_events: &mut EventWriter<ShaderErrorEvent>,
@@ -270,6 +359,9 @@ fn reload_shader(
     if let Some(handle) = registry.get(path) {
         let shader_path_str = format!("hot-reload://{}", path.display());
         shaders.insert(handle, Shader::from_wgsl(source, shader_path_str));
+
+        // Update cache with new content hash
+        cache.update(path);
 
         info!("Shader reloaded: {}", path.display());
         reloaded_events.send(ShaderReloadedEvent {
@@ -367,5 +459,110 @@ fn vs_main(@builtin(vertex_index) in_vertex_index: u32) -> @builtin(position) ve
         // ShaderWatcher::new() should succeed when assets/shaders/ exists
         // and return None otherwise (no panic either way).
         let _result = ShaderWatcher::new();
+    }
+
+    // ========================================================================
+    // SHADER CACHE TESTS
+    // ========================================================================
+
+    #[test]
+    fn test_hash_computation_consistency() {
+        // The same content must always produce the same hash
+        let dir = std::env::temp_dir().join("shader_cache_test_consistency");
+        let _ = std::fs::create_dir_all(&dir);
+        let file = dir.join("test.wgsl");
+        std::fs::write(&file, b"@vertex fn main() {}").unwrap();
+
+        let h1 = ShaderCache::compute_hash(&file).unwrap();
+        let h2 = ShaderCache::compute_hash(&file).unwrap();
+        assert_eq!(h1, h2, "Same content must produce same hash");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_hash_detects_content_change() {
+        let dir = std::env::temp_dir().join("shader_cache_test_change");
+        let _ = std::fs::create_dir_all(&dir);
+        let file = dir.join("test.wgsl");
+
+        std::fs::write(&file, b"version_1").unwrap();
+        let h1 = ShaderCache::compute_hash(&file).unwrap();
+
+        std::fs::write(&file, b"version_2").unwrap();
+        let h2 = ShaderCache::compute_hash(&file).unwrap();
+
+        assert_ne!(h1, h2, "Different content must produce different hashes");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_cache_has_changed_new_file() {
+        let cache = ShaderCache::new(true);
+        // A file never seen before should report as changed
+        let file = std::env::temp_dir().join("shader_cache_test_new.wgsl");
+        std::fs::write(&file, b"new shader").unwrap();
+        assert!(cache.has_changed(&file));
+        let _ = std::fs::remove_file(&file);
+    }
+
+    #[test]
+    fn test_cache_has_changed_after_update() {
+        let dir = std::env::temp_dir().join("shader_cache_test_update");
+        let _ = std::fs::create_dir_all(&dir);
+        let file = dir.join("cached.wgsl");
+        std::fs::write(&file, b"shader content").unwrap();
+
+        let mut cache = ShaderCache::new(true);
+        assert!(cache.has_changed(&file), "First time should be 'changed'");
+
+        cache.update(&file);
+        assert!(!cache.has_changed(&file), "After update, same content should not be 'changed'");
+
+        // Modify file — should detect change
+        std::fs::write(&file, b"shader content modified").unwrap();
+        assert!(cache.has_changed(&file), "Modified content should be 'changed'");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_cache_disabled_always_reports_changed() {
+        let dir = std::env::temp_dir().join("shader_cache_test_disabled");
+        let _ = std::fs::create_dir_all(&dir);
+        let file = dir.join("test.wgsl");
+        std::fs::write(&file, b"content").unwrap();
+
+        let mut cache = ShaderCache::new(false);
+        cache.update(&file);
+        // Even after update, disabled cache should always report changed
+        assert!(cache.has_changed(&file));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_cache_nonexistent_file() {
+        let cache = ShaderCache::new(true);
+        assert!(cache.has_changed(Path::new("nonexistent_shader_12345.wgsl")));
+    }
+
+    #[test]
+    fn test_cache_len_and_empty() {
+        let dir = std::env::temp_dir().join("shader_cache_test_len");
+        let _ = std::fs::create_dir_all(&dir);
+        let file = dir.join("a.wgsl");
+        std::fs::write(&file, b"a").unwrap();
+
+        let mut cache = ShaderCache::new(true);
+        assert!(cache.is_empty());
+        assert_eq!(cache.len(), 0);
+
+        cache.update(&file);
+        assert!(!cache.is_empty());
+        assert_eq!(cache.len(), 1);
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
