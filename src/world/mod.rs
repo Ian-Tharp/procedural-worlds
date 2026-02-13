@@ -27,6 +27,7 @@ pub mod chunk_priority;
 pub mod interaction;
 pub mod meshing;
 pub mod persistence;
+pub mod preload_hints;
 pub mod save;
 pub mod streaming;
 pub mod texture_atlas;
@@ -631,6 +632,7 @@ impl Plugin for WorldPlugin {
             .init_resource::<streaming::StreamingConfig>()
             .init_resource::<streaming::PlayerChunkVelocity>()
             .init_resource::<chunk_priority::ChunkPriorityConfig>()
+            .init_resource::<preload_hints::PreloadHints>()
             // Custom atlas material pipeline (shader + material type registration)
             .add_plugins(atlas_material::BlockAtlasMaterialPlugin)
             // Save system plugin (auto-save, manual save, load on startup)
@@ -657,6 +659,7 @@ impl Plugin for WorldPlugin {
                     streaming::update_player_chunk_velocity,
                     chunk_streaming_system,
                     streaming::predictive_chunk_streaming_system,
+                    process_preload_hints,
                     poll_pending_chunks,
                     update_chunk_load_metrics,
                 )
@@ -884,6 +887,84 @@ fn chunk_streaming_system(
         chunk_manager.pending.insert(chunk_pos);
         chunk_manager.tasks_spawned_this_frame += 1;
         load_metrics.pending_start_times.insert(chunk_pos, Instant::now());
+    }
+}
+
+/// Process preload hint requests — spawn async chunk-generation tasks for
+/// chunks requested by gameplay code via [`preload_hints::PreloadHints`].
+///
+/// Drains the hint queue each frame (in priority order), expands each request
+/// into chunk positions, and spawns generation tasks for any that aren't
+/// already loaded or pending. Respects its own per-frame task budget
+/// (`PreloadHints::max_tasks_per_frame`).
+fn process_preload_hints(
+    mut commands: Commands,
+    mut chunk_manager: ResMut<ChunkManager>,
+    mut load_metrics: ResMut<ChunkLoadMetrics>,
+    mut hints: ResMut<preload_hints::PreloadHints>,
+    terrain_config: Res<TerrainConfig>,
+    chunk_storage: Res<ChunkStorage>,
+    ore_registry: Option<Res<crate::content::OreRegistry>>,
+) {
+    if hints.is_empty() {
+        return;
+    }
+
+    let task_pool = AsyncComputeTaskPool::get();
+    let max_tasks = hints.max_tasks_per_frame;
+    let mut spawned: u32 = 0;
+
+    let ore_configs: Vec<OreSpawnConfig> = ore_registry
+        .as_ref()
+        .map(|registry| {
+            let definitions: Vec<_> = registry.iter().cloned().collect();
+            ore_configs_from_definitions(&definitions)
+        })
+        .unwrap_or_else(default_ore_configs);
+
+    let requests = hints.drain_sorted();
+
+    for request in &requests {
+        let positions = preload_hints::expand_request_to_chunks(request);
+
+        for chunk_pos in positions {
+            if spawned >= max_tasks {
+                return;
+            }
+
+            // Skip already loaded or pending
+            if chunk_manager.chunks.contains_key(&chunk_pos)
+                || chunk_manager.pending.contains(&chunk_pos)
+            {
+                continue;
+            }
+
+            let config = (*terrain_config).clone();
+            let storage = ChunkStorage::new(chunk_storage.save_dir.clone());
+            let ores = ore_configs.clone();
+
+            let task = task_pool.spawn(async move {
+                if let Ok(chunk) = persistence::load_chunk(chunk_pos, &storage) {
+                    return ChunkLoadResult { chunk, from_cache: true };
+                }
+                let mut chunk = Chunk::new(chunk_pos);
+                generate_chunk_terrain(&mut chunk, &config);
+                generate_caves(&mut chunk, &config);
+                generate_ores(&mut chunk, &config, &ores);
+                generate_trees(&mut chunk, &config);
+                generate_cacti(&mut chunk, &config);
+                ChunkLoadResult { chunk, from_cache: false }
+            });
+
+            commands.spawn(PendingChunk {
+                task,
+                position: chunk_pos,
+            });
+
+            chunk_manager.pending.insert(chunk_pos);
+            spawned += 1;
+            load_metrics.pending_start_times.insert(chunk_pos, std::time::Instant::now());
+        }
     }
 }
 
