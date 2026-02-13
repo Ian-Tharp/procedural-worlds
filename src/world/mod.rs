@@ -24,6 +24,7 @@ use crate::generation::{
 
 pub mod atlas_material;
 pub mod chunk_priority;
+pub mod chunk_streaming;
 pub mod interaction;
 pub mod meshing;
 pub mod persistence;
@@ -635,6 +636,8 @@ impl Plugin for WorldPlugin {
             .add_plugins(atlas_material::BlockAtlasMaterialPlugin)
             // Save system plugin (auto-save, manual save, load on startup)
             .add_plugins(save::SavePlugin)
+            // Async chunk streaming (frame-budgeted I/O for saves)
+            .add_plugins(chunk_streaming::ChunkStreamingPlugin)
             // Block interaction (place, break, selected block cycling)
             .add_plugins(interaction::BlockInteractionPlugin)
             .configure_sets(
