@@ -16,20 +16,15 @@ use serde::{Deserialize, Serialize};
 // ============================================================================
 
 /// Which biomes an ore can spawn in
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub enum BiomeFilter {
     /// Spawns in all biomes
+    #[default]
     All,
     /// Only spawns in specific biomes (by name)
     Only(Vec<String>),
     /// Spawns everywhere except these biomes
     Except(Vec<String>),
-}
-
-impl Default for BiomeFilter {
-    fn default() -> Self {
-        BiomeFilter::All
-    }
 }
 
 /// How an ore generates in the world
@@ -218,7 +213,7 @@ impl OreRegistry {
 
         for entry in entries.flatten() {
             let path = entry.path();
-            if path.extension().map_or(false, |ext| ext == "ron") {
+            if path.extension().is_some_and(|ext| ext == "ron") {
                 match self.load_file(&path, is_user_content) {
                     Ok(ore) => {
                         info!("Loaded ore: {} from {:?}", ore.id, path);
