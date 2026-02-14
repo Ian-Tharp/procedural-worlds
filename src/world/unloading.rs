@@ -21,7 +21,7 @@
 //! ```
 
 use bevy::prelude::*;
-use bevy::tasks::{block_on, futures_lite::future, AsyncComputeTaskPool, Task};
+use bevy::tasks::{AsyncComputeTaskPool, Task, block_on, futures_lite::future};
 
 use super::persistence::{self, ChunkStorage};
 use super::save::SaveSystem;
@@ -88,8 +88,8 @@ impl UnloadConfig {
     pub fn effective_unload_distance(&self, render_distance: i32) -> i32 {
         let base = self.unload_distance.unwrap_or(render_distance + 2);
 
-        let under_pressure = get_process_memory()
-            .is_some_and(|mem| mem.rss_bytes > self.memory_threshold_bytes);
+        let under_pressure =
+            get_process_memory().is_some_and(|mem| mem.rss_bytes > self.memory_threshold_bytes);
 
         if under_pressure {
             (base - self.memory_pressure_reduction).max(render_distance)
@@ -133,6 +133,7 @@ pub fn chunk_unloading_system(
     save_system: Res<SaveSystem>,
     chunk_query: Query<(Entity, &Chunk), Without<PendingSave>>,
     pending_query: Query<(Entity, &PendingChunk)>,
+    mut chunk_events: EventWriter<super::chunk_events::ChunkLifecycleEvent>,
 ) {
     let center = chunk_manager.player_chunk;
     let max_dist = unload_config.effective_unload_distance(chunk_manager.render_distance);
@@ -174,6 +175,9 @@ pub fn chunk_unloading_system(
                 // Not modified or save disabled — despawn immediately
                 commands.entity(entity).despawn_recursive();
                 to_remove.push(chunk.position);
+                chunk_events.send(super::chunk_events::ChunkLifecycleEvent::Unloaded(
+                    chunk.position,
+                ));
             }
         }
     }
@@ -206,6 +210,7 @@ pub fn poll_pending_saves(
     mut commands: Commands,
     mut chunk_manager: ResMut<ChunkManager>,
     mut save_query: Query<(Entity, &mut PendingSave)>,
+    mut chunk_events: EventWriter<super::chunk_events::ChunkLifecycleEvent>,
 ) {
     for (entity, mut pending) in &mut save_query {
         if let Some(result) = block_on(future::poll_once(&mut pending.task)) {
@@ -235,6 +240,7 @@ pub fn poll_pending_saves(
                 // Still out of range — despawn
                 commands.entity(entity).despawn_recursive();
                 chunk_manager.chunks.remove(&pos);
+                chunk_events.send(super::chunk_events::ChunkLifecycleEvent::Unloaded(pos));
             }
         }
     }

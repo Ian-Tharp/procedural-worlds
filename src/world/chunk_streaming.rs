@@ -42,8 +42,8 @@ use std::time::{Duration, Instant};
 
 use bevy::prelude::*;
 
-use super::persistence::{self, ChunkStorage, SaveFormat};
 use super::Chunk;
+use super::persistence::{self, ChunkStorage, SaveFormat};
 
 // ============================================================================
 // CONFIGURATION
@@ -196,6 +196,7 @@ pub fn update_chunk_streaming(
     mut queue: ResMut<ChunkWriteQueue>,
     mut state: ResMut<ChunkStreamingState>,
     config: Res<ChunkStreamingConfig>,
+    mut chunk_events: EventWriter<super::chunk_events::ChunkLifecycleEvent>,
 ) {
     if !queue.has_pending() {
         state.is_streaming = false;
@@ -224,6 +225,11 @@ pub fn update_chunk_streaming(
             Ok(()) => {
                 queue.chunks_written += 1;
                 frame_writes += 1;
+                if matches!(job.format, SaveFormat::Compressed) {
+                    chunk_events.send(super::chunk_events::ChunkLifecycleEvent::Compressed(
+                        job.position,
+                    ));
+                }
             }
             Err(e) => {
                 warn!(

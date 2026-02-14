@@ -13,16 +13,17 @@ use std::time::Instant;
 
 use bevy::diagnostic::{Diagnostic, DiagnosticPath, Diagnostics, RegisterDiagnostic};
 use bevy::prelude::*;
-use bevy::tasks::{block_on, futures_lite::future, AsyncComputeTaskPool, Task};
+use bevy::tasks::{AsyncComputeTaskPool, Task, block_on, futures_lite::future};
 use serde::{Deserialize, Serialize};
 
 use crate::engine::memory::ChunkMeshPool;
 use crate::generation::{
-    generate_cacti, generate_caves, generate_chunk_terrain, generate_ores, generate_trees,
-    default_ore_configs, ore_configs_from_definitions, OreSpawnConfig, TerrainConfig,
+    OreSpawnConfig, TerrainConfig, default_ore_configs, generate_cacti, generate_caves,
+    generate_chunk_terrain, generate_ores, generate_trees, ore_configs_from_definitions,
 };
 
 pub mod atlas_material;
+pub mod chunk_events;
 pub mod chunk_priority;
 pub mod chunk_streaming;
 pub mod interaction;
@@ -337,7 +338,8 @@ const METRICS_HISTORY_SIZE: usize = 256;
 /// Diagnostic path for average chunk load time (ms).
 pub const CHUNK_AVG_LOAD_TIME: DiagnosticPath = DiagnosticPath::const_new("chunk/avg_load_time_ms");
 /// Diagnostic path for peak chunk load time (ms).
-pub const CHUNK_PEAK_LOAD_TIME: DiagnosticPath = DiagnosticPath::const_new("chunk/peak_load_time_ms");
+pub const CHUNK_PEAK_LOAD_TIME: DiagnosticPath =
+    DiagnosticPath::const_new("chunk/peak_load_time_ms");
 /// Diagnostic path for chunks loaded per second.
 pub const CHUNK_LOADS_PER_SEC: DiagnosticPath = DiagnosticPath::const_new("chunk/loads_per_second");
 /// Diagnostic path for total chunks loaded.
@@ -583,7 +585,8 @@ pub struct WorldPlugin;
 
 impl Plugin for WorldPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<ChunkManager>()
+        app.add_event::<chunk_events::ChunkLifecycleEvent>()
+            .init_resource::<ChunkManager>()
             .init_resource::<TerrainConfig>()
             .init_resource::<ChunkMaterial>()
             .init_resource::<ChunkStorage>()
@@ -607,10 +610,7 @@ impl Plugin for WorldPlugin {
                     .with_suffix(" chunks/s")
                     .with_max_history_length(64),
             )
-            .register_diagnostic(
-                Diagnostic::new(CHUNK_TOTAL_LOADED)
-                    .with_max_history_length(1),
-            )
+            .register_diagnostic(Diagnostic::new(CHUNK_TOTAL_LOADED).with_max_history_length(1))
             .register_diagnostic(
                 Diagnostic::new(CHUNK_MEMORY_MB)
                     .with_suffix(" MB")
@@ -621,14 +621,8 @@ impl Plugin for WorldPlugin {
                     .with_suffix("")
                     .with_max_history_length(64),
             )
-            .register_diagnostic(
-                Diagnostic::new(CHUNK_CACHE_HITS)
-                    .with_max_history_length(1),
-            )
-            .register_diagnostic(
-                Diagnostic::new(CHUNK_CACHE_MISSES)
-                    .with_max_history_length(1),
-            )
+            .register_diagnostic(Diagnostic::new(CHUNK_CACHE_HITS).with_max_history_length(1))
+            .register_diagnostic(Diagnostic::new(CHUNK_CACHE_MISSES).with_max_history_length(1))
             .init_resource::<streaming::StreamingConfig>()
             .init_resource::<streaming::PlayerChunkVelocity>()
             .init_resource::<chunk_priority::ChunkPriorityConfig>()
@@ -651,7 +645,11 @@ impl Plugin for WorldPlugin {
             )
             .add_systems(
                 Startup,
-                (texture_atlas::setup_block_texture_atlas, setup_chunk_material).chain(),
+                (
+                    texture_atlas::setup_block_texture_atlas,
+                    setup_chunk_material,
+                )
+                    .chain(),
             )
             .add_systems(
                 Update,
@@ -662,6 +660,7 @@ impl Plugin for WorldPlugin {
                     streaming::predictive_chunk_streaming_system,
                     poll_pending_chunks,
                     update_chunk_load_metrics,
+                    chunk_events::chunk_event_logger,
                 )
                     .chain()
                     .in_set(WorldSystems::ChunkLoading),
@@ -731,12 +730,13 @@ fn setup_chunk_material(
     if config.render.use_textures {
         if let Some(ref atlas_res) = atlas {
             // Try to create the custom atlas material pair (shader-driven tiling)
-            if let Some((opaque, water)) = atlas_material::create_block_atlas_material(
-                &mut atlas_materials,
-                atlas_res,
-            ) {
+            if let Some((opaque, water)) =
+                atlas_material::create_block_atlas_material(&mut atlas_materials, atlas_res)
+            {
                 chunk_material.handle = Some(ChunkMaterialHandle::Atlas { opaque, water });
-                info!("Chunk material initialized: BlockAtlasMaterial opaque + water (custom shader)");
+                info!(
+                    "Chunk material initialized: BlockAtlasMaterial opaque + water (custom shader)"
+                );
                 return;
             }
             warn!("BlockAtlasMaterial creation failed, falling back to StandardMaterial");
@@ -804,6 +804,7 @@ fn chunk_streaming_system(
     priority_config: Res<chunk_priority::ChunkPriorityConfig>,
     camera_query: Query<&crate::engine::controller::CameraController, With<Camera3d>>,
     ore_registry: Option<Res<crate::content::OreRegistry>>,
+    mut chunk_events: EventWriter<chunk_events::ChunkLifecycleEvent>,
 ) {
     // Reset per-frame spawn counter
     chunk_manager.tasks_spawned_this_frame = 0;
@@ -815,7 +816,7 @@ fn chunk_streaming_system(
     let vert_up = chunk_manager.vertical_load_up;
 
     let task_pool = AsyncComputeTaskPool::get();
-    
+
     // Extract ore configs from registry (or use defaults if not available)
     // This is done once per frame, not per-chunk, for efficiency
     let ore_configs: Vec<OreSpawnConfig> = ore_registry
@@ -860,22 +861,28 @@ fn chunk_streaming_system(
         // Clone resources for the background task
         let config = (*terrain_config).clone();
         let storage = ChunkStorage::new(chunk_storage.save_dir.clone());
-        let ores = ore_configs.clone();  // Clone ore configs for this task
+        let ores = ore_configs.clone(); // Clone ore configs for this task
 
         // Spawn async task: try loading from disk first, generate if not found
         let task = task_pool.spawn(async move {
             // Check for a previously saved chunk on disk
             if let Ok(chunk) = persistence::load_chunk(chunk_pos, &storage) {
-                return ChunkLoadResult { chunk, from_cache: true };
+                return ChunkLoadResult {
+                    chunk,
+                    from_cache: true,
+                };
             }
             // Not on disk - generate new terrain
             let mut chunk = Chunk::new(chunk_pos);
             generate_chunk_terrain(&mut chunk, &config);
             generate_caves(&mut chunk, &config);
-            generate_ores(&mut chunk, &config, &ores);  // Use registry-derived configs
+            generate_ores(&mut chunk, &config, &ores); // Use registry-derived configs
             generate_trees(&mut chunk, &config);
             generate_cacti(&mut chunk, &config);
-            ChunkLoadResult { chunk, from_cache: false }
+            ChunkLoadResult {
+                chunk,
+                from_cache: false,
+            }
         });
 
         // Spawn a placeholder entity with the PendingChunk component
@@ -886,7 +893,10 @@ fn chunk_streaming_system(
 
         chunk_manager.pending.insert(chunk_pos);
         chunk_manager.tasks_spawned_this_frame += 1;
-        load_metrics.pending_start_times.insert(chunk_pos, Instant::now());
+        load_metrics
+            .pending_start_times
+            .insert(chunk_pos, Instant::now());
+        chunk_events.send(chunk_events::ChunkLifecycleEvent::Queued(chunk_pos));
     }
 }
 
@@ -902,6 +912,7 @@ fn poll_pending_chunks(
     mut pending_query: Query<(Entity, &mut PendingChunk)>,
     mut chunk_query: Query<&mut Chunk>,
     time: Res<Time>,
+    mut chunk_events: EventWriter<chunk_events::ChunkLifecycleEvent>,
 ) {
     let app_time = time.elapsed_secs_f64();
 
@@ -916,19 +927,26 @@ fn poll_pending_chunks(
             }
 
             // Insert the completed chunk data onto this entity
-            commands.entity(entity).insert(result.chunk).remove::<PendingChunk>();
+            commands
+                .entity(entity)
+                .insert(result.chunk)
+                .remove::<PendingChunk>();
 
             // Update bookkeeping
             chunk_manager.pending.remove(&pos);
             chunk_manager.chunks.insert(pos, entity);
+            chunk_events.send(chunk_events::ChunkLifecycleEvent::Loaded(pos));
 
             // Mark face-adjacent neighbor chunks as dirty so they remesh with
             // the newly available neighbor data. This eliminates visual seams
             // at chunk borders caused by missing cross-chunk face culling and AO.
             for offset in [
-                IVec3::X, IVec3::NEG_X,
-                IVec3::Y, IVec3::NEG_Y,
-                IVec3::Z, IVec3::NEG_Z,
+                IVec3::X,
+                IVec3::NEG_X,
+                IVec3::Y,
+                IVec3::NEG_Y,
+                IVec3::Z,
+                IVec3::NEG_Z,
             ] {
                 let neighbor_pos = pos + offset;
                 if let Some(&neighbor_entity) = chunk_manager.chunks.get(&neighbor_pos)
@@ -966,18 +984,10 @@ fn update_chunk_load_metrics(
     diagnostics.add_measurement(&CHUNK_TOTAL_LOADED, || {
         load_metrics.total_chunks_loaded as f64
     });
-    diagnostics.add_measurement(&CHUNK_MEMORY_MB, || {
-        load_metrics.chunk_memory_mb()
-    });
-    diagnostics.add_measurement(&CHUNK_CACHE_HIT_RATE, || {
-        load_metrics.cache_hit_rate as f64
-    });
-    diagnostics.add_measurement(&CHUNK_CACHE_HITS, || {
-        load_metrics.cache_hits as f64
-    });
-    diagnostics.add_measurement(&CHUNK_CACHE_MISSES, || {
-        load_metrics.cache_misses as f64
-    });
+    diagnostics.add_measurement(&CHUNK_MEMORY_MB, || load_metrics.chunk_memory_mb());
+    diagnostics.add_measurement(&CHUNK_CACHE_HIT_RATE, || load_metrics.cache_hit_rate as f64);
+    diagnostics.add_measurement(&CHUNK_CACHE_HITS, || load_metrics.cache_hits as f64);
+    diagnostics.add_measurement(&CHUNK_CACHE_MISSES, || load_metrics.cache_misses as f64);
 }
 
 /// Maximum mesh-generation tasks to spawn per frame (prevents GPU upload stutter)
@@ -1017,7 +1027,8 @@ fn mesh_dirty_chunks(
     // Phase 1: Collect all chunk block data for neighbor lookups (read-only).
     let all_chunk_data: HashMap<IVec3, Vec<BlockType>> = {
         let all_chunks = param_set.p1();
-        all_chunks.iter()
+        all_chunks
+            .iter()
             .map(|chunk| (chunk.position, extract_block_data(chunk)))
             .collect()
     };
@@ -1055,7 +1066,9 @@ fn mesh_dirty_chunks(
             neg_z: all_chunk_data.get(&(pos + IVec3::NEG_Z)).cloned(),
         };
 
-        let Some(block_data) = all_chunk_data.get(&pos) else { continue; };
+        let Some(block_data) = all_chunk_data.get(&pos) else {
+            continue;
+        };
         let chunk_data = Chunk::from_blocks(pos, {
             let mut blocks = [BlockType::Air; CHUNK_VOLUME];
             blocks.copy_from_slice(block_data);
@@ -1082,7 +1095,6 @@ fn mesh_dirty_chunks(
     }
 }
 
-
 /// Poll completed mesh-generation tasks and insert the resulting render components.
 ///
 /// The opaque mesh is inserted on the chunk entity itself. If the mesher
@@ -1105,19 +1117,26 @@ fn poll_pending_meshes(
             let world_pos = chunk_to_world_pos(chunk.position);
 
             // Insert shared components (mesh, transform, visibility, marker)
-            commands.entity(entity).insert((
-                Mesh3d(mesh_handle),
-                Transform::from_translation(world_pos),
-                ChunkMesh,
-            )).remove::<PendingMesh>();
+            commands
+                .entity(entity)
+                .insert((
+                    Mesh3d(mesh_handle),
+                    Transform::from_translation(world_pos),
+                    ChunkMesh,
+                ))
+                .remove::<PendingMesh>();
 
             // Insert the opaque material on the chunk entity
             match mat {
                 ChunkMaterialHandle::Atlas { opaque, .. } => {
-                    commands.entity(entity).insert(MeshMaterial3d(opaque.clone()));
+                    commands
+                        .entity(entity)
+                        .insert(MeshMaterial3d(opaque.clone()));
                 }
                 ChunkMaterialHandle::Standard { opaque, .. } => {
-                    commands.entity(entity).insert(MeshMaterial3d(opaque.clone()));
+                    commands
+                        .entity(entity)
+                        .insert(MeshMaterial3d(opaque.clone()));
                 }
             }
 
@@ -1126,20 +1145,26 @@ fn poll_pending_meshes(
                 let water_mesh_handle = meshes.add(wm);
 
                 // Spawn child entity with water mesh + blend material
-                let water_child = commands.spawn((
-                    Mesh3d(water_mesh_handle),
-                    // Child transform is identity - inherits parent's world position
-                    Transform::default(),
-                    WaterMesh,
-                )).id();
+                let water_child = commands
+                    .spawn((
+                        Mesh3d(water_mesh_handle),
+                        // Child transform is identity - inherits parent's world position
+                        Transform::default(),
+                        WaterMesh,
+                    ))
+                    .id();
 
                 // Insert the water material on the child
                 match mat {
                     ChunkMaterialHandle::Atlas { water, .. } => {
-                        commands.entity(water_child).insert(MeshMaterial3d(water.clone()));
+                        commands
+                            .entity(water_child)
+                            .insert(MeshMaterial3d(water.clone()));
                     }
                     ChunkMaterialHandle::Standard { water, .. } => {
-                        commands.entity(water_child).insert(MeshMaterial3d(water.clone()));
+                        commands
+                            .entity(water_child)
+                            .insert(MeshMaterial3d(water.clone()));
                     }
                 }
 
@@ -1223,11 +1248,7 @@ pub fn get_block_at_f32(
 
 /// Check if a block position is solid (for collision)
 #[allow(dead_code)]
-pub fn is_solid_at(
-    world_pos: IVec3,
-    chunk_manager: &ChunkManager,
-    chunks: &Query<&Chunk>,
-) -> bool {
+pub fn is_solid_at(world_pos: IVec3, chunk_manager: &ChunkManager, chunks: &Query<&Chunk>) -> bool {
     get_block_at(world_pos, chunk_manager, chunks).is_solid()
 }
 
@@ -1363,21 +1384,42 @@ mod tests {
 
         // Crossing into next chunk
         assert_eq!(world_to_chunk_pos(Vec3::new(16.0, 16.0, 16.0)), IVec3::ONE);
-        assert_eq!(world_to_chunk_pos(Vec3::new(32.0, 48.0, 64.0)), IVec3::new(2, 3, 4));
+        assert_eq!(
+            world_to_chunk_pos(Vec3::new(32.0, 48.0, 64.0)),
+            IVec3::new(2, 3, 4)
+        );
 
         // Negative coordinates
-        assert_eq!(world_to_chunk_pos(Vec3::new(-1.0, 0.0, 0.0)), IVec3::new(-1, 0, 0));
-        assert_eq!(world_to_chunk_pos(Vec3::new(-0.1, 0.0, 0.0)), IVec3::new(-1, 0, 0));
-        assert_eq!(world_to_chunk_pos(Vec3::new(-16.0, -16.0, -16.0)), IVec3::new(-1, -1, -1));
-        assert_eq!(world_to_chunk_pos(Vec3::new(-17.0, -17.0, -17.0)), IVec3::new(-2, -2, -2));
+        assert_eq!(
+            world_to_chunk_pos(Vec3::new(-1.0, 0.0, 0.0)),
+            IVec3::new(-1, 0, 0)
+        );
+        assert_eq!(
+            world_to_chunk_pos(Vec3::new(-0.1, 0.0, 0.0)),
+            IVec3::new(-1, 0, 0)
+        );
+        assert_eq!(
+            world_to_chunk_pos(Vec3::new(-16.0, -16.0, -16.0)),
+            IVec3::new(-1, -1, -1)
+        );
+        assert_eq!(
+            world_to_chunk_pos(Vec3::new(-17.0, -17.0, -17.0)),
+            IVec3::new(-2, -2, -2)
+        );
     }
 
     #[test]
     fn test_chunk_to_world_pos() {
         assert_eq!(chunk_to_world_pos(IVec3::ZERO), Vec3::ZERO);
         assert_eq!(chunk_to_world_pos(IVec3::ONE), Vec3::new(16.0, 16.0, 16.0));
-        assert_eq!(chunk_to_world_pos(IVec3::new(2, 3, 4)), Vec3::new(32.0, 48.0, 64.0));
-        assert_eq!(chunk_to_world_pos(IVec3::new(-1, -1, -1)), Vec3::new(-16.0, -16.0, -16.0));
+        assert_eq!(
+            chunk_to_world_pos(IVec3::new(2, 3, 4)),
+            Vec3::new(32.0, 48.0, 64.0)
+        );
+        assert_eq!(
+            chunk_to_world_pos(IVec3::new(-1, -1, -1)),
+            Vec3::new(-16.0, -16.0, -16.0)
+        );
     }
 
     #[test]
@@ -1469,9 +1511,7 @@ mod tests {
     /// Ensure `AsyncComputeTaskPool` is initialised for tests that use it.
     /// Calling `get_or_init` more than once is safe â€" subsequent calls are no-ops.
     fn init_task_pool() {
-        AsyncComputeTaskPool::get_or_init(|| {
-            bevy::tasks::TaskPool::new()
-        });
+        AsyncComputeTaskPool::get_or_init(|| bevy::tasks::TaskPool::new());
     }
 
     #[test]
@@ -1500,8 +1540,7 @@ mod tests {
         cm.pending.insert(pos);
 
         // The streaming system would check both `chunks` and `pending`
-        let should_skip =
-            cm.chunks.contains_key(&pos) || cm.pending.contains(&pos);
+        let should_skip = cm.chunks.contains_key(&pos) || cm.pending.contains(&pos);
         assert!(should_skip, "Should skip positions already in pending set");
     }
 
@@ -1513,8 +1552,7 @@ mod tests {
         // Simulate: a chunk is already loaded at this position
         cm.chunks.insert(pos, Entity::PLACEHOLDER);
 
-        let should_skip =
-            cm.chunks.contains_key(&pos) || cm.pending.contains(&pos);
+        let should_skip = cm.chunks.contains_key(&pos) || cm.pending.contains(&pos);
         assert!(should_skip, "Should skip positions already in chunks map");
     }
 
@@ -1580,9 +1618,7 @@ mod tests {
         // Task-pool generation (simulates what mesh_dirty_chunks does)
         let task_pool = AsyncComputeTaskPool::get();
         let chunk_clone = chunk.clone();
-        let task = task_pool.spawn(async move {
-            meshing::build_chunk_mesh(&chunk_clone)
-        });
+        let task = task_pool.spawn(async move { meshing::build_chunk_mesh(&chunk_clone) });
 
         let result_mesh = block_on(task);
 
@@ -1709,7 +1745,10 @@ mod tests {
         // Should have loaded from disk, preserving the distinctive block
         assert_eq!(result.get_block(7, 7, 7), BlockType::Obsidian);
         assert_eq!(result.position, IVec3::new(5, 0, 5));
-        assert!(!result.modified, "Loaded chunks should not be marked modified");
+        assert!(
+            !result.modified,
+            "Loaded chunks should not be marked modified"
+        );
 
         // Cleanup
         let _ = std::fs::remove_dir_all(&dir);
@@ -1887,7 +1926,10 @@ mod tests {
         // Should not exceed capacity
         assert!(metrics.load_times.len() <= METRICS_HISTORY_SIZE);
         assert!(metrics.completion_timestamps.len() <= METRICS_HISTORY_SIZE);
-        assert_eq!(metrics.total_chunks_loaded, (METRICS_HISTORY_SIZE + 50) as u64);
+        assert_eq!(
+            metrics.total_chunks_loaded,
+            (METRICS_HISTORY_SIZE + 50) as u64
+        );
     }
 
     #[test]
@@ -1895,7 +1937,9 @@ mod tests {
         let mut metrics = ChunkLoadMetrics::default();
         let pos = IVec3::new(1, 2, 3);
 
-        metrics.pending_start_times.insert(pos, std::time::Instant::now());
+        metrics
+            .pending_start_times
+            .insert(pos, std::time::Instant::now());
         assert!(metrics.pending_start_times.contains_key(&pos));
 
         let start = metrics.pending_start_times.remove(&pos).unwrap();
@@ -2023,7 +2067,11 @@ mod tests {
         for (i, a) in paths.iter().enumerate() {
             for (j, b) in paths.iter().enumerate() {
                 if i != j {
-                    assert_ne!(a, b, "Diagnostic paths at index {} and {} must differ", i, j);
+                    assert_ne!(
+                        a, b,
+                        "Diagnostic paths at index {} and {} must differ",
+                        i, j
+                    );
                 }
             }
         }
@@ -2066,7 +2114,10 @@ mod tests {
         assert_eq!(metrics.cache_misses, 0);
         assert_eq!(metrics.cache_hit_rate, 0.0);
         assert!(metrics.recent_load_times_ms.is_empty());
-        assert_eq!(metrics.memory_per_chunk_bytes, CHUNK_VOLUME * std::mem::size_of::<BlockType>());
+        assert_eq!(
+            metrics.memory_per_chunk_bytes,
+            CHUNK_VOLUME * std::mem::size_of::<BlockType>()
+        );
     }
 
     #[test]
@@ -2141,7 +2192,7 @@ mod tests {
     fn test_recent_load_times_recorded() {
         let mut metrics = ChunkLoadMetrics::default();
         metrics.record_load_with_source(0.05, 1.0, false); // 50ms
-        metrics.record_load_with_source(0.10, 1.1, true);  // 100ms
+        metrics.record_load_with_source(0.10, 1.1, true); // 100ms
         metrics.record_load_with_source(0.02, 1.2, false); // 20ms
 
         assert_eq!(metrics.recent_load_times_ms.len(), 3);
@@ -2203,7 +2254,11 @@ mod tests {
         for (i, a) in paths.iter().enumerate() {
             for (j, b) in paths.iter().enumerate() {
                 if i != j {
-                    assert_ne!(a, b, "Diagnostic paths at index {} and {} must differ", i, j);
+                    assert_ne!(
+                        a, b,
+                        "Diagnostic paths at index {} and {} must differ",
+                        i, j
+                    );
                 }
             }
         }
@@ -2222,9 +2277,12 @@ mod tests {
 
         // Simulate 6 neighbors already loaded around (0,0,0)
         let neighbor_positions = [
-            IVec3::X, IVec3::NEG_X,
-            IVec3::Y, IVec3::NEG_Y,
-            IVec3::Z, IVec3::NEG_Z,
+            IVec3::X,
+            IVec3::NEG_X,
+            IVec3::Y,
+            IVec3::NEG_Y,
+            IVec3::Z,
+            IVec3::NEG_Z,
         ];
         for pos in &neighbor_positions {
             cm.chunks.insert(*pos, Entity::PLACEHOLDER);
@@ -2241,7 +2299,8 @@ mod tests {
         }
 
         assert_eq!(
-            found.len(), 6,
+            found.len(),
+            6,
             "all 6 face-adjacent neighbors should be found when loaded"
         );
     }
@@ -2257,9 +2316,12 @@ mod tests {
 
         let new_pos = IVec3::ZERO;
         let offsets = [
-            IVec3::X, IVec3::NEG_X,
-            IVec3::Y, IVec3::NEG_Y,
-            IVec3::Z, IVec3::NEG_Z,
+            IVec3::X,
+            IVec3::NEG_X,
+            IVec3::Y,
+            IVec3::NEG_Y,
+            IVec3::Z,
+            IVec3::NEG_Z,
         ];
 
         let mut found_count = 0;
@@ -2270,10 +2332,7 @@ mod tests {
             }
         }
 
-        assert_eq!(
-            found_count, 2,
-            "only loaded neighbors should be dirtied"
-        );
+        assert_eq!(found_count, 2, "only loaded neighbors should be dirtied");
     }
 
     #[test]
@@ -2302,7 +2361,11 @@ mod tests {
         // With +X neighbor: +X border faces culled
         let neighbors = meshing::ChunkNeighbors {
             pos_x: Some(neighbor_data),
-            neg_x: None, pos_y: None, neg_y: None, pos_z: None, neg_z: None,
+            neg_x: None,
+            pos_y: None,
+            neg_y: None,
+            pos_z: None,
+            neg_z: None,
         };
         let (mesh_after, _) = meshing::build_chunk_mesh_with_neighbors(&chunk, None, &neighbors);
         let verts_after = mesh_after
