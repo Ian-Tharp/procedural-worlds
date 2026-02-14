@@ -23,6 +23,7 @@ use crate::generation::{
 };
 
 pub mod atlas_material;
+pub mod chunk_metrics;
 pub mod chunk_priority;
 pub mod interaction;
 pub mod meshing;
@@ -588,6 +589,7 @@ impl Plugin for WorldPlugin {
             .init_resource::<ChunkStorage>()
             .init_resource::<unloading::UnloadConfig>()
             .init_resource::<ChunkLoadMetrics>()
+            .init_resource::<chunk_metrics::ChunkMemoryStats>()
             // Pre-allocated mesh buffer pool for reduced allocation overhead
             .init_resource::<ChunkMeshPool>()
             // Register chunk diagnostics with Bevy's DiagnosticsStore
@@ -677,6 +679,14 @@ impl Plugin for WorldPlugin {
                 )
                     .chain()
                     .in_set(WorldSystems::Cleanup),
+            )
+            .add_systems(
+                Update,
+                (
+                    chunk_metrics::toggle_memory_panel,
+                    chunk_metrics::cycle_memory_filter,
+                    chunk_metrics::update_chunk_memory_stats,
+                ),
             );
     }
 }
