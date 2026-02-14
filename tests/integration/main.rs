@@ -6,5 +6,5 @@
 
 mod chunk_loading_pipeline;
 mod chunk_meshing_pipeline;
-mod progress_bar_states;
 mod error_handling;
+mod progress_bar_states;

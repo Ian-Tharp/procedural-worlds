@@ -138,9 +138,21 @@ pub fn voxel_raycast(
     // Distance along ray to cross one full voxel on each axis
     // (infinite if direction component is zero — we'll never step that axis)
     let t_delta = Vec3::new(
-        if dir.x != 0.0 { (1.0 / dir.x).abs() } else { f32::INFINITY },
-        if dir.y != 0.0 { (1.0 / dir.y).abs() } else { f32::INFINITY },
-        if dir.z != 0.0 { (1.0 / dir.z).abs() } else { f32::INFINITY },
+        if dir.x != 0.0 {
+            (1.0 / dir.x).abs()
+        } else {
+            f32::INFINITY
+        },
+        if dir.y != 0.0 {
+            (1.0 / dir.y).abs()
+        } else {
+            f32::INFINITY
+        },
+        if dir.z != 0.0 {
+            (1.0 / dir.z).abs()
+        } else {
+            f32::INFINITY
+        },
     );
 
     // Distance along ray to the NEXT voxel boundary on each axis
@@ -346,18 +358,23 @@ mod tests {
         underground_chunk.dirty = false;
 
         let underground_entity = world.spawn(underground_chunk).id();
-        chunk_manager.chunks.insert(IVec3::new(0, -1, 0), underground_entity);
+        chunk_manager
+            .chunks
+            .insert(IVec3::new(0, -1, 0), underground_entity);
 
         world.insert_resource(chunk_manager);
         world
     }
 
     /// Run a raycast in a test world
-    fn run_raycast(world: &mut World, origin: Vec3, direction: Vec3, max_dist: f32) -> RaycastResult {
-        let mut system_state: SystemState<(
-            Res<ChunkManager>,
-            Query<&crate::world::Chunk>,
-        )> = SystemState::new(world);
+    fn run_raycast(
+        world: &mut World,
+        origin: Vec3,
+        direction: Vec3,
+        max_dist: f32,
+    ) -> RaycastResult {
+        let mut system_state: SystemState<(Res<ChunkManager>, Query<&crate::world::Chunk>)> =
+            SystemState::new(world);
 
         let (chunk_manager, chunks) = system_state.get(world);
         voxel_raycast(origin, direction, max_dist, &chunk_manager, &chunks)
@@ -372,12 +389,7 @@ mod tests {
         let (mut world, _) = setup_test_world(BlockType::Stone);
 
         // Ray from outside the chunk, pointing +X into the stone-filled chunk
-        let result = run_raycast(
-            &mut world,
-            Vec3::new(-2.0, 8.0, 8.0),
-            Vec3::X,
-            20.0,
-        );
+        let result = run_raycast(&mut world, Vec3::new(-2.0, 8.0, 8.0), Vec3::X, 20.0);
 
         assert!(result.hit);
         assert_eq!(result.block_pos, IVec3::new(0, 8, 8));
@@ -392,12 +404,7 @@ mod tests {
         let (mut world, _) = setup_test_world(BlockType::Stone);
 
         // Ray from beyond the chunk, pointing -X
-        let result = run_raycast(
-            &mut world,
-            Vec3::new(18.0, 8.0, 8.0),
-            Vec3::NEG_X,
-            20.0,
-        );
+        let result = run_raycast(&mut world, Vec3::new(18.0, 8.0, 8.0), Vec3::NEG_X, 20.0);
 
         assert!(result.hit);
         assert_eq!(result.block_pos, IVec3::new(15, 8, 8));
@@ -410,12 +417,7 @@ mod tests {
     fn test_ray_positive_y_hits_stone() {
         let (mut world, _) = setup_test_world(BlockType::Stone);
 
-        let result = run_raycast(
-            &mut world,
-            Vec3::new(8.0, -3.0, 8.0),
-            Vec3::Y,
-            20.0,
-        );
+        let result = run_raycast(&mut world, Vec3::new(8.0, -3.0, 8.0), Vec3::Y, 20.0);
 
         assert!(result.hit);
         assert_eq!(result.block_pos, IVec3::new(8, 0, 8));
@@ -427,12 +429,7 @@ mod tests {
     fn test_ray_positive_z_hits_stone() {
         let (mut world, _) = setup_test_world(BlockType::Stone);
 
-        let result = run_raycast(
-            &mut world,
-            Vec3::new(8.0, 8.0, -2.0),
-            Vec3::Z,
-            20.0,
-        );
+        let result = run_raycast(&mut world, Vec3::new(8.0, 8.0, -2.0), Vec3::Z, 20.0);
 
         assert!(result.hit);
         assert_eq!(result.block_pos, IVec3::new(8, 8, 0));
@@ -450,12 +447,7 @@ mod tests {
 
         // Diagonal ray from outside, should hit the first block it enters
         let direction = Vec3::new(1.0, 1.0, 1.0).normalize();
-        let result = run_raycast(
-            &mut world,
-            Vec3::new(-1.5, -1.5, -1.5),
-            direction,
-            20.0,
-        );
+        let result = run_raycast(&mut world, Vec3::new(-1.5, -1.5, -1.5), direction, 20.0);
 
         assert!(result.hit);
         assert_eq!(result.block_pos, IVec3::new(0, 0, 0));
@@ -470,12 +462,7 @@ mod tests {
 
         // Diagonal in XZ plane
         let direction = Vec3::new(1.0, 0.0, 1.0).normalize();
-        let result = run_raycast(
-            &mut world,
-            Vec3::new(-2.0, 8.0, -2.0),
-            direction,
-            20.0,
-        );
+        let result = run_raycast(&mut world, Vec3::new(-2.0, 8.0, -2.0), direction, 20.0);
 
         assert!(result.hit);
         assert_eq!(result.block_type, BlockType::Stone);
@@ -489,12 +476,7 @@ mod tests {
     fn test_ray_into_air_misses() {
         let (mut world, _) = setup_test_world(BlockType::Air);
 
-        let result = run_raycast(
-            &mut world,
-            Vec3::new(-2.0, 8.0, 8.0),
-            Vec3::X,
-            20.0,
-        );
+        let result = run_raycast(&mut world, Vec3::new(-2.0, 8.0, 8.0), Vec3::X, 20.0);
 
         assert!(!result.hit);
     }
@@ -504,12 +486,7 @@ mod tests {
         let (mut world, _) = setup_test_world(BlockType::Stone);
 
         // Ray pointing away from the chunk
-        let result = run_raycast(
-            &mut world,
-            Vec3::new(-2.0, 8.0, 8.0),
-            Vec3::NEG_X,
-            20.0,
-        );
+        let result = run_raycast(&mut world, Vec3::new(-2.0, 8.0, 8.0), Vec3::NEG_X, 20.0);
 
         assert!(!result.hit);
     }
@@ -519,12 +496,7 @@ mod tests {
         let (mut world, _) = setup_test_world(BlockType::Stone);
 
         // Zero direction should not crash, just miss
-        let result = run_raycast(
-            &mut world,
-            Vec3::new(8.0, 8.0, 8.0),
-            Vec3::ZERO,
-            20.0,
-        );
+        let result = run_raycast(&mut world, Vec3::new(8.0, 8.0, 8.0), Vec3::ZERO, 20.0);
 
         assert!(!result.hit);
     }
@@ -538,12 +510,7 @@ mod tests {
         let (mut world, _) = setup_test_world(BlockType::Stone);
 
         // Block is 5 units away, but max distance is 3
-        let result = run_raycast(
-            &mut world,
-            Vec3::new(-5.0, 8.0, 8.0),
-            Vec3::X,
-            3.0,
-        );
+        let result = run_raycast(&mut world, Vec3::new(-5.0, 8.0, 8.0), Vec3::X, 3.0);
 
         assert!(!result.hit);
     }
@@ -553,12 +520,7 @@ mod tests {
         let (mut world, _) = setup_test_world(BlockType::Stone);
 
         // Block is 2 units away, max distance is 3 — should hit
-        let result = run_raycast(
-            &mut world,
-            Vec3::new(-2.0, 8.0, 8.0),
-            Vec3::X,
-            3.0,
-        );
+        let result = run_raycast(&mut world, Vec3::new(-2.0, 8.0, 8.0), Vec3::X, 3.0);
 
         assert!(result.hit);
     }
@@ -572,12 +534,7 @@ mod tests {
         let mut world = setup_ground_world();
 
         // Standing at y=2, looking straight down
-        let result = run_raycast(
-            &mut world,
-            Vec3::new(8.5, 2.5, 8.5),
-            Vec3::NEG_Y,
-            10.0,
-        );
+        let result = run_raycast(&mut world, Vec3::new(8.5, 2.5, 8.5), Vec3::NEG_Y, 10.0);
 
         assert!(result.hit);
         assert_eq!(result.block_pos, IVec3::new(8, 0, 8));
@@ -592,12 +549,7 @@ mod tests {
 
         // Standing at y=3, looking down at ~45 degrees in +X direction
         let direction = Vec3::new(1.0, -1.0, 0.0).normalize();
-        let result = run_raycast(
-            &mut world,
-            Vec3::new(4.5, 3.5, 8.5),
-            direction,
-            10.0,
-        );
+        let result = run_raycast(&mut world, Vec3::new(4.5, 3.5, 8.5), direction, 10.0);
 
         assert!(result.hit);
         assert_eq!(result.block_type, BlockType::Stone);
@@ -614,12 +566,7 @@ mod tests {
         let (mut world, _) = setup_test_world(BlockType::Stone);
 
         // Hit from -X direction
-        let result = run_raycast(
-            &mut world,
-            Vec3::new(-2.0, 8.0, 8.0),
-            Vec3::X,
-            20.0,
-        );
+        let result = run_raycast(&mut world, Vec3::new(-2.0, 8.0, 8.0), Vec3::X, 20.0);
 
         assert!(result.hit);
         // Adjacent block should be one step back along the normal
@@ -649,12 +596,7 @@ mod tests {
         let (mut world, _) = setup_test_world(BlockType::Stone);
 
         // Origin inside the stone-filled chunk
-        let result = run_raycast(
-            &mut world,
-            Vec3::new(8.5, 8.5, 8.5),
-            Vec3::X,
-            10.0,
-        );
+        let result = run_raycast(&mut world, Vec3::new(8.5, 8.5, 8.5), Vec3::X, 10.0);
 
         // Should hit the block we're standing in
         assert!(result.hit);
@@ -683,12 +625,7 @@ mod tests {
         chunk_manager.chunks.insert(IVec3::ZERO, entity);
         world.insert_resource(chunk_manager);
 
-        let result = run_raycast(
-            &mut world,
-            Vec3::new(0.5, 8.5, 8.5),
-            Vec3::X,
-            20.0,
-        );
+        let result = run_raycast(&mut world, Vec3::new(0.5, 8.5, 8.5), Vec3::X, 20.0);
 
         assert!(result.hit);
         // Should pass through water and hit the stone

@@ -34,7 +34,7 @@ use std::path::PathBuf;
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 
-use super::{BlockType, Chunk, CHUNK_VOLUME};
+use super::{BlockType, CHUNK_VOLUME, Chunk};
 
 // ============================================================================
 // SAVE FORMAT
@@ -154,7 +154,7 @@ impl PaletteStats {
         // Palette (N × u16) + indices (4096 × u8)
         let compressed_bytes = (palette_size * 2) + CHUNK_VOLUME;
         let ratio = compressed_bytes as f32 / original_bytes as f32;
-        
+
         Self {
             unique_blocks: palette_size,
             original_bytes,
@@ -172,7 +172,7 @@ pub fn compress_chunk_data(blocks: &[BlockType; CHUNK_VOLUME]) -> Option<(Vec<u1
     // Build palette: map BlockType → palette index
     let mut type_to_index: HashMap<u16, u8> = HashMap::new();
     let mut palette: Vec<u16> = Vec::new();
-    
+
     // First pass: build palette
     for block in blocks.iter() {
         let block_id = u16::from(*block);
@@ -185,7 +185,7 @@ pub fn compress_chunk_data(blocks: &[BlockType; CHUNK_VOLUME]) -> Option<(Vec<u1
             palette.push(block_id);
         }
     }
-    
+
     // Second pass: convert to indices
     let indices: Vec<u8> = blocks
         .iter()
@@ -194,7 +194,7 @@ pub fn compress_chunk_data(blocks: &[BlockType; CHUNK_VOLUME]) -> Option<(Vec<u1
             *type_to_index.get(&block_id).unwrap()
         })
         .collect();
-    
+
     Some((palette, indices))
 }
 
@@ -216,9 +216,9 @@ pub fn decompress_chunk_data(
             indices.len()
         ));
     }
-    
+
     let mut blocks = [BlockType::Air; CHUNK_VOLUME];
-    
+
     for (i, &idx) in indices.iter().enumerate() {
         let block_id = *palette.get(idx as usize).ok_or_else(|| {
             format!(
@@ -229,7 +229,7 @@ pub fn decompress_chunk_data(
         })?;
         blocks[i] = BlockType::from(block_id);
     }
-    
+
     Ok(blocks)
 }
 
@@ -277,7 +277,9 @@ pub fn chunk_file_path(position: IVec3, storage: &ChunkStorage) -> PathBuf {
 pub fn chunk_file_path_fmt(position: IVec3, storage: &ChunkStorage, format: SaveFormat) -> PathBuf {
     storage.save_dir.join(format!(
         "chunk_{}_{}_{}.{}",
-        position.x, position.y, position.z,
+        position.x,
+        position.y,
+        position.z,
         format.extension()
     ))
 }
@@ -313,7 +315,11 @@ pub fn save_chunk(chunk: &Chunk, storage: &ChunkStorage) -> Result<(), io::Error
 /// # Errors
 ///
 /// Returns `io::Error` if the directory can't be created or the file can't be written.
-pub fn save_chunk_fmt(chunk: &Chunk, storage: &ChunkStorage, format: SaveFormat) -> Result<(), io::Error> {
+pub fn save_chunk_fmt(
+    chunk: &Chunk,
+    storage: &ChunkStorage,
+    format: SaveFormat,
+) -> Result<(), io::Error> {
     // Ensure the save directory exists
     fs::create_dir_all(&storage.save_dir)?;
 
@@ -328,7 +334,10 @@ pub fn save_chunk_fmt(chunk: &Chunk, storage: &ChunkStorage, format: SaveFormat)
             let path = chunk_file_path_fmt(chunk.position, storage, format);
             let json = serde_json::to_string(&saved).map_err(io::Error::other)?;
             fs::write(&path, json)?;
-            info!("Saved chunk at {:?} to {:?} ({})", chunk.position, path, format);
+            info!(
+                "Saved chunk at {:?} to {:?} ({})",
+                chunk.position, path, format
+            );
         }
         SaveFormat::Binary => {
             let saved = SavedChunk {
@@ -339,7 +348,10 @@ pub fn save_chunk_fmt(chunk: &Chunk, storage: &ChunkStorage, format: SaveFormat)
             let bytes = bincode::serialize(&saved)
                 .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))?;
             fs::write(&path, bytes)?;
-            info!("Saved chunk at {:?} to {:?} ({})", chunk.position, path, format);
+            info!(
+                "Saved chunk at {:?} to {:?} ({})",
+                chunk.position, path, format
+            );
         }
         SaveFormat::Compressed => {
             // Try palette compression; fall back to binary if >256 unique types
@@ -353,7 +365,7 @@ pub fn save_chunk_fmt(chunk: &Chunk, storage: &ChunkStorage, format: SaveFormat)
                 let bytes = bincode::serialize(&saved)
                     .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))?;
                 fs::write(&path, bytes)?;
-                
+
                 let stats = PaletteStats::calculate(saved.palette.len());
                 debug!(
                     "Saved chunk at {:?} (compressed: {} unique blocks, {:.1}% of original)",
@@ -433,7 +445,10 @@ pub fn load_chunk_auto(position: IVec3, storage: &ChunkStorage) -> Result<Chunk,
 
     Err(io::Error::new(
         io::ErrorKind::NotFound,
-        format!("No saved chunk at {:?} (checked .cbin, .bin, and .json)", position),
+        format!(
+            "No saved chunk at {:?} (checked .cbin, .bin, and .json)",
+            position
+        ),
     ))
 }
 
@@ -448,7 +463,11 @@ pub fn load_chunk_auto(position: IVec3, storage: &ChunkStorage) -> Result<Chunk,
 /// - The file doesn't exist (`NotFound`)
 /// - The data is malformed (`InvalidData`)
 /// - The block count doesn't match `CHUNK_VOLUME` (`InvalidData`)
-pub fn load_chunk_fmt(position: IVec3, storage: &ChunkStorage, format: SaveFormat) -> Result<Chunk, io::Error> {
+pub fn load_chunk_fmt(
+    position: IVec3,
+    storage: &ChunkStorage,
+    format: SaveFormat,
+) -> Result<Chunk, io::Error> {
     let path = chunk_file_path_fmt(position, storage, format);
 
     let (blocks, chunk_pos) = match format {
@@ -456,21 +475,25 @@ pub fn load_chunk_fmt(position: IVec3, storage: &ChunkStorage, format: SaveForma
             let json = fs::read_to_string(&path)?;
             let saved: SavedChunk = serde_json::from_str(&json)
                 .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
-            
+
             // Validate block data length
             if saved.blocks.len() != CHUNK_VOLUME {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidData,
-                    format!("Expected {} blocks, got {}", CHUNK_VOLUME, saved.blocks.len()),
+                    format!(
+                        "Expected {} blocks, got {}",
+                        CHUNK_VOLUME,
+                        saved.blocks.len()
+                    ),
                 ));
             }
-            
+
             // Convert u16 values back to BlockType array
             let mut blocks = [BlockType::Air; CHUNK_VOLUME];
             for (i, &val) in saved.blocks.iter().enumerate() {
                 blocks[i] = BlockType::from(val);
             }
-            
+
             let pos = IVec3::new(saved.position[0], saved.position[1], saved.position[2]);
             (blocks, pos)
         }
@@ -478,21 +501,25 @@ pub fn load_chunk_fmt(position: IVec3, storage: &ChunkStorage, format: SaveForma
             let bytes = fs::read(&path)?;
             let saved: SavedChunk = bincode::deserialize(&bytes)
                 .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))?;
-            
+
             // Validate block data length
             if saved.blocks.len() != CHUNK_VOLUME {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidData,
-                    format!("Expected {} blocks, got {}", CHUNK_VOLUME, saved.blocks.len()),
+                    format!(
+                        "Expected {} blocks, got {}",
+                        CHUNK_VOLUME,
+                        saved.blocks.len()
+                    ),
                 ));
             }
-            
+
             // Convert u16 values back to BlockType array
             let mut blocks = [BlockType::Air; CHUNK_VOLUME];
             for (i, &val) in saved.blocks.iter().enumerate() {
                 blocks[i] = BlockType::from(val);
             }
-            
+
             let pos = IVec3::new(saved.position[0], saved.position[1], saved.position[2]);
             (blocks, pos)
         }
@@ -500,24 +527,27 @@ pub fn load_chunk_fmt(position: IVec3, storage: &ChunkStorage, format: SaveForma
             let bytes = fs::read(&path)?;
             let saved: SavedChunkCompressed = bincode::deserialize(&bytes)
                 .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))?;
-            
+
             // Decompress palette-encoded data
             let blocks = decompress_chunk_data(&saved.palette, &saved.indices)
                 .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
-            
+
             let pos = IVec3::new(saved.position[0], saved.position[1], saved.position[2]);
-            
+
             debug!(
                 "Loaded compressed chunk at {:?} ({} palette entries)",
                 pos,
                 saved.palette.len()
             );
-            
+
             (blocks, pos)
         }
     };
 
-    info!("Loaded chunk at {:?} from {:?} ({})", chunk_pos, path, format);
+    info!(
+        "Loaded chunk at {:?} from {:?} ({})",
+        chunk_pos, path, format
+    );
     Ok(Chunk::from_blocks(chunk_pos, blocks))
 }
 
@@ -738,7 +768,11 @@ mod tests {
         for block in types {
             let val: u16 = block.into();
             let back: BlockType = val.into();
-            assert_eq!(back, block, "u16 round-trip failed for {:?} (u16={})", block, val);
+            assert_eq!(
+                back, block,
+                "u16 round-trip failed for {:?} (u16={})",
+                block, val
+            );
         }
     }
 
@@ -789,7 +823,10 @@ mod tests {
         save_chunk(&chunk, &storage).expect("save should succeed");
 
         let loaded = load_chunk(IVec3::ZERO, &storage).expect("load should succeed");
-        assert!(loaded.dirty, "Loaded chunks should be marked dirty for mesh rebuild");
+        assert!(
+            loaded.dirty,
+            "Loaded chunks should be marked dirty for mesh rebuild"
+        );
 
         cleanup(&storage);
     }
@@ -848,8 +885,8 @@ mod tests {
         chunk.fill(BlockType::Stone);
 
         save_chunk_fmt(&chunk, &storage, SaveFormat::Binary).expect("save should succeed");
-        let loaded = load_chunk_fmt(IVec3::ZERO, &storage, SaveFormat::Binary)
-            .expect("load should succeed");
+        let loaded =
+            load_chunk_fmt(IVec3::ZERO, &storage, SaveFormat::Binary).expect("load should succeed");
 
         for i in 0..CHUNK_VOLUME {
             assert_eq!(loaded.blocks()[i], BlockType::Stone, "block {} mismatch", i);
@@ -943,11 +980,20 @@ mod tests {
         assert_eq!(SaveFormat::from_str_lossy("bin"), SaveFormat::Binary);
         assert_eq!(SaveFormat::from_str_lossy("bincode"), SaveFormat::Binary);
         assert_eq!(SaveFormat::from_str_lossy("BINARY"), SaveFormat::Binary);
-        assert_eq!(SaveFormat::from_str_lossy("compressed"), SaveFormat::Compressed);
+        assert_eq!(
+            SaveFormat::from_str_lossy("compressed"),
+            SaveFormat::Compressed
+        );
         assert_eq!(SaveFormat::from_str_lossy("cbin"), SaveFormat::Compressed);
-        assert_eq!(SaveFormat::from_str_lossy("palette"), SaveFormat::Compressed);
+        assert_eq!(
+            SaveFormat::from_str_lossy("palette"),
+            SaveFormat::Compressed
+        );
         // Unknown defaults to compressed (new default)
-        assert_eq!(SaveFormat::from_str_lossy("unknown"), SaveFormat::Compressed);
+        assert_eq!(
+            SaveFormat::from_str_lossy("unknown"),
+            SaveFormat::Compressed
+        );
     }
 
     #[test]
@@ -992,8 +1038,8 @@ mod tests {
         }
 
         save_chunk_fmt(&chunk, &storage, SaveFormat::Binary).expect("save should succeed");
-        let loaded = load_chunk_fmt(IVec3::ZERO, &storage, SaveFormat::Binary)
-            .expect("load should succeed");
+        let loaded =
+            load_chunk_fmt(IVec3::ZERO, &storage, SaveFormat::Binary).expect("load should succeed");
 
         for (i, &block_type) in all_types.iter().enumerate() {
             assert_eq!(
@@ -1042,7 +1088,8 @@ mod tests {
         blocks[4000] = BlockType::Obsidian;
 
         let (palette, indices) = compress_chunk_data(&blocks).expect("compression should succeed");
-        let decompressed = decompress_chunk_data(&palette, &indices).expect("decompression should succeed");
+        let decompressed =
+            decompress_chunk_data(&palette, &indices).expect("decompression should succeed");
 
         for i in 0..CHUNK_VOLUME {
             assert_eq!(decompressed[i], blocks[i], "block {} mismatch", i);
@@ -1271,7 +1318,7 @@ mod tests {
         // Chunk with only one block type should have palette size 1
         let blocks = [BlockType::Stone; CHUNK_VOLUME];
         let (palette, _indices) = compress_chunk_data(&blocks).expect("compression should succeed");
-        
+
         assert_eq!(palette.len(), 1);
         assert_eq!(palette[0], BlockType::Stone as u16);
     }

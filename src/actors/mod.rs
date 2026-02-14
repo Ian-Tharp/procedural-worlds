@@ -93,7 +93,9 @@ pub struct Velocity {
 impl Velocity {
     #[allow(dead_code)]
     pub fn new(x: f32, y: f32, z: f32) -> Self {
-        Self { linear: Vec3::new(x, y, z) }
+        Self {
+            linear: Vec3::new(x, y, z),
+        }
     }
 }
 
@@ -124,11 +126,11 @@ pub struct Movement {
 impl Default for Movement {
     fn default() -> Self {
         Self {
-            walk_speed: 4.3,      // Minecraft walking
-            sprint_speed: 5.6,    // Minecraft sprinting
-            fly_speed: 11.0,      // Minecraft creative fly
-            jump_velocity: 8.4,   // ~1.25 block jump height
-            step_height: 0.6,     // Auto-step up to 0.6 blocks
+            walk_speed: 4.3,    // Minecraft walking
+            sprint_speed: 5.6,  // Minecraft sprinting
+            fly_speed: 11.0,    // Minecraft creative fly
+            jump_velocity: 8.4, // ~1.25 block jump height
+            step_height: 0.6,   // Auto-step up to 0.6 blocks
             flying: false,
             noclip: false,
         }
@@ -196,8 +198,8 @@ pub struct CapsuleCollider {
 impl Default for CapsuleCollider {
     fn default() -> Self {
         Self {
-            radius: 0.3,   // Player is 0.6 blocks wide
-            height: 1.8,   // Player is 1.8 blocks tall
+            radius: 0.3, // Player is 0.6 blocks wide
+            height: 1.8, // Player is 1.8 blocks tall
         }
     }
 }

@@ -49,19 +49,17 @@ pub mod playback;
 pub mod validation;
 
 // Re-export key types for convenience
+pub use ambient::{
+    ActivityChangedEvent, ActivitySoundAssets, AmbientAudioPlugin, BiomeAudioProfile,
+    PlayerActivityState, PlayerAudioState, WindSound, WindSoundState,
+};
 pub use playback::{
-    AudioPlaybackPlugin, BlockSoundEvent, BlockSoundKind,
-    BlockSoundAssets, BiomeAmbientAssets, CurrentAmbientSound,
-    SpatialSfx, AmbientSound, AudioListenerMarker,
+    AmbientSound, AudioListenerMarker, AudioPlaybackPlugin, BiomeAmbientAssets, BlockSoundAssets,
+    BlockSoundEvent, BlockSoundKind, CurrentAmbientSound, SpatialSfx,
 };
 pub use validation::{
-    AudioValidationPlugin, AudioDeviceStatus, DeviceState,
-    ValidationResult, validate_audio_config, resolve_device_state,
-};
-pub use ambient::{
-    AmbientAudioPlugin, PlayerActivityState, PlayerAudioState,
-    BiomeAudioProfile, ActivityChangedEvent, ActivitySoundAssets,
-    WindSoundState, WindSound,
+    AudioDeviceStatus, AudioValidationPlugin, DeviceState, ValidationResult, resolve_device_state,
+    validate_audio_config,
 };
 
 use bevy::prelude::*;

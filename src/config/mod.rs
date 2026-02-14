@@ -36,10 +36,10 @@ use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
-use std::sync::{mpsc, Mutex};
+use std::sync::{Mutex, mpsc};
 
-use crate::actors::{Movement, Player};
 use crate::actors::player::projection_from_config;
+use crate::actors::{Movement, Player};
 use crate::editor::debug_overlay::DebugOverlayState;
 use crate::engine::controller::CameraController;
 use crate::engine::input::{InputAction, InputMap};
@@ -573,7 +573,10 @@ impl ConfigWatcher {
         ) {
             Ok(w) => w,
             Err(e) => {
-                warn!("Failed to create config file watcher: {}. Hot-reload disabled.", e);
+                warn!(
+                    "Failed to create config file watcher: {}. Hot-reload disabled.",
+                    e
+                );
                 return None;
             }
         };
@@ -584,7 +587,10 @@ impl ConfigWatcher {
         let watch_path = fs::canonicalize(&config_path).unwrap_or(config_path);
 
         if let Err(e) = watcher.watch(&watch_path, RecursiveMode::NonRecursive) {
-            warn!("Failed to watch {}: {}. Hot-reload disabled.", CONFIG_FILE, e);
+            warn!(
+                "Failed to watch {}: {}. Hot-reload disabled.",
+                CONFIG_FILE, e
+            );
             return None;
         }
 
@@ -615,17 +621,11 @@ impl EngineConfig {
                         return config;
                     }
                     Err(e) => {
-                        warn!(
-                            "Failed to parse {}: {}. Using defaults.",
-                            CONFIG_FILE, e
-                        );
+                        warn!("Failed to parse {}: {}. Using defaults.", CONFIG_FILE, e);
                     }
                 },
                 Err(e) => {
-                    warn!(
-                        "Failed to read {}: {}. Using defaults.",
-                        CONFIG_FILE, e
-                    );
+                    warn!("Failed to read {}: {}. Using defaults.", CONFIG_FILE, e);
                 }
             }
         } else {
@@ -885,7 +885,11 @@ fn apply_config_to_resources(
     load_metrics.enabled = config.debug.collect_chunk_metrics;
     info!(
         "Chunk metrics collection: {}",
-        if config.debug.collect_chunk_metrics { "enabled" } else { "disabled" },
+        if config.debug.collect_chunk_metrics {
+            "enabled"
+        } else {
+            "disabled"
+        },
     );
 
     // --- Unload settings ---
@@ -907,9 +911,7 @@ fn apply_config_to_resources(
     save_system.set_chunk_format_from_str(&config.save.chunk_format);
     info!(
         "Save: dir={:?}, auto_save={}s, format={}",
-        config.save.save_dir,
-        config.save.auto_save_interval,
-        config.save.chunk_format,
+        config.save.save_dir, config.save.auto_save_interval, config.save.chunk_format,
     );
 
     // --- Streaming settings ---
@@ -928,16 +930,44 @@ fn apply_config_to_resources(
     // Clear default bindings and apply from config
     input_map.clear();
 
-    bind_from_config(&mut input_map, InputAction::MoveForward, &config.controls.move_forward);
-    bind_from_config(&mut input_map, InputAction::MoveBackward, &config.controls.move_backward);
-    bind_from_config(&mut input_map, InputAction::MoveLeft, &config.controls.move_left);
-    bind_from_config(&mut input_map, InputAction::MoveRight, &config.controls.move_right);
+    bind_from_config(
+        &mut input_map,
+        InputAction::MoveForward,
+        &config.controls.move_forward,
+    );
+    bind_from_config(
+        &mut input_map,
+        InputAction::MoveBackward,
+        &config.controls.move_backward,
+    );
+    bind_from_config(
+        &mut input_map,
+        InputAction::MoveLeft,
+        &config.controls.move_left,
+    );
+    bind_from_config(
+        &mut input_map,
+        InputAction::MoveRight,
+        &config.controls.move_right,
+    );
     bind_from_config(&mut input_map, InputAction::Jump, &config.controls.jump);
     bind_from_config(&mut input_map, InputAction::Crouch, &config.controls.crouch);
     bind_from_config(&mut input_map, InputAction::Sprint, &config.controls.sprint);
-    bind_from_config(&mut input_map, InputAction::ToggleFly, &config.controls.toggle_fly);
-    bind_from_config(&mut input_map, InputAction::ToggleNoclip, &config.controls.toggle_noclip);
-    bind_from_config(&mut input_map, InputAction::ReleaseCursor, &config.controls.release_cursor);
+    bind_from_config(
+        &mut input_map,
+        InputAction::ToggleFly,
+        &config.controls.toggle_fly,
+    );
+    bind_from_config(
+        &mut input_map,
+        InputAction::ToggleNoclip,
+        &config.controls.toggle_noclip,
+    );
+    bind_from_config(
+        &mut input_map,
+        InputAction::ReleaseCursor,
+        &config.controls.release_cursor,
+    );
 
     info!("Input bindings applied from config");
 }
@@ -966,10 +996,9 @@ fn apply_config_to_entities(
         movement.jump_velocity = config.player.jump_velocity;
     }
 
-    info!("Player config applied (sensitivity: {}, walk: {}, fly: {})",
-        config.player.mouse_sensitivity,
-        config.player.walk_speed,
-        config.player.fly_speed,
+    info!(
+        "Player config applied (sensitivity: {}, walk: {}, fly: {})",
+        config.player.mouse_sensitivity, config.player.walk_speed, config.player.fly_speed,
     );
 }
 
@@ -1012,10 +1041,7 @@ fn poll_config_changes(
     while let Ok(event_result) = receiver.try_recv() {
         match event_result {
             Ok(event) => {
-                if matches!(
-                    event.kind,
-                    EventKind::Modify(_) | EventKind::Create(_)
-                ) {
+                if matches!(event.kind, EventKind::Modify(_) | EventKind::Create(_)) {
                     should_reload = true;
                 }
             }
@@ -1038,12 +1064,18 @@ fn poll_config_changes(
         Ok(contents) => match serde_json::from_str::<EngineConfig>(&contents) {
             Ok(c) => c,
             Err(e) => {
-                warn!("Hot-reload: failed to parse {}: {}. Keeping current config.", CONFIG_FILE, e);
+                warn!(
+                    "Hot-reload: failed to parse {}: {}. Keeping current config.",
+                    CONFIG_FILE, e
+                );
                 return;
             }
         },
         Err(e) => {
-            warn!("Hot-reload: failed to read {}: {}. Keeping current config.", CONFIG_FILE, e);
+            warn!(
+                "Hot-reload: failed to read {}: {}. Keeping current config.",
+                CONFIG_FILE, e
+            );
             return;
         }
     };
@@ -1165,16 +1197,44 @@ fn poll_config_changes(
 
     if reloadable.contains(&events::ConfigSection::Controls) {
         input_map.clear();
-        bind_from_config(&mut input_map, InputAction::MoveForward, &config.controls.move_forward);
-        bind_from_config(&mut input_map, InputAction::MoveBackward, &config.controls.move_backward);
-        bind_from_config(&mut input_map, InputAction::MoveLeft, &config.controls.move_left);
-        bind_from_config(&mut input_map, InputAction::MoveRight, &config.controls.move_right);
+        bind_from_config(
+            &mut input_map,
+            InputAction::MoveForward,
+            &config.controls.move_forward,
+        );
+        bind_from_config(
+            &mut input_map,
+            InputAction::MoveBackward,
+            &config.controls.move_backward,
+        );
+        bind_from_config(
+            &mut input_map,
+            InputAction::MoveLeft,
+            &config.controls.move_left,
+        );
+        bind_from_config(
+            &mut input_map,
+            InputAction::MoveRight,
+            &config.controls.move_right,
+        );
         bind_from_config(&mut input_map, InputAction::Jump, &config.controls.jump);
         bind_from_config(&mut input_map, InputAction::Crouch, &config.controls.crouch);
         bind_from_config(&mut input_map, InputAction::Sprint, &config.controls.sprint);
-        bind_from_config(&mut input_map, InputAction::ToggleFly, &config.controls.toggle_fly);
-        bind_from_config(&mut input_map, InputAction::ToggleNoclip, &config.controls.toggle_noclip);
-        bind_from_config(&mut input_map, InputAction::ReleaseCursor, &config.controls.release_cursor);
+        bind_from_config(
+            &mut input_map,
+            InputAction::ToggleFly,
+            &config.controls.toggle_fly,
+        );
+        bind_from_config(
+            &mut input_map,
+            InputAction::ToggleNoclip,
+            &config.controls.toggle_noclip,
+        );
+        bind_from_config(
+            &mut input_map,
+            InputAction::ReleaseCursor,
+            &config.controls.release_cursor,
+        );
     }
 
     if reloadable.contains(&events::ConfigSection::Player) {
@@ -1284,24 +1344,69 @@ mod tests {
         // Spot-check values survived roundtrip
         assert_eq!(deserialized.window.title, original.window.title);
         assert_eq!(deserialized.terrain.seed, original.terrain.seed);
-        assert_eq!(deserialized.controls.move_forward, original.controls.move_forward);
+        assert_eq!(
+            deserialized.controls.move_forward,
+            original.controls.move_forward
+        );
         assert_eq!(deserialized.player.walk_speed, original.player.walk_speed);
-        assert_eq!(deserialized.debug.overlay_visible, original.debug.overlay_visible);
-        assert_eq!(deserialized.unload.save_on_unload, original.unload.save_on_unload);
-        assert_eq!(deserialized.unload.memory_threshold_mb, original.unload.memory_threshold_mb);
-        assert_eq!(deserialized.world.load_distance, original.world.load_distance);
-        assert_eq!(deserialized.world.vertical_load_up, original.world.vertical_load_up);
-        assert_eq!(deserialized.world.vertical_load_down, original.world.vertical_load_down);
-        assert_eq!(deserialized.terrain.biome_blend_enabled, original.terrain.biome_blend_enabled);
-        assert_eq!(deserialized.terrain.biome_blend_distance, original.terrain.biome_blend_distance);
-        assert_eq!(deserialized.audio.master_volume, original.audio.master_volume);
-        assert_eq!(deserialized.audio.ambience_intensity, original.audio.ambience_intensity);
-        assert_eq!(deserialized.audio.distance_falloff, original.audio.distance_falloff);
-        assert_eq!(deserialized.audio.spatial_audio_enabled, original.audio.spatial_audio_enabled);
+        assert_eq!(
+            deserialized.debug.overlay_visible,
+            original.debug.overlay_visible
+        );
+        assert_eq!(
+            deserialized.unload.save_on_unload,
+            original.unload.save_on_unload
+        );
+        assert_eq!(
+            deserialized.unload.memory_threshold_mb,
+            original.unload.memory_threshold_mb
+        );
+        assert_eq!(
+            deserialized.world.load_distance,
+            original.world.load_distance
+        );
+        assert_eq!(
+            deserialized.world.vertical_load_up,
+            original.world.vertical_load_up
+        );
+        assert_eq!(
+            deserialized.world.vertical_load_down,
+            original.world.vertical_load_down
+        );
+        assert_eq!(
+            deserialized.terrain.biome_blend_enabled,
+            original.terrain.biome_blend_enabled
+        );
+        assert_eq!(
+            deserialized.terrain.biome_blend_distance,
+            original.terrain.biome_blend_distance
+        );
+        assert_eq!(
+            deserialized.audio.master_volume,
+            original.audio.master_volume
+        );
+        assert_eq!(
+            deserialized.audio.ambience_intensity,
+            original.audio.ambience_intensity
+        );
+        assert_eq!(
+            deserialized.audio.distance_falloff,
+            original.audio.distance_falloff
+        );
+        assert_eq!(
+            deserialized.audio.spatial_audio_enabled,
+            original.audio.spatial_audio_enabled
+        );
         assert_eq!(deserialized.audio.enabled, original.audio.enabled);
-        assert_eq!(deserialized.debug.collect_chunk_metrics, original.debug.collect_chunk_metrics);
+        assert_eq!(
+            deserialized.debug.collect_chunk_metrics,
+            original.debug.collect_chunk_metrics
+        );
         assert_eq!(deserialized.save.save_dir, original.save.save_dir);
-        assert_eq!(deserialized.save.auto_save_interval, original.save.auto_save_interval);
+        assert_eq!(
+            deserialized.save.auto_save_interval,
+            original.save.auto_save_interval
+        );
         assert_eq!(deserialized.save.chunk_format, original.save.chunk_format);
     }
 
@@ -1327,8 +1432,14 @@ mod tests {
     #[test]
     fn test_biome_blend_config_defaults() {
         let config = EngineConfig::default();
-        assert!(config.terrain.biome_blend_enabled, "Blending should be enabled by default");
-        assert_eq!(config.terrain.biome_blend_distance, 32.0, "Default blend distance should be 32.0");
+        assert!(
+            config.terrain.biome_blend_enabled,
+            "Blending should be enabled by default"
+        );
+        assert_eq!(
+            config.terrain.biome_blend_distance, 32.0,
+            "Default blend distance should be 32.0"
+        );
     }
 
     #[test]
@@ -1343,7 +1454,8 @@ mod tests {
         assert_eq!(config.terrain.transition_noise_amplitude, 0.45);
 
         // Config with blend fields should honor them
-        let json = r#"{ "terrain": { "biome_blend_enabled": false, "biome_blend_distance": 64.0 } }"#;
+        let json =
+            r#"{ "terrain": { "biome_blend_enabled": false, "biome_blend_distance": 64.0 } }"#;
         let config: EngineConfig = serde_json::from_str(json).unwrap();
         assert!(!config.terrain.biome_blend_enabled);
         assert_eq!(config.terrain.biome_blend_distance, 64.0);

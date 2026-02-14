@@ -7,9 +7,11 @@
 //! - Wireframe toggle
 //! - Input state visualization
 
+use bevy::diagnostic::{
+    DiagnosticsStore, EntityCountDiagnosticsPlugin, FrameTimeDiagnosticsPlugin,
+};
 use bevy::pbr::{DirectionalLightShadowMap, NotShadowCaster};
 use bevy::prelude::*;
-use bevy::diagnostic::{DiagnosticsStore, EntityCountDiagnosticsPlugin, FrameTimeDiagnosticsPlugin};
 use bevy_egui::egui;
 
 use crate::config::EngineConfig;
@@ -19,7 +21,7 @@ use crate::engine::memory;
 use crate::engine::raycast::CurrentTarget;
 use crate::world::streaming::StreamingConfig;
 use crate::world::unloading::UnloadConfig;
-use crate::world::{ChunkLoadMetrics, ChunkMesh, CHUNK_SIZE, CHUNK_VOLUME};
+use crate::world::{CHUNK_SIZE, CHUNK_VOLUME, ChunkLoadMetrics, ChunkMesh};
 
 /// Number of frame time samples to keep for the graph
 const FRAME_TIME_HISTORY_SIZE: usize = 120;
@@ -89,7 +91,6 @@ pub struct DebugOverlayState {
     pub fog_end: f32,
 
     // ── LOD distance configurator (runtime-adjustable via debug panel) ──
-
     /// Whether LOD config fields have been populated from resources.
     /// Set to `true` after first sync; prevents overwriting user edits.
     pub lod_config_initialized: bool,
@@ -168,7 +169,7 @@ impl DebugOverlayState {
     pub fn frame_time_stats(&self) -> (f32, f32, f32) {
         let history = &self.frame_time_history;
         let valid: Vec<f32> = history.iter().copied().filter(|&t| t > 0.0).collect();
-        
+
         if valid.is_empty() {
             return (0.0, 0.0, 0.0);
         }
@@ -176,7 +177,7 @@ impl DebugOverlayState {
         let avg = valid.iter().sum::<f32>() / valid.len() as f32;
         let min = valid.iter().copied().fold(f32::INFINITY, f32::min);
         let max = valid.iter().copied().fold(0.0, f32::max);
-        
+
         (avg, min, max)
     }
 }
@@ -195,18 +196,18 @@ pub fn world_to_chunk_coords(world_pos: Vec3) -> IVec3 {
 fn estimate_memory_usage(chunk_count: usize) -> (f64, f64, f64) {
     // Block data memory
     let block_data_bytes = chunk_count * CHUNK_VOLUME * BYTES_PER_BLOCK;
-    
+
     // Mesh memory (rough estimate)
     let mesh_bytes = chunk_count * AVG_VERTICES_PER_CHUNK * BYTES_PER_VERTEX;
-    
+
     // Total
     let total_bytes = block_data_bytes + mesh_bytes;
-    
+
     // Convert to MB
     let block_mb = block_data_bytes as f64 / (1024.0 * 1024.0);
     let mesh_mb = mesh_bytes as f64 / (1024.0 * 1024.0);
     let total_mb = total_bytes as f64 / (1024.0 * 1024.0);
-    
+
     (block_mb, mesh_mb, total_mb)
 }
 
@@ -242,8 +243,7 @@ pub fn update_frame_time_history(
         }
 
         // Cache entity count from diagnostics
-        if let Some(entity_diag) =
-            diagnostics.get(&EntityCountDiagnosticsPlugin::ENTITY_COUNT)
+        if let Some(entity_diag) = diagnostics.get(&EntityCountDiagnosticsPlugin::ENTITY_COUNT)
             && let Some(count) = entity_diag.value()
         {
             overlay_state.cached_entity_count = count;
@@ -268,7 +268,11 @@ pub fn update_debug_render_data(
 ) {
     overlay_state.shadow_map_size = shadow_map.as_ref().map(|sm| sm.size).unwrap_or(0);
     overlay_state.shadow_cascade_count = config.render.shadow_cascade_count;
-    overlay_state.shadows_enabled = sun_query.iter().next().map(|l| l.shadows_enabled).unwrap_or(false);
+    overlay_state.shadows_enabled = sun_query
+        .iter()
+        .next()
+        .map(|l| l.shadows_enabled)
+        .unwrap_or(false);
     overlay_state.shadow_caster_count = shadow_caster_query.iter().count();
     overlay_state.shadow_culled_count = not_shadow_caster_query.iter().count();
     overlay_state.bloom_enabled = config.render.bloom_enabled;
@@ -452,7 +456,10 @@ pub fn draw_debug_ui(
             ui.label("📦");
             ui.monospace(format!("{} chunks", chunk_count));
             ui.label("  🧩");
-            ui.monospace(format!("{} entities", overlay_state.cached_entity_count as u64));
+            ui.monospace(format!(
+                "{} entities",
+                overlay_state.cached_entity_count as u64
+            ));
         });
     }
 
@@ -463,17 +470,26 @@ pub fn draw_debug_ui(
     ui.collapsing("📍 Position", |ui| {
         ui.horizontal(|ui| {
             ui.label("World:");
-            ui.monospace(format!("X:{:.1} Y:{:.1} Z:{:.1}", player_pos.x, player_pos.y, player_pos.z));
+            ui.monospace(format!(
+                "X:{:.1} Y:{:.1} Z:{:.1}",
+                player_pos.x, player_pos.y, player_pos.z
+            ));
         });
         ui.horizontal(|ui| {
             ui.label("Chunk:");
-            ui.monospace(format!("({}, {}, {})", chunk_coords.x, chunk_coords.y, chunk_coords.z));
+            ui.monospace(format!(
+                "({}, {}, {})",
+                chunk_coords.x, chunk_coords.y, chunk_coords.z
+            ));
         });
         ui.horizontal(|ui| {
             ui.label("Local:");
-            let local_x = ((player_pos.x % CHUNK_SIZE as f32) + CHUNK_SIZE as f32) % CHUNK_SIZE as f32;
-            let local_y = ((player_pos.y % CHUNK_SIZE as f32) + CHUNK_SIZE as f32) % CHUNK_SIZE as f32;
-            let local_z = ((player_pos.z % CHUNK_SIZE as f32) + CHUNK_SIZE as f32) % CHUNK_SIZE as f32;
+            let local_x =
+                ((player_pos.x % CHUNK_SIZE as f32) + CHUNK_SIZE as f32) % CHUNK_SIZE as f32;
+            let local_y =
+                ((player_pos.y % CHUNK_SIZE as f32) + CHUNK_SIZE as f32) % CHUNK_SIZE as f32;
+            let local_z =
+                ((player_pos.z % CHUNK_SIZE as f32) + CHUNK_SIZE as f32) % CHUNK_SIZE as f32;
             ui.monospace(format!("({:.1}, {:.1}, {:.1})", local_x, local_y, local_z));
         });
     });
@@ -486,7 +502,10 @@ pub fn draw_debug_ui(
             if let Some(ref result) = target_res.0 {
                 ui.horizontal(|ui| {
                     ui.label("Block:");
-                    ui.monospace(format!("({}, {}, {})", result.block_pos.x, result.block_pos.y, result.block_pos.z));
+                    ui.monospace(format!(
+                        "({}, {}, {})",
+                        result.block_pos.x, result.block_pos.y, result.block_pos.z
+                    ));
                 });
                 ui.horizontal(|ui| {
                     ui.label("Type:");
@@ -494,7 +513,11 @@ pub fn draw_debug_ui(
                 });
                 ui.horizontal(|ui| {
                     ui.label("Face:");
-                    let face_name = match (result.face_normal.x, result.face_normal.y, result.face_normal.z) {
+                    let face_name = match (
+                        result.face_normal.x,
+                        result.face_normal.y,
+                        result.face_normal.z,
+                    ) {
                         (1, 0, 0) => "+X (East)",
                         (-1, 0, 0) => "-X (West)",
                         (0, 1, 0) => "+Y (Top)",
@@ -511,7 +534,10 @@ pub fn draw_debug_ui(
                 });
                 ui.horizontal(|ui| {
                     ui.label("Place at:");
-                    ui.monospace(format!("({}, {}, {})", result.adjacent_pos.x, result.adjacent_pos.y, result.adjacent_pos.z));
+                    ui.monospace(format!(
+                        "({}, {}, {})",
+                        result.adjacent_pos.x, result.adjacent_pos.y, result.adjacent_pos.z
+                    ));
                 });
             } else {
                 ui.colored_label(egui::Color32::from_rgb(150, 150, 150), "No block in range");
@@ -526,9 +552,18 @@ pub fn draw_debug_ui(
     // Day/night cycle section
     if let Some(cycle) = day_night {
         ui.collapsing("🌅 Time of Day", |ui| {
-            ui.horizontal(|ui| { ui.label("Clock:"); ui.monospace(cycle.clock_display()); });
-            ui.horizontal(|ui| { ui.label("Phase:"); ui.monospace(cycle.phase_name()); });
-            ui.horizontal(|ui| { ui.label("Raw:"); ui.monospace(format!("{:.4}", cycle.time_of_day)); });
+            ui.horizontal(|ui| {
+                ui.label("Clock:");
+                ui.monospace(cycle.clock_display());
+            });
+            ui.horizontal(|ui| {
+                ui.label("Phase:");
+                ui.monospace(cycle.phase_name());
+            });
+            ui.horizontal(|ui| {
+                ui.label("Raw:");
+                ui.monospace(format!("{:.4}", cycle.time_of_day));
+            });
             ui.horizontal(|ui| {
                 ui.label("Cycle:");
                 ui.monospace(format!("{:.0}s", cycle.cycle_duration));
@@ -538,11 +573,14 @@ pub fn draw_debug_ui(
             });
 
             // Visual time-of-day bar
-            let (rect, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 12.0), egui::Sense::hover());
-            ui.painter().rect_filled(rect, 2.0, egui::Color32::from_rgb(20, 20, 40));
+            let (rect, _) = ui
+                .allocate_exact_size(egui::vec2(ui.available_width(), 12.0), egui::Sense::hover());
+            ui.painter()
+                .rect_filled(rect, 2.0, egui::Color32::from_rgb(20, 20, 40));
             let marker_x = rect.min.x + rect.width() * cycle.time_of_day;
             let marker_center = egui::pos2(marker_x, rect.center().y);
-            ui.painter().circle_filled(marker_center, 5.0, egui::Color32::from_rgb(255, 220, 80));
+            ui.painter()
+                .circle_filled(marker_center, 5.0, egui::Color32::from_rgb(255, 220, 80));
         });
         ui.separator();
     }
@@ -553,9 +591,12 @@ pub fn draw_debug_ui(
         let (avg, min, max) = overlay_state.frame_time_stats();
 
         ui.horizontal(|ui| {
-            ui.label("Avg:"); ui.monospace(format!("{:.2}ms", avg));
-            ui.label("Min:"); ui.monospace(format!("{:.2}ms", min));
-            ui.label("Max:"); ui.monospace(format!("{:.2}ms", max));
+            ui.label("Avg:");
+            ui.monospace(format!("{:.2}ms", avg));
+            ui.label("Min:");
+            ui.monospace(format!("{:.2}ms", min));
+            ui.label("Max:");
+            ui.monospace(format!("{:.2}ms", max));
         });
 
         let fps = if avg > 0.0 { 1000.0 / avg } else { 0.0 };
@@ -566,7 +607,10 @@ pub fn draw_debug_ui(
         } else {
             egui::Color32::from_rgb(255, 100, 100)
         };
-        ui.horizontal(|ui| { ui.label("FPS:"); ui.colored_label(fps_color, format!("{:.0}", fps)); });
+        ui.horizontal(|ui| {
+            ui.label("FPS:");
+            ui.colored_label(fps_color, format!("{:.0}", fps));
+        });
 
         ui.add_space(4.0);
         ui.label("Recent frame times:");
@@ -586,11 +630,10 @@ pub fn draw_debug_ui(
                     egui::Color32::from_rgb(255, 100, 100)
                 };
                 let height = 20.0 * normalized;
-                let (rect, _response) = ui.allocate_exact_size(egui::vec2(4.0, 20.0), egui::Sense::hover());
-                let bar_rect = egui::Rect::from_min_max(
-                    egui::pos2(rect.min.x, rect.max.y - height),
-                    rect.max,
-                );
+                let (rect, _response) =
+                    ui.allocate_exact_size(egui::vec2(4.0, 20.0), egui::Sense::hover());
+                let bar_rect =
+                    egui::Rect::from_min_max(egui::pos2(rect.min.x, rect.max.y - height), rect.max);
                 ui.painter().rect_filled(bar_rect, 0.0, color);
             }
         });
@@ -604,10 +647,22 @@ pub fn draw_debug_ui(
     if overlay_state.show_memory {
         ui.collapsing("💾 Memory (estimated)", |ui| {
             let (block_mb, mesh_mb, total_mb) = estimate_memory_usage(chunk_count);
-            ui.horizontal(|ui| { ui.label("Chunks loaded:"); ui.monospace(format!("{}", chunk_count)); });
-            ui.horizontal(|ui| { ui.label("Block data:"); ui.monospace(format!("{:.1} MB", block_mb)); });
-            ui.horizontal(|ui| { ui.label("Mesh data:"); ui.monospace(format!("~{:.1} MB", mesh_mb)); });
-            ui.horizontal(|ui| { ui.label("Total (est):"); ui.strong(format!("~{:.1} MB", total_mb)); });
+            ui.horizontal(|ui| {
+                ui.label("Chunks loaded:");
+                ui.monospace(format!("{}", chunk_count));
+            });
+            ui.horizontal(|ui| {
+                ui.label("Block data:");
+                ui.monospace(format!("{:.1} MB", block_mb));
+            });
+            ui.horizontal(|ui| {
+                ui.label("Mesh data:");
+                ui.monospace(format!("~{:.1} MB", mesh_mb));
+            });
+            ui.horizontal(|ui| {
+                ui.label("Total (est):");
+                ui.strong(format!("~{:.1} MB", total_mb));
+            });
         });
     }
 
@@ -626,13 +681,26 @@ pub fn draw_debug_ui(
                 0.0
             };
             let pending = expected_chunks.saturating_sub(chunk_count);
-            let block_bytes = chunk_count * CHUNK_VOLUME * std::mem::size_of::<crate::world::BlockType>();
+            let block_bytes =
+                chunk_count * CHUNK_VOLUME * std::mem::size_of::<crate::world::BlockType>();
             let block_mb = block_bytes as f64 / (1024.0 * 1024.0);
 
-            ui.horizontal(|ui| { ui.label("Loaded:"); ui.monospace(format!("{}", chunk_count)); });
-            ui.horizontal(|ui| { ui.label("Expected:"); ui.monospace(format!("{}", expected_chunks)); });
-            ui.horizontal(|ui| { ui.label("Pending:"); ui.monospace(format!("{}", pending)); });
-            ui.horizontal(|ui| { ui.label("Loaded %:"); ui.monospace(format!("{:.1}%", loaded_pct)); });
+            ui.horizontal(|ui| {
+                ui.label("Loaded:");
+                ui.monospace(format!("{}", chunk_count));
+            });
+            ui.horizontal(|ui| {
+                ui.label("Expected:");
+                ui.monospace(format!("{}", expected_chunks));
+            });
+            ui.horizontal(|ui| {
+                ui.label("Pending:");
+                ui.monospace(format!("{}", pending));
+            });
+            ui.horizontal(|ui| {
+                ui.label("Loaded %:");
+                ui.monospace(format!("{:.1}%", loaded_pct));
+            });
             ui.horizontal(|ui| {
                 ui.label("Render dist:");
                 ui.monospace(format!("{}", render_distance));
@@ -646,7 +714,10 @@ pub fn draw_debug_ui(
                 ui.label("Vertical:");
                 ui.monospace(format!("-{}..+{}", vertical_down, vertical_up));
             });
-            ui.horizontal(|ui| { ui.label("Block memory:"); ui.monospace(format!("{:.1} MB", block_mb)); });
+            ui.horizontal(|ui| {
+                ui.label("Block memory:");
+                ui.monospace(format!("{:.1} MB", block_mb));
+            });
 
             // Performance metrics sub-section
             if let Some(metrics) = load_metrics {
@@ -709,8 +780,14 @@ pub fn draw_debug_ui(
     // Rendering debug panel (uses pre-computed data from overlay_state)
     if overlay_state.show_render {
         ui.collapsing("🌟 Rendering", |ui| {
-            ui.horizontal(|ui| { ui.label("Shadow map:"); ui.monospace(format!("{}px", overlay_state.shadow_map_size)); });
-            ui.horizontal(|ui| { ui.label("Cascades:"); ui.monospace(format!("{}", overlay_state.shadow_cascade_count)); });
+            ui.horizontal(|ui| {
+                ui.label("Shadow map:");
+                ui.monospace(format!("{}px", overlay_state.shadow_map_size));
+            });
+            ui.horizontal(|ui| {
+                ui.label("Cascades:");
+                ui.monospace(format!("{}", overlay_state.shadow_cascade_count));
+            });
             ui.horizontal(|ui| {
                 ui.label("Shadows:");
                 if overlay_state.shadows_enabled {
@@ -720,13 +797,22 @@ pub fn draw_debug_ui(
                 }
                 ui.small("(F7 toggle)");
             });
-            ui.horizontal(|ui| { ui.label("Shadow casters:"); ui.monospace(format!("{}", overlay_state.shadow_caster_count)); });
-            ui.horizontal(|ui| { ui.label("Shadow culled:"); ui.monospace(format!("{}", overlay_state.shadow_culled_count)); });
+            ui.horizontal(|ui| {
+                ui.label("Shadow casters:");
+                ui.monospace(format!("{}", overlay_state.shadow_caster_count));
+            });
+            ui.horizontal(|ui| {
+                ui.label("Shadow culled:");
+                ui.monospace(format!("{}", overlay_state.shadow_culled_count));
+            });
             ui.separator();
             ui.horizontal(|ui| {
                 ui.label("Bloom:");
                 if overlay_state.bloom_enabled {
-                    ui.colored_label(egui::Color32::from_rgb(100, 255, 100), format!("ON ({:.2})", overlay_state.bloom_intensity));
+                    ui.colored_label(
+                        egui::Color32::from_rgb(100, 255, 100),
+                        format!("ON ({:.2})", overlay_state.bloom_intensity),
+                    );
                 } else {
                     ui.colored_label(egui::Color32::from_rgb(150, 150, 150), "OFF");
                 }
@@ -734,12 +820,21 @@ pub fn draw_debug_ui(
             ui.horizontal(|ui| {
                 ui.label("Fog:");
                 if overlay_state.fog_enabled {
-                    ui.colored_label(egui::Color32::from_rgb(100, 255, 100), format!("ON ({:.0}..{:.0})", overlay_state.fog_start, overlay_state.fog_end));
+                    ui.colored_label(
+                        egui::Color32::from_rgb(100, 255, 100),
+                        format!(
+                            "ON ({:.0}..{:.0})",
+                            overlay_state.fog_start, overlay_state.fog_end
+                        ),
+                    );
                 } else {
                     ui.colored_label(egui::Color32::from_rgb(150, 150, 150), "OFF");
                 }
             });
-            ui.horizontal(|ui| { ui.label("Tonemapping:"); ui.monospace("ACES Fitted"); });
+            ui.horizontal(|ui| {
+                ui.label("Tonemapping:");
+                ui.monospace("ACES Fitted");
+            });
         });
         ui.separator();
     }
@@ -788,8 +883,7 @@ pub fn draw_debug_ui(
             ui.horizontal(|ui| {
                 ui.label("Vertical ↑:");
                 ui.add(
-                    egui::Slider::new(&mut overlay_state.lod_vertical_up, 0..=16)
-                        .suffix(" layers"),
+                    egui::Slider::new(&mut overlay_state.lod_vertical_up, 0..=16).suffix(" layers"),
                 );
             });
             ui.horizontal(|ui| {
@@ -828,10 +922,11 @@ pub fn draw_debug_ui(
             ui.horizontal(|ui| {
                 ui.label("Lookahead:");
                 ui.add(
-                    egui::Slider::new(&mut overlay_state.lod_lookahead, 0..=8)
-                        .suffix(" chunks"),
+                    egui::Slider::new(&mut overlay_state.lod_lookahead, 0..=8).suffix(" chunks"),
                 )
-                .on_hover_text("Predictive streaming: how many chunks ahead of movement to pre-load");
+                .on_hover_text(
+                    "Predictive streaming: how many chunks ahead of movement to pre-load",
+                );
             });
 
             ui.add_space(4.0);
@@ -859,7 +954,10 @@ pub fn draw_debug_ui(
             });
             ui.horizontal(|ui| {
                 ui.label("Vert layers:");
-                ui.monospace(format!("-{}..+{} ({})", overlay_state.lod_vertical_down, overlay_state.lod_vertical_up, total_vert));
+                ui.monospace(format!(
+                    "-{}..+{} ({})",
+                    overlay_state.lod_vertical_down, overlay_state.lod_vertical_up, total_vert
+                ));
             });
 
             // ── Reset button ──
@@ -911,9 +1009,7 @@ pub fn draw_debug_ui(
                             ActionState::JustReleased => {
                                 (egui::Color32::from_rgb(255, 200, 100), "○")
                             }
-                            ActionState::Released => {
-                                (egui::Color32::from_rgb(100, 100, 100), "○")
-                            }
+                            ActionState::Released => (egui::Color32::from_rgb(100, 100, 100), "○"),
                         };
                         ui.colored_label(color, format!("{} {}", symbol, name));
                     }

@@ -361,10 +361,7 @@ fn validate_world(world: &mut WorldConfig, issues: &mut Vec<ValidationIssue>) {
             section: "world",
             field: "load_distance",
             severity: Severity::Error,
-            message: format!(
-                "load_distance {} must be >= 1, reset to None (auto)",
-                dist
-            ),
+            message: format!("load_distance {} must be >= 1, reset to None (auto)", dist),
         });
         world.load_distance = None;
     }
@@ -513,7 +510,10 @@ fn validate_audio(audio: &mut audio::AudioSettings, issues: &mut Vec<ValidationI
     }
 
     // distance_falloff: valid range [0.1, 5.0]
-    if !audio.distance_falloff.is_finite() || audio.distance_falloff < 0.1 || audio.distance_falloff > 5.0 {
+    if !audio.distance_falloff.is_finite()
+        || audio.distance_falloff < 0.1
+        || audio.distance_falloff > 5.0
+    {
         let clamped = if audio.distance_falloff.is_finite() {
             audio.distance_falloff.clamp(0.1, 5.0)
         } else {
@@ -604,7 +604,11 @@ mod tests {
     #[test]
     fn test_valid_default_config_produces_no_issues() {
         let result = validate_config(EngineConfig::default());
-        assert!(result.is_clean(), "Default config should pass validation, got: {:?}", result.issues);
+        assert!(
+            result.is_clean(),
+            "Default config should pass validation, got: {:?}",
+            result.issues
+        );
     }
 
     #[test]
@@ -646,7 +650,10 @@ mod tests {
         config.player.walk_speed = 0.0;
         let result = validate_config(config);
         assert!(result.has_errors());
-        assert_eq!(result.config.player.walk_speed, PlayerConfig::default().walk_speed);
+        assert_eq!(
+            result.config.player.walk_speed,
+            PlayerConfig::default().walk_speed
+        );
     }
 
     #[test]
@@ -655,7 +662,10 @@ mod tests {
         config.player.fly_speed = f32::NAN;
         let result = validate_config(config);
         assert!(result.has_errors());
-        assert_eq!(result.config.player.fly_speed, PlayerConfig::default().fly_speed);
+        assert_eq!(
+            result.config.player.fly_speed,
+            PlayerConfig::default().fly_speed
+        );
     }
 
     #[test]
@@ -726,7 +736,10 @@ mod tests {
         config.terrain.octaves = 0;
         let result = validate_config(config);
         assert!(result.has_errors());
-        assert_eq!(result.config.terrain.octaves, TerrainSettings::default().octaves);
+        assert_eq!(
+            result.config.terrain.octaves,
+            TerrainSettings::default().octaves
+        );
     }
 
     #[test]
@@ -746,7 +759,11 @@ mod tests {
         config.save.chunk_format = "yaml".into();
         config.audio.master_volume = 5.0;
         let result = validate_config(config);
-        assert!(result.issues.len() >= 4, "Expected at least 4 issues, got {}", result.issues.len());
+        assert!(
+            result.issues.len() >= 4,
+            "Expected at least 4 issues, got {}",
+            result.issues.len()
+        );
     }
 
     #[test]
@@ -755,7 +772,10 @@ mod tests {
         config.world.vertical_load_up = -2;
         let result = validate_config(config);
         assert!(result.has_errors());
-        assert_eq!(result.config.world.vertical_load_up, WorldConfig::default().vertical_load_up);
+        assert_eq!(
+            result.config.world.vertical_load_up,
+            WorldConfig::default().vertical_load_up
+        );
     }
 
     #[test]
@@ -764,6 +784,9 @@ mod tests {
         config.render.camera_near = 0.0;
         let result = validate_config(config);
         assert!(result.has_errors());
-        assert_eq!(result.config.render.camera_near, RenderConfig::default().camera_near);
+        assert_eq!(
+            result.config.render.camera_near,
+            RenderConfig::default().camera_near
+        );
     }
 }

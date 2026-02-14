@@ -30,8 +30,8 @@ use bevy::{
     pbr::{ExtendedMaterial, MaterialExtension, MaterialPlugin},
     prelude::*,
     render::render_resource::AsBindGroup,
-    render::render_resource::ShaderRef,
     render::render_resource::Shader,
+    render::render_resource::ShaderRef,
 };
 
 use super::texture_atlas;
@@ -94,7 +94,12 @@ pub fn validate_block_atlas_wgsl() -> Result<(), String> {
     }
 
     // Required functions must exist
-    for func in &["fn remap_atlas_uv", "fn fragment", "fn rotate_flip_uv", "fn hash_u32"] {
+    for func in &[
+        "fn remap_atlas_uv",
+        "fn fragment",
+        "fn rotate_flip_uv",
+        "fn hash_u32",
+    ] {
         if !src.contains(func) {
             return Err(format!("Missing required function: {func}"));
         }
@@ -112,8 +117,7 @@ pub fn validate_block_atlas_wgsl() -> Result<(), String> {
         let trimmed = line.trim();
         if !trimmed.starts_with("//") && trimmed.contains("#{MATERIAL_BIND_GROUP}") {
             return Err(
-                "Bevy 0.15 does not support #{MATERIAL_BIND_GROUP}; use @group(2) instead"
-                    .into(),
+                "Bevy 0.15 does not support #{MATERIAL_BIND_GROUP}; use @group(2) instead".into(),
             );
         }
     }
@@ -123,9 +127,7 @@ pub fn validate_block_atlas_wgsl() -> Result<(), String> {
     for line in src.lines() {
         let trimmed = line.trim();
         // Check for `fn name(mut param:` pattern
-        if trimmed.starts_with("fn ")
-            && trimmed.contains("(mut ")
-        {
+        if trimmed.starts_with("fn ") && trimmed.contains("(mut ") {
             return Err(format!(
                 "WGSL does not support 'mut' in function parameters: {trimmed}"
             ));

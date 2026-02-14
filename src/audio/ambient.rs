@@ -397,7 +397,9 @@ fn manage_wind_sound(
     activity_assets: Res<ActivitySoundAssets>,
     wind_query: Query<&AudioSink, With<WindSound>>,
 ) {
-    let biome_profile = current_ambient.active_biome.map(BiomeAudioProfile::for_biome);
+    let biome_profile = current_ambient
+        .active_biome
+        .map(BiomeAudioProfile::for_biome);
 
     let should_be_active = calculate_wind_volume(
         audio_state.horizontal_speed,
@@ -473,9 +475,7 @@ pub fn calculate_wind_volume(
     biome_profile: Option<&BiomeAudioProfile>,
     base_ambience_volume: f32,
 ) -> f32 {
-    let wind_intensity = biome_profile
-        .map(|p| p.base_wind_intensity)
-        .unwrap_or(0.0);
+    let wind_intensity = biome_profile.map(|p| p.base_wind_intensity).unwrap_or(0.0);
     let biome_allows_wind = biome_profile.map(|p| p.wind_responsive).unwrap_or(false);
 
     // Wind plays when: fast enough AND (biome allows wind OR flying)
@@ -486,9 +486,9 @@ pub fn calculate_wind_volume(
         return 0.0;
     }
 
-    let speed_factor =
-        ((horizontal_speed - WIND_SPEED_THRESHOLD) / (WIND_FULL_SPEED - WIND_SPEED_THRESHOLD))
-            .clamp(0.0, 1.0);
+    let speed_factor = ((horizontal_speed - WIND_SPEED_THRESHOLD)
+        / (WIND_FULL_SPEED - WIND_SPEED_THRESHOLD))
+        .clamp(0.0, 1.0);
 
     base_ambience_volume * WIND_VOLUME_SCALE * wind_intensity * speed_factor
 }
@@ -540,18 +540,9 @@ mod tests {
 
     #[test]
     fn test_classify_walking() {
-        assert_eq!(
-            classify_activity(0.5, false),
-            PlayerActivityState::Walking
-        );
-        assert_eq!(
-            classify_activity(2.0, false),
-            PlayerActivityState::Walking
-        );
-        assert_eq!(
-            classify_activity(4.9, false),
-            PlayerActivityState::Walking
-        );
+        assert_eq!(classify_activity(0.5, false), PlayerActivityState::Walking);
+        assert_eq!(classify_activity(2.0, false), PlayerActivityState::Walking);
+        assert_eq!(classify_activity(4.9, false), PlayerActivityState::Walking);
     }
 
     #[test]
@@ -727,16 +718,14 @@ mod tests {
     #[test]
     fn test_wind_volume_below_threshold_is_zero() {
         let profile = BiomeAudioProfile::for_biome(BiomeType::Plains);
-        let vol =
-            calculate_wind_volume(2.0, PlayerActivityState::Walking, Some(&profile), 0.5);
+        let vol = calculate_wind_volume(2.0, PlayerActivityState::Walking, Some(&profile), 0.5);
         assert_eq!(vol, 0.0, "Below speed threshold should produce no wind");
     }
 
     #[test]
     fn test_wind_volume_non_responsive_biome_non_flying() {
         let profile = BiomeAudioProfile::for_biome(BiomeType::Forest);
-        let vol =
-            calculate_wind_volume(8.0, PlayerActivityState::Sprinting, Some(&profile), 0.5);
+        let vol = calculate_wind_volume(8.0, PlayerActivityState::Sprinting, Some(&profile), 0.5);
         assert_eq!(
             vol, 0.0,
             "Non-responsive biome without flying should produce no wind"
@@ -746,8 +735,7 @@ mod tests {
     #[test]
     fn test_wind_volume_flying_overrides_biome_responsiveness() {
         let profile = BiomeAudioProfile::for_biome(BiomeType::Forest);
-        let vol =
-            calculate_wind_volume(8.0, PlayerActivityState::Flying, Some(&profile), 0.5);
+        let vol = calculate_wind_volume(8.0, PlayerActivityState::Flying, Some(&profile), 0.5);
         assert!(
             vol > 0.0,
             "Flying should produce wind even in non-responsive biome"
@@ -757,14 +745,8 @@ mod tests {
     #[test]
     fn test_wind_volume_scales_with_speed() {
         let profile = BiomeAudioProfile::for_biome(BiomeType::Mountains);
-        let slow =
-            calculate_wind_volume(5.0, PlayerActivityState::Sprinting, Some(&profile), 0.5);
-        let fast = calculate_wind_volume(
-            10.0,
-            PlayerActivityState::Sprinting,
-            Some(&profile),
-            0.5,
-        );
+        let slow = calculate_wind_volume(5.0, PlayerActivityState::Sprinting, Some(&profile), 0.5);
+        let fast = calculate_wind_volume(10.0, PlayerActivityState::Sprinting, Some(&profile), 0.5);
 
         assert!(fast > slow, "Faster speed should produce louder wind");
     }
@@ -793,8 +775,7 @@ mod tests {
 
     #[test]
     fn test_wind_volume_no_biome_profile() {
-        let vol =
-            calculate_wind_volume(8.0, PlayerActivityState::Sprinting, None, 0.5);
+        let vol = calculate_wind_volume(8.0, PlayerActivityState::Sprinting, None, 0.5);
         assert_eq!(
             vol, 0.0,
             "No biome profile should produce no wind (zero intensity)"
@@ -804,16 +785,14 @@ mod tests {
     #[test]
     fn test_wind_volume_zero_base_volume() {
         let profile = BiomeAudioProfile::for_biome(BiomeType::Mountains);
-        let vol =
-            calculate_wind_volume(8.0, PlayerActivityState::Sprinting, Some(&profile), 0.0);
+        let vol = calculate_wind_volume(8.0, PlayerActivityState::Sprinting, Some(&profile), 0.0);
         assert_eq!(vol, 0.0, "Zero base volume should produce no wind");
     }
 
     #[test]
     fn test_wind_volume_responsive_biome_sprinting() {
         let profile = BiomeAudioProfile::for_biome(BiomeType::Tundra);
-        let vol =
-            calculate_wind_volume(8.0, PlayerActivityState::Sprinting, Some(&profile), 0.5);
+        let vol = calculate_wind_volume(8.0, PlayerActivityState::Sprinting, Some(&profile), 0.5);
         assert!(
             vol > 0.0,
             "Wind-responsive biome with sprinting should produce wind"

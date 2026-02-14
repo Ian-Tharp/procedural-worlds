@@ -7,8 +7,8 @@
 //! Architecture is designed so that procedural generation can be swapped for
 //! PNG loading later.
 
-use bevy::prelude::*;
 use bevy::image::{Image, ImageAddressMode, ImageFilterMode, ImageSampler, ImageSamplerDescriptor};
+use bevy::prelude::*;
 use bevy::render::render_asset::RenderAssetUsages;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 
@@ -49,55 +49,131 @@ pub fn block_face_texture(block: BlockType, face: Face) -> u32 {
 pub fn block_textures(block: BlockType) -> BlockTextures {
     match block {
         // Air — never rendered; placeholder index 0
-        BlockType::Air => BlockTextures { top: 0, bottom: 0, side: 0 },
+        BlockType::Air => BlockTextures {
+            top: 0,
+            bottom: 0,
+            side: 0,
+        },
 
         // Stone — all faces: tile 0 (grey with noise/cracks)
-        BlockType::Stone => BlockTextures { top: 0, bottom: 0, side: 0 },
+        BlockType::Stone => BlockTextures {
+            top: 0,
+            bottom: 0,
+            side: 0,
+        },
 
         // Dirt — all faces: tile 1 (brown with speckles)
-        BlockType::Dirt => BlockTextures { top: 1, bottom: 1, side: 1 },
+        BlockType::Dirt => BlockTextures {
+            top: 1,
+            bottom: 1,
+            side: 1,
+        },
 
         // Grass — top: tile 2 (green), bottom: tile 1 (dirt), sides: tile 3 (gradient)
-        BlockType::Grass => BlockTextures { top: 2, bottom: 1, side: 3 },
+        BlockType::Grass => BlockTextures {
+            top: 2,
+            bottom: 1,
+            side: 3,
+        },
 
         // Sand — all faces: tile 4 (tan/yellow grain)
-        BlockType::Sand => BlockTextures { top: 4, bottom: 4, side: 4 },
+        BlockType::Sand => BlockTextures {
+            top: 4,
+            bottom: 4,
+            side: 4,
+        },
 
         // Water — all faces: tile 5 (blue semi-transparent)
-        BlockType::Water => BlockTextures { top: 5, bottom: 5, side: 5 },
+        BlockType::Water => BlockTextures {
+            top: 5,
+            bottom: 5,
+            side: 5,
+        },
 
         // Wood — top/bottom: tile 6 (rings), sides: tile 7 (bark)
-        BlockType::Wood => BlockTextures { top: 6, bottom: 6, side: 7 },
+        BlockType::Wood => BlockTextures {
+            top: 6,
+            bottom: 6,
+            side: 7,
+        },
 
         // Leaves — all faces: tile 8 (varied green with holes)
-        BlockType::Leaves => BlockTextures { top: 8, bottom: 8, side: 8 },
+        BlockType::Leaves => BlockTextures {
+            top: 8,
+            bottom: 8,
+            side: 8,
+        },
 
         // Sandstone — all faces: tile 9 (layered tan)
-        BlockType::Sandstone => BlockTextures { top: 9, bottom: 9, side: 9 },
+        BlockType::Sandstone => BlockTextures {
+            top: 9,
+            bottom: 9,
+            side: 9,
+        },
 
         // Snow — all faces: tile 10 (white with subtle blue)
-        BlockType::Snow => BlockTextures { top: 10, bottom: 10, side: 10 },
+        BlockType::Snow => BlockTextures {
+            top: 10,
+            bottom: 10,
+            side: 10,
+        },
 
         // Ice — all faces: tile 11 (light blue)
-        BlockType::Ice => BlockTextures { top: 11, bottom: 11, side: 11 },
+        BlockType::Ice => BlockTextures {
+            top: 11,
+            bottom: 11,
+            side: 11,
+        },
 
         // Obsidian — all faces: tile 12 (dark purple/black)
-        BlockType::Obsidian => BlockTextures { top: 12, bottom: 12, side: 12 },
+        BlockType::Obsidian => BlockTextures {
+            top: 12,
+            bottom: 12,
+            side: 12,
+        },
 
         // VolcanicRock — all faces: tile 13 (dark grey + orange veins)
-        BlockType::VolcanicRock => BlockTextures { top: 13, bottom: 13, side: 13 },
+        BlockType::VolcanicRock => BlockTextures {
+            top: 13,
+            bottom: 13,
+            side: 13,
+        },
 
         // Cactus — top: tile 14 (cactus top), sides: tile 15 (green stripes)
-        BlockType::Cactus => BlockTextures { top: 14, bottom: 14, side: 15 },
+        BlockType::Cactus => BlockTextures {
+            top: 14,
+            bottom: 14,
+            side: 15,
+        },
 
         // SandDunes — all faces: tile 16 (golden wave pattern)
-        BlockType::SandDunes => BlockTextures { top: 16, bottom: 16, side: 16 },
+        BlockType::SandDunes => BlockTextures {
+            top: 16,
+            bottom: 16,
+            side: 16,
+        },
 
         // Ores - distinct tile indices for each
-        BlockType::CopperOre => BlockTextures { top: 17, bottom: 17, side: 17 },
-        BlockType::IronOre => BlockTextures { top: 18, bottom: 18, side: 18 },
-        BlockType::SilverOre => BlockTextures { top: 19, bottom: 19, side: 19 },
-        BlockType::GoldOre => BlockTextures { top: 20, bottom: 20, side: 20 },
+        BlockType::CopperOre => BlockTextures {
+            top: 17,
+            bottom: 17,
+            side: 17,
+        },
+        BlockType::IronOre => BlockTextures {
+            top: 18,
+            bottom: 18,
+            side: 18,
+        },
+        BlockType::SilverOre => BlockTextures {
+            top: 19,
+            bottom: 19,
+            side: 19,
+        },
+        BlockType::GoldOre => BlockTextures {
+            top: 20,
+            bottom: 20,
+            side: 20,
+        },
     }
 }
 
@@ -124,7 +200,12 @@ pub const MAX_TILE_INDEX: u32 = 20;
 ///   stretches the tile across greedy-merged quads (still visually coherent,
 ///   and avoids sampling unrelated tiles).
 #[inline]
-pub fn atlas_uv(tile_index: u32, tiles_per_row: u32, tile_size: u32, atlas_size: u32) -> (f32, f32, f32, f32) {
+pub fn atlas_uv(
+    tile_index: u32,
+    tiles_per_row: u32,
+    tile_size: u32,
+    atlas_size: u32,
+) -> (f32, f32, f32, f32) {
     let tile_x = tile_index % tiles_per_row;
     let tile_y = tile_index / tiles_per_row;
     let u_min = (tile_x * tile_size) as f32 / atlas_size as f32;
@@ -162,8 +243,7 @@ pub fn face_uvs_atlas(
 ) -> [[f32; 2]; 4] {
     let _ = (quad_w, quad_h);
 
-    let (u_min, v_min, u_size, v_size) =
-        atlas_uv(tile_index, tiles_per_row, tile_size, atlas_size);
+    let (u_min, v_min, u_size, v_size) = atlas_uv(tile_index, tiles_per_row, tile_size, atlas_size);
 
     // Full-texel inset from tile edges to prevent edge bleeding.
     // This matches the shader's `remap_atlas_uv` inset strategy for
@@ -178,12 +258,7 @@ pub fn face_uvs_atlas(
     let u1 = (u_min + u_size) - inset;
     let v1 = (v_min + v_size) - inset;
 
-    [
-        [u0, v0],
-        [u1, v0],
-        [u1, v1],
-        [u0, v1],
-    ]
+    [[u0, v0], [u1, v0], [u1, v1], [u0, v1]]
 }
 
 // ============================================================================
@@ -283,10 +358,7 @@ pub fn setup_block_texture_atlas(
         warn!(
             "Texture atlas grid too small: {}×{} = {} tiles, but code uses tile indices up to {}. \
              Increase render.atlas_grid_size or reduce MAX_TILE_INDEX/texture mappings.",
-            grid_size,
-            grid_size,
-            total_tiles,
-            MAX_TILE_INDEX
+            grid_size, grid_size, total_tiles, MAX_TILE_INDEX
         );
     }
 
@@ -302,7 +374,11 @@ pub fn setup_block_texture_atlas(
 
     info!(
         "Block texture atlas created: {}×{} pixels, {} tiles ({}×{}px each)",
-        atlas_size, atlas_size, grid_size * grid_size, tile_size, tile_size,
+        atlas_size,
+        atlas_size,
+        grid_size * grid_size,
+        tile_size,
+        tile_size,
     );
 }
 
@@ -313,7 +389,10 @@ pub fn setup_block_texture_atlas(
 /// Simple deterministic hash for pseudo-random noise.
 #[inline]
 fn noise_hash(x: u32, y: u32, seed: u32) -> u8 {
-    let n = x.wrapping_mul(73).wrapping_add(y.wrapping_mul(37)).wrapping_add(seed);
+    let n = x
+        .wrapping_mul(73)
+        .wrapping_add(y.wrapping_mul(37))
+        .wrapping_add(seed);
     let n = n ^ (n >> 13);
     let n = n.wrapping_mul(1274126177);
     (n >> 24) as u8
@@ -337,15 +416,27 @@ fn cell_noise(x: u32, y: u32, tile_size: u32, seed: u32, num_cells: u32) -> f32 
     for i in 0..num_cells {
         let cx = (noise_hash(i, 0, seed) as f32 / 255.0) * ts;
         let cy = (noise_hash(i, 1, seed) as f32 / 255.0) * ts;
-        let dx = (x as f32 - cx).abs().min((x as f32 - cx + ts).abs()).min((x as f32 - cx - ts).abs());
-        let dy = (y as f32 - cy).abs().min((y as f32 - cy + ts).abs()).min((y as f32 - cy - ts).abs());
+        let dx = (x as f32 - cx)
+            .abs()
+            .min((x as f32 - cx + ts).abs())
+            .min((x as f32 - cx - ts).abs());
+        let dy = (y as f32 - cy)
+            .abs()
+            .min((y as f32 - cy + ts).abs())
+            .min((y as f32 - cy - ts).abs());
         min_dist = min_dist.min((dx * dx + dy * dy).sqrt());
     }
     (min_dist / ts * 4.0).min(1.0)
 }
 
 /// Cell noise returning (F1 distance, nearest cell index) for varied cell colors.
-fn cell_noise_with_id(x: u32, y: u32, tile_size: u32, seed: u32, num_cells: u32) -> (f32, f32, u32) {
+fn cell_noise_with_id(
+    x: u32,
+    y: u32,
+    tile_size: u32,
+    seed: u32,
+    num_cells: u32,
+) -> (f32, f32, u32) {
     let mut min_dist = f32::MAX;
     let mut second_dist = f32::MAX;
     let mut nearest = 0u32;
@@ -353,8 +444,14 @@ fn cell_noise_with_id(x: u32, y: u32, tile_size: u32, seed: u32, num_cells: u32)
     for i in 0..num_cells {
         let cx = (noise_hash(i, 0, seed) as f32 / 255.0) * ts;
         let cy = (noise_hash(i, 1, seed) as f32 / 255.0) * ts;
-        let dx = (x as f32 - cx).abs().min((x as f32 - cx + ts).abs()).min((x as f32 - cx - ts).abs());
-        let dy = (y as f32 - cy).abs().min((y as f32 - cy + ts).abs()).min((y as f32 - cy - ts).abs());
+        let dx = (x as f32 - cx)
+            .abs()
+            .min((x as f32 - cx + ts).abs())
+            .min((x as f32 - cx - ts).abs());
+        let dy = (y as f32 - cy)
+            .abs()
+            .min((y as f32 - cy + ts).abs())
+            .min((y as f32 - cy - ts).abs());
         let d = (dx * dx + dy * dy).sqrt();
         if d < min_dist {
             second_dist = min_dist;
@@ -364,7 +461,11 @@ fn cell_noise_with_id(x: u32, y: u32, tile_size: u32, seed: u32, num_cells: u32)
             second_dist = d;
         }
     }
-    ((min_dist / ts * 4.0).min(1.0), (second_dist / ts * 4.0).min(1.0), nearest)
+    (
+        (min_dist / ts * 4.0).min(1.0),
+        (second_dist / ts * 4.0).min(1.0),
+        nearest,
+    )
 }
 
 /// Line distance — for crack/vein rendering.
@@ -372,7 +473,9 @@ fn dist_to_line(x: f32, y: f32, x1: f32, y1: f32, x2: f32, y2: f32) -> f32 {
     let dx = x2 - x1;
     let dy = y2 - y1;
     let len_sq = dx * dx + dy * dy;
-    if len_sq < 0.001 { return ((x-x1)*(x-x1) + (y-y1)*(y-y1)).sqrt(); }
+    if len_sq < 0.001 {
+        return ((x - x1) * (x - x1) + (y - y1) * (y - y1)).sqrt();
+    }
     let t = ((x - x1) * dx + (y - y1) * dy) / len_sq;
     let t = t.clamp(0.0, 1.0);
     ((x - x1 - t * dx).powi(2) + (y - y1 - t * dy).powi(2)).sqrt()
@@ -480,15 +583,21 @@ fn generate_tile_rgba(tile_index: u32, tile_size: u32) -> Vec<u8> {
                     let mut b = 55.0 + variation * 0.6;
 
                     // Subtle horizontal layering
-                    let layer_val = ((y as f32 * 3.0 * 3.14159 / tsf).sin() * 0.3 + 0.5) * 5.0;
+                    let layer_val = ((y as f32 * 3.0 * std::f32::consts::PI / tsf).sin() * 0.3 + 0.5) * 5.0;
                     r += layer_val;
                     g += layer_val * 0.7;
                     b += layer_val * 0.4;
 
                     // Pebble dots (lighter, with smooth falloff)
                     for &(px, py, radius) in &pebbles {
-                        let dx = (x as f32 - px).abs().min((x as f32 - px + tsf).abs()).min((x as f32 - px - tsf).abs());
-                        let dy = (y as f32 - py).abs().min((y as f32 - py + tsf).abs()).min((y as f32 - py - tsf).abs());
+                        let dx = (x as f32 - px)
+                            .abs()
+                            .min((x as f32 - px + tsf).abs())
+                            .min((x as f32 - px - tsf).abs());
+                        let dy = (y as f32 - py)
+                            .abs()
+                            .min((y as f32 - py + tsf).abs())
+                            .min((y as f32 - py - tsf).abs());
                         let dist = (dx * dx + dy * dy).sqrt();
                         if dist < radius {
                             let t = 1.0 - dist / radius;
@@ -514,7 +623,16 @@ fn generate_tile_rgba(tile_index: u32, tile_size: u32) -> Vec<u8> {
                     g += (grain - 0.5) * 6.0;
                     b += (grain - 0.5) * 4.0;
 
-                    set(&mut data, x, y, r.clamp(0.0, 255.0) as u8, g.clamp(0.0, 255.0) as u8, b.clamp(0.0, 255.0) as u8, 255, ts);
+                    set(
+                        &mut data,
+                        x,
+                        y,
+                        r.clamp(0.0, 255.0) as u8,
+                        g.clamp(0.0, 255.0) as u8,
+                        b.clamp(0.0, 255.0) as u8,
+                        255,
+                        ts,
+                    );
                 }
             }
         }
@@ -527,7 +645,7 @@ fn generate_tile_rgba(tile_index: u32, tile_size: u32) -> Vec<u8> {
             for i in 0..blade_count {
                 let bx = noise_hash(i as u32, 0, 130) as f32 / 255.0 * tsf;
                 let by = noise_hash(i as u32, 1, 130) as f32 / 255.0 * tsf;
-                let angle = noise_hash(i as u32, 2, 130) as f32 / 255.0 * 3.14159;
+                let angle = noise_hash(i as u32, 2, 130) as f32 / 255.0 * std::f32::consts::PI;
                 let len = 3.0 + (noise_hash(i as u32, 3, 130) as f32 / 255.0) * 2.0;
                 blades[i] = (bx, by, bx + angle.cos() * len, by + angle.sin() * len);
             }
@@ -571,7 +689,16 @@ fn generate_tile_rgba(tile_index: u32, tile_size: u32) -> Vec<u8> {
                     g += (grain - 0.5) * 8.0;
                     b += (grain - 0.5) * 5.0;
 
-                    set(&mut data, x, y, r.clamp(0.0, 255.0) as u8, g.clamp(0.0, 255.0) as u8, b.clamp(0.0, 255.0) as u8, 255, ts);
+                    set(
+                        &mut data,
+                        x,
+                        y,
+                        r.clamp(0.0, 255.0) as u8,
+                        g.clamp(0.0, 255.0) as u8,
+                        b.clamp(0.0, 255.0) as u8,
+                        255,
+                        ts,
+                    );
                 }
             }
         }
@@ -614,7 +741,8 @@ fn generate_tile_rgba(tile_index: u32, tile_size: u32) -> Vec<u8> {
                         // Dangling blade tip zone — intermittent green pixels
                         let blade_noise = noise_hash(x, y, 177);
                         if blade_noise < 150 {
-                            let fade = (y - green_rows) as f32 / (blade_tip - green_rows).max(1) as f32;
+                            let fade =
+                                (y - green_rows) as f32 / (blade_tip - green_rows).max(1) as f32;
                             let r = (80.0 + (mn - 0.5) * 14.0 - fade * 10.0).clamp(0.0, 255.0);
                             let g = (145.0 + (mn - 0.5) * 20.0 - fade * 18.0).clamp(0.0, 255.0);
                             let b = (56.0 + (mn - 0.5) * 12.0).clamp(0.0, 255.0);
@@ -673,7 +801,16 @@ fn generate_tile_rgba(tile_index: u32, tile_size: u32) -> Vec<u8> {
                         r += (grain - 0.5) * 8.0;
                         g += (grain - 0.5) * 6.0;
 
-                        set(&mut data, x, y, r.clamp(0.0, 255.0) as u8, g.clamp(0.0, 255.0) as u8, b.clamp(0.0, 255.0) as u8, 255, ts);
+                        set(
+                            &mut data,
+                            x,
+                            y,
+                            r.clamp(0.0, 255.0) as u8,
+                            g.clamp(0.0, 255.0) as u8,
+                            b.clamp(0.0, 255.0) as u8,
+                            255,
+                            ts,
+                        );
                     }
                 }
             }
@@ -687,7 +824,8 @@ fn generate_tile_rgba(tile_index: u32, tile_size: u32) -> Vec<u8> {
                     let mn = multi_noise(x, y, 210);
 
                     // Diagonal ripple pattern
-                    let ripple = ((x as f32 * 0.7 + y as f32 * 0.3) * 6.2832 / period).sin() * 0.5 + 0.5;
+                    let ripple =
+                        ((x as f32 * 0.7 + y as f32 * 0.3) * std::f32::consts::TAU / period).sin() * 0.5 + 0.5;
 
                     let mut r = 220.0 + (mn - 0.5) * 16.0 + ripple * 10.0;
                     let mut g = 210.0 + (mn - 0.5) * 14.0 + ripple * 8.0;
@@ -711,7 +849,16 @@ fn generate_tile_rgba(tile_index: u32, tile_size: u32) -> Vec<u8> {
                         b -= 7.0;
                     }
 
-                    set(&mut data, x, y, r.clamp(0.0, 255.0) as u8, g.clamp(0.0, 255.0) as u8, b.clamp(0.0, 255.0) as u8, 255, ts);
+                    set(
+                        &mut data,
+                        x,
+                        y,
+                        r.clamp(0.0, 255.0) as u8,
+                        g.clamp(0.0, 255.0) as u8,
+                        b.clamp(0.0, 255.0) as u8,
+                        255,
+                        ts,
+                    );
                 }
             }
         }
@@ -753,16 +900,32 @@ fn generate_tile_rgba(tile_index: u32, tile_size: u32) -> Vec<u8> {
                     let mn = multi_noise(x, y, 170);
 
                     // Concentric growth rings — alternate lighter/darker bands
-                    let ring_freq = num_rings * 3.14159 / (tsf * 0.55);
+                    let ring_freq = num_rings * std::f32::consts::PI / (tsf * 0.55);
                     let ring_val = (dist * ring_freq).sin() * 0.5 + 0.5; // 0-1
 
                     // Base tan-brown with ring modulation
                     let lighter = ring_val > 0.5;
-                    let ring_t = if lighter { (ring_val - 0.5) * 2.0 } else { (0.5 - ring_val) * 2.0 };
+                    let ring_t = if lighter {
+                        (ring_val - 0.5) * 2.0
+                    } else {
+                        (0.5 - ring_val) * 2.0
+                    };
 
-                    let base_r = if lighter { 155.0 + ring_t * 12.0 } else { 130.0 - ring_t * 10.0 };
-                    let base_g = if lighter { 115.0 + ring_t * 8.0 } else { 90.0 - ring_t * 8.0 };
-                    let base_b = if lighter { 70.0 + ring_t * 5.0 } else { 52.0 - ring_t * 5.0 };
+                    let base_r = if lighter {
+                        155.0 + ring_t * 12.0
+                    } else {
+                        130.0 - ring_t * 10.0
+                    };
+                    let base_g = if lighter {
+                        115.0 + ring_t * 8.0
+                    } else {
+                        90.0 - ring_t * 8.0
+                    };
+                    let base_b = if lighter {
+                        70.0 + ring_t * 5.0
+                    } else {
+                        52.0 - ring_t * 5.0
+                    };
 
                     // Fine radial grain using angle
                     let angle = dy.atan2(dx);
@@ -770,11 +933,15 @@ fn generate_tile_rgba(tile_index: u32, tile_size: u32) -> Vec<u8> {
                         ((angle * 10.0 + 50.0) as i32).unsigned_abs(),
                         (dist * 2.0) as u32,
                         171,
-                    ) as f32 / 255.0;
+                    ) as f32
+                        / 255.0;
 
-                    let r = (base_r + (mn - 0.5) * 12.0 + (radial_grain - 0.5) * 8.0).clamp(0.0, 255.0) as u8;
-                    let g = (base_g + (mn - 0.5) * 10.0 + (radial_grain - 0.5) * 6.0).clamp(0.0, 255.0) as u8;
-                    let b = (base_b + (mn - 0.5) * 8.0 + (radial_grain - 0.5) * 4.0).clamp(0.0, 255.0) as u8;
+                    let r = (base_r + (mn - 0.5) * 12.0 + (radial_grain - 0.5) * 8.0)
+                        .clamp(0.0, 255.0) as u8;
+                    let g = (base_g + (mn - 0.5) * 10.0 + (radial_grain - 0.5) * 6.0)
+                        .clamp(0.0, 255.0) as u8;
+                    let b = (base_b + (mn - 0.5) * 8.0 + (radial_grain - 0.5) * 4.0)
+                        .clamp(0.0, 255.0) as u8;
 
                     set(&mut data, x, y, r, g, b, 255, ts);
                 }
@@ -799,14 +966,18 @@ fn generate_tile_rgba(tile_index: u32, tile_size: u32) -> Vec<u8> {
 
                     // 4-5 vertical furrow strips with non-uniform spacing
                     let phase_mod = noise_hash(x / 6, 0, 183) as f32 / 255.0 * 1.5;
-                    let strip_val = ((xf * 4.5 * 6.2832 / tsf + phase_mod).cos() + 1.0) * 0.5;
+                    let strip_val = ((xf * 4.5 * std::f32::consts::TAU / tsf + phase_mod).cos() + 1.0) * 0.5;
 
                     // Dark gaps where strip_val is low
                     let (base_r, base_g, base_b) = if strip_val < 0.2 {
                         (62.0, 40.0, 26.0) // dark gap
                     } else {
                         let brightness = strip_val * 16.0;
-                        (100.0 + brightness, 68.0 + brightness * 0.7, 42.0 + brightness * 0.4)
+                        (
+                            100.0 + brightness,
+                            68.0 + brightness * 0.7,
+                            42.0 + brightness * 0.4,
+                        )
                     };
 
                     let mut r = base_r + (mn - 0.5) * 14.0;
@@ -829,7 +1000,16 @@ fn generate_tile_rgba(tile_index: u32, tile_size: u32) -> Vec<u8> {
                     r += (grain - 0.5) * 6.0;
                     g += (grain - 0.5) * 4.0;
 
-                    set(&mut data, x, y, r.clamp(0.0, 255.0) as u8, g.clamp(0.0, 255.0) as u8, b.clamp(0.0, 255.0) as u8, 255, ts);
+                    set(
+                        &mut data,
+                        x,
+                        y,
+                        r.clamp(0.0, 255.0) as u8,
+                        g.clamp(0.0, 255.0) as u8,
+                        b.clamp(0.0, 255.0) as u8,
+                        255,
+                        ts,
+                    );
                 }
             }
         }
@@ -866,8 +1046,14 @@ fn generate_tile_rgba(tile_index: u32, tile_size: u32) -> Vec<u8> {
                         let mut best_blob_seed = 0u32;
                         let mut best_dist = f32::MAX;
                         for &(bx, by, _radius, cseed) in &blobs {
-                            let dx = (xf - bx).abs().min((xf - bx + tsf).abs()).min((xf - bx - tsf).abs());
-                            let dy = (yf - by).abs().min((yf - by + tsf).abs()).min((yf - by - tsf).abs());
+                            let dx = (xf - bx)
+                                .abs()
+                                .min((xf - bx + tsf).abs())
+                                .min((xf - bx - tsf).abs());
+                            let dy = (yf - by)
+                                .abs()
+                                .min((yf - by + tsf).abs())
+                                .min((yf - by - tsf).abs());
                             let d = dx * dx + dy * dy;
                             if d < best_dist {
                                 best_dist = d;
@@ -877,9 +1063,11 @@ fn generate_tile_rgba(tile_index: u32, tile_size: u32) -> Vec<u8> {
 
                         // Per-blob color variation
                         let hue_shift = (best_blob_seed as f32 / 255.0 - 0.5) * 20.0;
-                        let r = (48.0 + (mn - 0.5) * 24.0 + hue_shift * 0.3).clamp(0.0, 255.0) as u8;
+                        let r =
+                            (48.0 + (mn - 0.5) * 24.0 + hue_shift * 0.3).clamp(0.0, 255.0) as u8;
                         let g = (130.0 + (mn - 0.5) * 35.0 + hue_shift).clamp(0.0, 255.0) as u8;
-                        let b = (36.0 + (mn - 0.5) * 16.0 - hue_shift * 0.4).clamp(0.0, 255.0) as u8;
+                        let b =
+                            (36.0 + (mn - 0.5) * 16.0 - hue_shift * 0.4).clamp(0.0, 255.0) as u8;
                         set(&mut data, x, y, r, g, b, 230, ts);
                     }
                 }
@@ -945,7 +1133,8 @@ fn generate_tile_rgba(tile_index: u32, tile_size: u32) -> Vec<u8> {
 
                     // Sparkle pixels (~3%)
                     let sparkle = noise_hash(x.wrapping_add(13), y.wrapping_add(29), 310);
-                    if sparkle < 8 { // 8/256 ~ 3%
+                    if sparkle < 8 {
+                        // 8/256 ~ 3%
                         r = 255.0;
                         g = 255.0;
                         b = 255.0;
@@ -956,7 +1145,16 @@ fn generate_tile_rgba(tile_index: u32, tile_size: u32) -> Vec<u8> {
                     r += (grain - 0.5) * 3.0;
                     g += (grain - 0.5) * 3.0;
 
-                    set(&mut data, x, y, r.clamp(0.0, 255.0) as u8, g.clamp(0.0, 255.0) as u8, b.clamp(0.0, 255.0) as u8, 255, ts);
+                    set(
+                        &mut data,
+                        x,
+                        y,
+                        r.clamp(0.0, 255.0) as u8,
+                        g.clamp(0.0, 255.0) as u8,
+                        b.clamp(0.0, 255.0) as u8,
+                        255,
+                        ts,
+                    );
                 }
             }
         }
@@ -1003,7 +1201,16 @@ fn generate_tile_rgba(tile_index: u32, tile_size: u32) -> Vec<u8> {
                         b += 8.0;
                     }
 
-                    set(&mut data, x, y, r.clamp(0.0, 255.0) as u8, g.clamp(0.0, 255.0) as u8, b.clamp(0.0, 255.0) as u8, 215, ts);
+                    set(
+                        &mut data,
+                        x,
+                        y,
+                        r.clamp(0.0, 255.0) as u8,
+                        g.clamp(0.0, 255.0) as u8,
+                        b.clamp(0.0, 255.0) as u8,
+                        215,
+                        ts,
+                    );
                 }
             }
         }
@@ -1047,7 +1254,16 @@ fn generate_tile_rgba(tile_index: u32, tile_size: u32) -> Vec<u8> {
                         b += 8.0;
                     }
 
-                    set(&mut data, x, y, r.clamp(0.0, 255.0) as u8, g.clamp(0.0, 255.0) as u8, b.clamp(0.0, 255.0) as u8, 255, ts);
+                    set(
+                        &mut data,
+                        x,
+                        y,
+                        r.clamp(0.0, 255.0) as u8,
+                        g.clamp(0.0, 255.0) as u8,
+                        b.clamp(0.0, 255.0) as u8,
+                        255,
+                        ts,
+                    );
                 }
             }
         }
@@ -1090,7 +1306,16 @@ fn generate_tile_rgba(tile_index: u32, tile_size: u32) -> Vec<u8> {
                         b -= 12.0;
                     }
 
-                    set(&mut data, x, y, r.clamp(0.0, 255.0) as u8, g.clamp(0.0, 255.0) as u8, b.clamp(0.0, 255.0) as u8, 255, ts);
+                    set(
+                        &mut data,
+                        x,
+                        y,
+                        r.clamp(0.0, 255.0) as u8,
+                        g.clamp(0.0, 255.0) as u8,
+                        b.clamp(0.0, 255.0) as u8,
+                        255,
+                        ts,
+                    );
                 }
             }
         }
@@ -1146,7 +1371,16 @@ fn generate_tile_rgba(tile_index: u32, tile_size: u32) -> Vec<u8> {
                         b = 170.0;
                     }
 
-                    set(&mut data, x, y, r.clamp(0.0, 255.0) as u8, g.clamp(0.0, 255.0) as u8, b.clamp(0.0, 255.0) as u8, 255, ts);
+                    set(
+                        &mut data,
+                        x,
+                        y,
+                        r.clamp(0.0, 255.0) as u8,
+                        g.clamp(0.0, 255.0) as u8,
+                        b.clamp(0.0, 255.0) as u8,
+                        255,
+                        ts,
+                    );
                 }
             }
         }
@@ -1161,7 +1395,7 @@ fn generate_tile_rgba(tile_index: u32, tile_size: u32) -> Vec<u8> {
                     let mn = multi_noise(x, y, 350);
 
                     // Vertical ribs using cosine — peaks are rib crests
-                    let rib_phase = (x as f32 * num_ribs * 6.2832 / tsf).cos();
+                    let rib_phase = (x as f32 * num_ribs * std::f32::consts::TAU / tsf).cos();
                     let on_rib = rib_phase > 0.0; // top half of cosine = rib
                     let rib_intensity = if on_rib { rib_phase } else { 0.0 };
 
@@ -1186,13 +1420,27 @@ fn generate_tile_rgba(tile_index: u32, tile_size: u32) -> Vec<u8> {
                     // Thorn dots on rib crests
                     let thorn = noise_hash(x, y.wrapping_mul(5), 355);
                     let thorn_spacing = ts / 8;
-                    if on_rib && rib_phase > 0.7 && thorn < 10 && thorn_spacing > 0 && (y % thorn_spacing) < 2 {
+                    if on_rib
+                        && rib_phase > 0.7
+                        && thorn < 10
+                        && thorn_spacing > 0
+                        && (y % thorn_spacing) < 2
+                    {
                         r = 195.0;
                         g = 200.0;
                         b = 160.0;
                     }
 
-                    set(&mut data, x, y, r.clamp(0.0, 255.0) as u8, g.clamp(0.0, 255.0) as u8, b.clamp(0.0, 255.0) as u8, 255, ts);
+                    set(
+                        &mut data,
+                        x,
+                        y,
+                        r.clamp(0.0, 255.0) as u8,
+                        g.clamp(0.0, 255.0) as u8,
+                        b.clamp(0.0, 255.0) as u8,
+                        255,
+                        ts,
+                    );
                 }
             }
         }
@@ -1205,9 +1453,12 @@ fn generate_tile_rgba(tile_index: u32, tile_size: u32) -> Vec<u8> {
                     let mn = multi_noise(x, y, 360);
 
                     // Prominent diagonal wind ripple waves
-                    let wave = ((x as f32 * 0.75 + y as f32 * 0.65) * 6.2832 / period).sin() * 0.5 + 0.5;
+                    let wave =
+                        ((x as f32 * 0.75 + y as f32 * 0.65) * std::f32::consts::TAU / period).sin() * 0.5 + 0.5;
                     // Secondary subtle wave for complexity
-                    let wave2 = ((x as f32 * 0.3 - y as f32 * 0.9) * 6.2832 / (period * 2.5)).sin() * 0.15 + 0.5;
+                    let wave2 = ((x as f32 * 0.3 - y as f32 * 0.9) * std::f32::consts::TAU / (period * 2.5)).sin()
+                        * 0.15
+                        + 0.5;
 
                     let combined = wave * 0.8 + wave2 * 0.2;
 
@@ -1221,7 +1472,16 @@ fn generate_tile_rgba(tile_index: u32, tile_size: u32) -> Vec<u8> {
                     g += (grain - 0.5) * 6.0;
                     b += (grain - 0.5) * 5.0;
 
-                    set(&mut data, x, y, r.clamp(0.0, 255.0) as u8, g.clamp(0.0, 255.0) as u8, b.clamp(0.0, 255.0) as u8, 255, ts);
+                    set(
+                        &mut data,
+                        x,
+                        y,
+                        r.clamp(0.0, 255.0) as u8,
+                        g.clamp(0.0, 255.0) as u8,
+                        b.clamp(0.0, 255.0) as u8,
+                        255,
+                        ts,
+                    );
                 }
             }
         }
@@ -1232,11 +1492,11 @@ fn generate_tile_rgba(tile_index: u32, tile_size: u32) -> Vec<u8> {
                 for x in 0..ts {
                     let mn = multi_noise(x, y, 370);
                     let cn = cell_noise(x, y, ts, 371, 6);
-                    
+
                     // Copper veins appear at cell boundaries
                     let vein_threshold = 0.52;
                     let is_vein = cn > vein_threshold;
-                    
+
                     let (mut r, mut g, mut b) = if is_vein {
                         // Orange-brown copper with metallic sheen
                         let intensity = ((cn - vein_threshold) / (1.0 - vein_threshold)).min(1.0);
@@ -1253,7 +1513,7 @@ fn generate_tile_rgba(tile_index: u32, tile_size: u32) -> Vec<u8> {
                             98.0 + (mn - 0.5) * 14.0,
                         )
                     };
-                    
+
                     // Oxidation patches (green tint)
                     let oxidize = noise_hash(x / 3, y / 3, 372) as f32 / 255.0;
                     if oxidize < 0.15 && is_vein {
@@ -1261,22 +1521,31 @@ fn generate_tile_rgba(tile_index: u32, tile_size: u32) -> Vec<u8> {
                         b += 15.0;
                         r -= 20.0;
                     }
-                    
-                    set(&mut data, x, y, r.clamp(0.0, 255.0) as u8, g.clamp(0.0, 255.0) as u8, b.clamp(0.0, 255.0) as u8, 255, ts);
+
+                    set(
+                        &mut data,
+                        x,
+                        y,
+                        r.clamp(0.0, 255.0) as u8,
+                        g.clamp(0.0, 255.0) as u8,
+                        b.clamp(0.0, 255.0) as u8,
+                        255,
+                        ts,
+                    );
                 }
             }
         }
-        
+
         // ── 18: IronOre — stone base with dark grey-brown iron deposits ──
         18 => {
             for y in 0..ts {
                 for x in 0..ts {
                     let mn = multi_noise(x, y, 380);
                     let cn = cell_noise(x, y, ts, 381, 5);
-                    
+
                     let vein_threshold = 0.48;
                     let is_vein = cn > vein_threshold;
-                    
+
                     let (mut r, mut g, b) = if is_vein {
                         // Dark iron deposits with reddish-brown tint
                         let intensity = ((cn - vein_threshold) / (1.0 - vein_threshold)).min(1.0);
@@ -1293,29 +1562,38 @@ fn generate_tile_rgba(tile_index: u32, tile_size: u32) -> Vec<u8> {
                             100.0 + (mn - 0.5) * 14.0,
                         )
                     };
-                    
+
                     // Rust spots
                     let rust = noise_hash(x.wrapping_mul(3), y.wrapping_mul(5), 382);
                     if rust < 8 && is_vein {
                         r += 30.0;
                         g -= 10.0;
                     }
-                    
-                    set(&mut data, x, y, r.clamp(0.0, 255.0) as u8, g.clamp(0.0, 255.0) as u8, b.clamp(0.0, 255.0) as u8, 255, ts);
+
+                    set(
+                        &mut data,
+                        x,
+                        y,
+                        r.clamp(0.0, 255.0) as u8,
+                        g.clamp(0.0, 255.0) as u8,
+                        b.clamp(0.0, 255.0) as u8,
+                        255,
+                        ts,
+                    );
                 }
             }
         }
-        
+
         // ── 19: SilverOre — stone base with bright silver-white veins ──
         19 => {
             for y in 0..ts {
                 for x in 0..ts {
                     let mn = multi_noise(x, y, 390);
                     let cn = cell_noise(x, y, ts, 391, 4);
-                    
+
                     let vein_threshold = 0.55;
                     let is_vein = cn > vein_threshold;
-                    
+
                     let (mut r, mut g, mut b) = if is_vein {
                         // Bright silver with slight blue tint (magical)
                         let intensity = ((cn - vein_threshold) / (1.0 - vein_threshold)).min(1.0);
@@ -1332,7 +1610,7 @@ fn generate_tile_rgba(tile_index: u32, tile_size: u32) -> Vec<u8> {
                             90.0 + (mn - 0.5) * 12.0,
                         )
                     };
-                    
+
                     // Sparkle highlights
                     let sparkle = noise_hash(x.wrapping_mul(7), y.wrapping_mul(11), 392);
                     if sparkle < 4 && is_vein {
@@ -1340,22 +1618,31 @@ fn generate_tile_rgba(tile_index: u32, tile_size: u32) -> Vec<u8> {
                         g = 255.0;
                         b = 255.0;
                     }
-                    
-                    set(&mut data, x, y, r.clamp(0.0, 255.0) as u8, g.clamp(0.0, 255.0) as u8, b.clamp(0.0, 255.0) as u8, 255, ts);
+
+                    set(
+                        &mut data,
+                        x,
+                        y,
+                        r.clamp(0.0, 255.0) as u8,
+                        g.clamp(0.0, 255.0) as u8,
+                        b.clamp(0.0, 255.0) as u8,
+                        255,
+                        ts,
+                    );
                 }
             }
         }
-        
+
         // ── 20: GoldOre — stone base with rich golden veins ──
         20 => {
             for y in 0..ts {
                 for x in 0..ts {
                     let mn = multi_noise(x, y, 400);
                     let cn = cell_noise(x, y, ts, 401, 4);
-                    
+
                     let vein_threshold = 0.58;
                     let is_vein = cn > vein_threshold;
-                    
+
                     let (mut r, mut g, mut b) = if is_vein {
                         // Rich golden yellow
                         let intensity = ((cn - vein_threshold) / (1.0 - vein_threshold)).min(1.0);
@@ -1372,7 +1659,7 @@ fn generate_tile_rgba(tile_index: u32, tile_size: u32) -> Vec<u8> {
                             92.0 + (mn - 0.5) * 12.0,
                         )
                     };
-                    
+
                     // Golden sparkles
                     let sparkle = noise_hash(x.wrapping_mul(5), y.wrapping_mul(7), 402);
                     if sparkle < 3 && is_vein {
@@ -1380,8 +1667,17 @@ fn generate_tile_rgba(tile_index: u32, tile_size: u32) -> Vec<u8> {
                         g = 230.0;
                         b = 120.0;
                     }
-                    
-                    set(&mut data, x, y, r.clamp(0.0, 255.0) as u8, g.clamp(0.0, 255.0) as u8, b.clamp(0.0, 255.0) as u8, 255, ts);
+
+                    set(
+                        &mut data,
+                        x,
+                        y,
+                        r.clamp(0.0, 255.0) as u8,
+                        g.clamp(0.0, 255.0) as u8,
+                        b.clamp(0.0, 255.0) as u8,
+                        255,
+                        ts,
+                    );
                 }
             }
         }
@@ -1398,7 +1694,6 @@ fn generate_tile_rgba(tile_index: u32, tile_size: u32) -> Vec<u8> {
 
     data
 }
-
 
 // ============================================================================
 // TESTS
@@ -1457,7 +1752,14 @@ mod tests {
             BlockType::GoldOre,
         ];
 
-        let faces = [Face::Top, Face::Bottom, Face::North, Face::South, Face::East, Face::West];
+        let faces = [
+            Face::Top,
+            Face::Bottom,
+            Face::North,
+            Face::South,
+            Face::East,
+            Face::West,
+        ];
 
         for block in &block_types {
             for face in &faces {
@@ -1513,9 +1815,24 @@ mod tests {
 
         for block in &block_types {
             let tex = block_textures(*block);
-            assert!(tex.top <= max_valid, "{:?} top index {} exceeds atlas capacity", block, tex.top);
-            assert!(tex.bottom <= max_valid, "{:?} bottom index {} exceeds atlas capacity", block, tex.bottom);
-            assert!(tex.side <= max_valid, "{:?} side index {} exceeds atlas capacity", block, tex.side);
+            assert!(
+                tex.top <= max_valid,
+                "{:?} top index {} exceeds atlas capacity",
+                block,
+                tex.top
+            );
+            assert!(
+                tex.bottom <= max_valid,
+                "{:?} bottom index {} exceeds atlas capacity",
+                block,
+                tex.bottom
+            );
+            assert!(
+                tex.side <= max_valid,
+                "{:?} side index {} exceeds atlas capacity",
+                block,
+                tex.side
+            );
         }
     }
 
@@ -1556,16 +1873,29 @@ mod tests {
     fn test_grass_has_distinct_faces() {
         let tex = block_textures(BlockType::Grass);
         // Grass top should differ from side
-        assert_ne!(tex.top, tex.side, "Grass top and side should be different tiles");
+        assert_ne!(
+            tex.top, tex.side,
+            "Grass top and side should be different tiles"
+        );
         // Grass bottom should be dirt
-        assert_eq!(tex.bottom, block_textures(BlockType::Dirt).top, "Grass bottom should be dirt");
+        assert_eq!(
+            tex.bottom,
+            block_textures(BlockType::Dirt).top,
+            "Grass bottom should be dirt"
+        );
     }
 
     #[test]
     fn test_wood_has_distinct_faces() {
         let tex = block_textures(BlockType::Wood);
-        assert_ne!(tex.top, tex.side, "Wood top and side should be different tiles");
-        assert_eq!(tex.top, tex.bottom, "Wood top and bottom should be the same");
+        assert_ne!(
+            tex.top, tex.side,
+            "Wood top and side should be different tiles"
+        );
+        assert_eq!(
+            tex.top, tex.bottom,
+            "Wood top and bottom should be the same"
+        );
     }
 
     #[test]
@@ -1584,7 +1914,12 @@ mod tests {
     fn test_tile_rgba_correct_size() {
         for tile_idx in 0..=MAX_TILE_INDEX + 1 {
             let data = generate_tile_rgba(tile_idx, 64);
-            assert_eq!(data.len(), 64 * 64 * 4, "Tile {} has wrong data size", tile_idx);
+            assert_eq!(
+                data.len(),
+                64 * 64 * 4,
+                "Tile {} has wrong data size",
+                tile_idx
+            );
         }
     }
 }

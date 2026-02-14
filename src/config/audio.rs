@@ -45,7 +45,6 @@ use serde::{Deserialize, Serialize};
 #[serde(default)]
 pub struct AudioSettings {
     // ── Volume Controls ──
-
     /// Master volume multiplier (0.0 = mute, 1.0 = full). Default: 0.8
     pub master_volume: f32,
     /// Biome ambience intensity (0.0 = silent, 1.0 = full). Default: 0.6
@@ -56,7 +55,6 @@ pub struct AudioSettings {
     pub sfx_volume: f32,
 
     // ── Spatial Audio ──
-
     /// 3D audio distance falloff exponent. Higher = faster attenuation.
     /// Typical range: 0.5–3.0.  Default: 1.0 (inverse distance)
     pub distance_falloff: f32,
@@ -64,7 +62,6 @@ pub struct AudioSettings {
     pub spatial_audio_enabled: bool,
 
     // ── Device Configuration ──
-
     /// Enable the audio subsystem entirely. Default: true.
     /// When false, no audio devices are opened and all sound is silent.
     pub enabled: bool,
@@ -114,7 +111,6 @@ impl Default for AudioSettings {
 #[derive(Resource, Clone, Debug)]
 pub struct AudioConfig {
     // ── Volume Controls ──
-
     /// Master volume (0.0–1.0)
     pub master_volume: f32,
     /// Biome ambience intensity (0.0–1.0)
@@ -125,14 +121,12 @@ pub struct AudioConfig {
     pub sfx_volume: f32,
 
     // ── Spatial Audio ──
-
     /// Distance falloff exponent for 3D audio
     pub distance_falloff: f32,
     /// Whether spatial audio processing is enabled
     pub spatial_audio_enabled: bool,
 
     // ── Device Configuration ──
-
     /// Whether the audio subsystem is enabled
     pub enabled: bool,
     /// Preferred audio output device name
@@ -143,7 +137,6 @@ pub struct AudioConfig {
     pub buffer_size: Option<u32>,
 
     // ── Internal State ──
-
     /// Dirty flag — set when the settings panel changes a value,
     /// cleared after persisting to disk.
     pub dirty: bool,
@@ -217,10 +210,7 @@ impl Plugin for AudioConfigPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<AudioConfig>()
             .init_resource::<AudioSettingsPanelState>()
-            .add_systems(
-                PostStartup,
-                apply_audio_config_from_engine,
-            )
+            .add_systems(PostStartup, apply_audio_config_from_engine)
             .add_systems(
                 Update,
                 (
@@ -270,7 +260,14 @@ fn toggle_audio_settings_panel(
 ) {
     if keyboard.just_pressed(KeyCode::F9) {
         panel_state.visible = !panel_state.visible;
-        info!("Audio settings panel: {}", if panel_state.visible { "opened" } else { "closed" });
+        info!(
+            "Audio settings panel: {}",
+            if panel_state.visible {
+                "opened"
+            } else {
+                "closed"
+            }
+        );
     }
 }
 
@@ -299,8 +296,9 @@ fn audio_settings_panel_ui(
 
             ui.horizontal(|ui| {
                 ui.label("Master:");
-                let slider = bevy_egui::egui::Slider::new(&mut audio_config.master_volume, 0.0..=1.0)
-                    .custom_formatter(|v, _| format!("{:.0}%", v * 100.0));
+                let slider =
+                    bevy_egui::egui::Slider::new(&mut audio_config.master_volume, 0.0..=1.0)
+                        .custom_formatter(|v, _| format!("{:.0}%", v * 100.0));
                 if ui.add(slider).changed() {
                     changed = true;
                 }
@@ -308,8 +306,9 @@ fn audio_settings_panel_ui(
 
             ui.horizontal(|ui| {
                 ui.label("Music:");
-                let slider = bevy_egui::egui::Slider::new(&mut audio_config.music_volume, 0.0..=1.0)
-                    .custom_formatter(|v, _| format!("{:.0}%", v * 100.0));
+                let slider =
+                    bevy_egui::egui::Slider::new(&mut audio_config.music_volume, 0.0..=1.0)
+                        .custom_formatter(|v, _| format!("{:.0}%", v * 100.0));
                 if ui.add(slider).changed() {
                     changed = true;
                 }
@@ -332,8 +331,9 @@ fn audio_settings_panel_ui(
 
             ui.horizontal(|ui| {
                 ui.label("Biome Intensity:");
-                let slider = bevy_egui::egui::Slider::new(&mut audio_config.ambience_intensity, 0.0..=1.0)
-                    .custom_formatter(|v, _| format!("{:.0}%", v * 100.0));
+                let slider =
+                    bevy_egui::egui::Slider::new(&mut audio_config.ambience_intensity, 0.0..=1.0)
+                        .custom_formatter(|v, _| format!("{:.0}%", v * 100.0));
                 if ui.add(slider).changed() {
                     changed = true;
                 }
@@ -345,14 +345,21 @@ fn audio_settings_panel_ui(
             ui.heading("3D Audio");
             ui.separator();
 
-            if ui.checkbox(&mut audio_config.spatial_audio_enabled, "Enable Spatial Audio").changed() {
+            if ui
+                .checkbox(
+                    &mut audio_config.spatial_audio_enabled,
+                    "Enable Spatial Audio",
+                )
+                .changed()
+            {
                 changed = true;
             }
 
             ui.horizontal(|ui| {
                 ui.label("Distance Falloff:");
-                let slider = bevy_egui::egui::Slider::new(&mut audio_config.distance_falloff, 0.1..=3.0)
-                    .custom_formatter(|v, _| format!("{:.2}×", v));
+                let slider =
+                    bevy_egui::egui::Slider::new(&mut audio_config.distance_falloff, 0.1..=3.0)
+                        .custom_formatter(|v, _| format!("{:.2}×", v));
                 if ui.add(slider).changed() {
                     changed = true;
                 }
@@ -362,18 +369,31 @@ fn audio_settings_panel_ui(
 
             // ── Effective Volumes (read-only) ──
             ui.separator();
-            ui.label(bevy_egui::egui::RichText::new("Effective Volumes").strong().size(12.0));
+            ui.label(
+                bevy_egui::egui::RichText::new("Effective Volumes")
+                    .strong()
+                    .size(12.0),
+            );
             ui.horizontal(|ui| {
                 ui.label("Ambience:");
-                ui.monospace(format!("{:.0}%", audio_config.effective_ambience_volume() * 100.0));
+                ui.monospace(format!(
+                    "{:.0}%",
+                    audio_config.effective_ambience_volume() * 100.0
+                ));
             });
             ui.horizontal(|ui| {
                 ui.label("Music:");
-                ui.monospace(format!("{:.0}%", audio_config.effective_music_volume() * 100.0));
+                ui.monospace(format!(
+                    "{:.0}%",
+                    audio_config.effective_music_volume() * 100.0
+                ));
             });
             ui.horizontal(|ui| {
                 ui.label("SFX:");
-                ui.monospace(format!("{:.0}%", audio_config.effective_sfx_volume() * 100.0));
+                ui.monospace(format!(
+                    "{:.0}%",
+                    audio_config.effective_sfx_volume() * 100.0
+                ));
             });
 
             ui.add_space(4.0);
@@ -473,7 +493,7 @@ mod tests {
     #[test]
     fn test_audio_config_clamping() {
         let settings = AudioSettings {
-            master_volume: 1.5,    // over max
+            master_volume: 1.5,       // over max
             ambience_intensity: -0.2, // under min
             distance_falloff: 10.0,   // over max (clamped to 5.0)
             spatial_audio_enabled: true,
@@ -526,10 +546,10 @@ mod tests {
         let settings: AudioSettings = serde_json::from_str(json).unwrap();
         assert_eq!(settings.master_volume, 0.5);
         assert_eq!(settings.ambience_intensity, 0.6); // default
-        assert_eq!(settings.distance_falloff, 1.0);   // default
-        assert!(settings.spatial_audio_enabled);        // default
-        assert!(settings.enabled);                      // default
-        assert_eq!(settings.preferred_device, None);    // default
+        assert_eq!(settings.distance_falloff, 1.0); // default
+        assert!(settings.spatial_audio_enabled); // default
+        assert!(settings.enabled); // default
+        assert_eq!(settings.preferred_device, None); // default
     }
 
     #[test]
@@ -622,7 +642,10 @@ mod tests {
     #[test]
     fn test_audio_settings_panel_state_default_hidden() {
         let state = AudioSettingsPanelState::default();
-        assert!(!state.visible, "Audio settings panel should be hidden by default");
+        assert!(
+            !state.visible,
+            "Audio settings panel should be hidden by default"
+        );
     }
 
     #[test]
@@ -657,17 +680,23 @@ mod tests {
                 assert!(
                     (0.0..=1.0).contains(&eff_amb),
                     "Ambient out of range: {} (master={}, channel={})",
-                    eff_amb, master, channel,
+                    eff_amb,
+                    master,
+                    channel,
                 );
                 assert!(
                     (0.0..=1.0).contains(&eff_sfx),
                     "SFX out of range: {} (master={}, channel={})",
-                    eff_sfx, master, channel,
+                    eff_sfx,
+                    master,
+                    channel,
                 );
                 assert!(
                     (0.0..=1.0).contains(&eff_mus),
                     "Music out of range: {} (master={}, channel={})",
-                    eff_mus, master, channel,
+                    eff_mus,
+                    master,
+                    channel,
                 );
             }
         }

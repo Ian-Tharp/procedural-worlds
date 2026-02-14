@@ -8,20 +8,14 @@ use std::collections::HashSet;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use bevy::math::IVec3;
-use bevy::tasks::{block_on, AsyncComputeTaskPool};
+use bevy::tasks::{AsyncComputeTaskPool, block_on};
 
 use procedural_worlds::generation::{
-    generate_cacti, generate_caves, generate_chunk_terrain, generate_trees, TerrainConfig,
+    TerrainConfig, generate_cacti, generate_caves, generate_chunk_terrain, generate_trees,
 };
-use procedural_worlds::world::persistence::{
-    self, ChunkStorage, SaveFormat,
-};
-use procedural_worlds::world::{
-    Chunk, ChunkLoadMetrics, ChunkManager, CHUNK_SIZE,
-};
-use procedural_worlds::world::streaming::{
-    compute_predicted_positions, PlayerChunkVelocity,
-};
+use procedural_worlds::world::persistence::{self, ChunkStorage, SaveFormat};
+use procedural_worlds::world::streaming::{PlayerChunkVelocity, compute_predicted_positions};
+use procedural_worlds::world::{CHUNK_SIZE, Chunk, ChunkLoadMetrics, ChunkManager};
 
 // ============================================================================
 // Helpers
@@ -96,7 +90,10 @@ fn full_pipeline_generate_save_load_json() {
     let loaded = persistence::load_chunk_fmt(pos, &storage, SaveFormat::Json).unwrap();
 
     assert_chunks_equal(&original, &loaded);
-    assert!(loaded.dirty, "Loaded chunks must be marked dirty for mesh rebuild");
+    assert!(
+        loaded.dirty,
+        "Loaded chunks must be marked dirty for mesh rebuild"
+    );
 
     cleanup(&storage);
 }
@@ -267,7 +264,8 @@ fn chunk_manager_pending_to_loaded_transition() {
 
     // Phase 2: Simulate completion — move from pending to loaded
     cm.pending.remove(&pos);
-    cm.chunks.insert(pos, bevy::ecs::entity::Entity::PLACEHOLDER);
+    cm.chunks
+        .insert(pos, bevy::ecs::entity::Entity::PLACEHOLDER);
 
     assert!(!cm.pending.contains(&pos));
     assert!(cm.chunks.contains_key(&pos));
@@ -356,11 +354,17 @@ fn metrics_loading_to_idle_transition() {
         metrics.record_load(0.05, 1.0 + i as f64 * 0.01);
     }
     metrics.refresh(1.5);
-    assert!(metrics.chunks_per_second > 0.0, "Should show active loading");
+    assert!(
+        metrics.chunks_per_second > 0.0,
+        "Should show active loading"
+    );
 
     // No more loads, advance time past the 2s window
     metrics.refresh(5.0);
-    assert_eq!(metrics.chunks_per_second, 0.0, "Should show idle after window expires");
+    assert_eq!(
+        metrics.chunks_per_second, 0.0,
+        "Should show idle after window expires"
+    );
 
     // Total should still be preserved
     assert_eq!(metrics.total_chunks_loaded, 20);
@@ -389,7 +393,9 @@ fn predictive_positions_beyond_load_distance() {
         assert!(
             dist > load_dist,
             "Predicted position {:?} should be beyond load_dist {} (dist={})",
-            pos, load_dist, dist
+            pos,
+            load_dist,
+            dist
         );
     }
 }
@@ -403,11 +409,10 @@ fn predictive_plus_standard_covers_movement_direction() {
     let load_dist = 4;
     let lookahead = 2;
 
-    let predicted: HashSet<IVec3> = compute_predicted_positions(
-        center, direction, load_dist, lookahead, 0, 0,
-    )
-    .into_iter()
-    .collect();
+    let predicted: HashSet<IVec3> =
+        compute_predicted_positions(center, direction, load_dist, lookahead, 0, 0)
+            .into_iter()
+            .collect();
 
     // Standard zone: all positions within load_dist
     let mut standard = HashSet::new();
@@ -438,7 +443,9 @@ fn player_velocity_direction_from_movement() {
         initialized: true,
     };
 
-    let dir = vel.direction_xz(0.5).expect("Speed should exceed threshold");
+    let dir = vel
+        .direction_xz(0.5)
+        .expect("Speed should exceed threshold");
 
     // Should be normalised
     let len = (dir.x * dir.x + dir.z * dir.z).sqrt();

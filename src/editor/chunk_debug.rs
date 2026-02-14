@@ -22,7 +22,7 @@ use bevy::prelude::*;
 use bevy_egui::egui;
 
 use crate::world::{
-    chunk_to_world_pos, Chunk, ChunkManager, ChunkMesh, PendingChunk, PendingMesh, CHUNK_SIZE,
+    CHUNK_SIZE, Chunk, ChunkManager, ChunkMesh, PendingChunk, PendingMesh, chunk_to_world_pos,
 };
 
 // ============================================================================
@@ -95,12 +95,12 @@ impl ChunkVisualState {
     /// Get the gizmo color for this visual state.
     pub fn color(&self) -> Color {
         match self {
-            Self::Unloaded => Color::srgba(1.0, 0.2, 0.2, 0.3),  // Red (dim)
-            Self::Loading => Color::srgba(1.0, 0.6, 0.2, 0.6),   // Orange
-            Self::Meshing => Color::srgba(1.0, 1.0, 0.2, 0.6),   // Yellow
-            Self::Loaded => Color::srgba(0.2, 1.0, 0.2, 0.4),    // Green (subtle)
+            Self::Unloaded => Color::srgba(1.0, 0.2, 0.2, 0.3), // Red (dim)
+            Self::Loading => Color::srgba(1.0, 0.6, 0.2, 0.6),  // Orange
+            Self::Meshing => Color::srgba(1.0, 1.0, 0.2, 0.6),  // Yellow
+            Self::Loaded => Color::srgba(0.2, 1.0, 0.2, 0.4),   // Green (subtle)
             Self::Optimized => Color::srgba(0.2, 0.8, 1.0, 0.5), // Cyan
-            Self::Error => Color::srgba(1.0, 0.2, 1.0, 0.8),     // Magenta
+            Self::Error => Color::srgba(1.0, 0.2, 1.0, 0.8),    // Magenta
         }
     }
 
@@ -319,8 +319,7 @@ pub fn draw_chunk_borders(
         let player_world_pos = chunk_to_world_pos(chunk_manager.player_chunk);
         let center = player_world_pos + Vec3::splat(half_size);
         // Scale up 1% to ensure it renders on top of the state border
-        let transform =
-            Transform::from_translation(center).with_scale(chunk_size_vec * 1.01);
+        let transform = Transform::from_translation(center).with_scale(chunk_size_vec * 1.01);
         gizmos.cuboid(transform, PLAYER_CHUNK_COLOR);
     }
 }
@@ -364,10 +363,8 @@ pub struct ChunkDebugPlugin;
 
 impl Plugin for ChunkDebugPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<ChunkDebugState>().add_systems(
-            Update,
-            (chunk_debug_input, draw_chunk_borders).chain(),
-        );
+        app.init_resource::<ChunkDebugState>()
+            .add_systems(Update, (chunk_debug_input, draw_chunk_borders).chain());
     }
 }
 
@@ -448,7 +445,11 @@ mod tests {
     fn test_visual_state_emojis_all_unique() {
         let emojis: Vec<&str> = ChunkVisualState::ALL.iter().map(|s| s.emoji()).collect();
         let unique: std::collections::HashSet<&str> = emojis.iter().copied().collect();
-        assert_eq!(emojis.len(), unique.len(), "All state emojis should be unique");
+        assert_eq!(
+            emojis.len(),
+            unique.len(),
+            "All state emojis should be unique"
+        );
     }
 
     #[test]
@@ -690,7 +691,8 @@ mod tests {
         cm.player_chunk = IVec3::ZERO;
 
         let failed_pos = IVec3::new(1, 0, 0);
-        cm.failed_chunks.insert(failed_pos, "test error".to_string());
+        cm.failed_chunks
+            .insert(failed_pos, "test error".to_string());
 
         let expected = expected_chunk_positions(&cm);
         assert!(expected.contains(&failed_pos));

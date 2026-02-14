@@ -18,7 +18,7 @@ use crate::audio::{BlockSoundEvent, BlockSoundKind};
 use crate::engine::controller::CursorState;
 use crate::engine::raycast::CurrentTarget;
 
-use super::{BlockType, Chunk, ChunkManager, ChunkMesh, CHUNK_SIZE};
+use super::{BlockType, CHUNK_SIZE, Chunk, ChunkManager, ChunkMesh};
 
 // ============================================================================
 // CONSTANTS
@@ -117,11 +117,11 @@ fn dirty_neighbors_if_boundary(
 
     // For each axis, check if the local coordinate is at the boundary.
     let offsets: [(i32, IVec3); 6] = [
-        (local.x, IVec3::new(-1, 0, 0)),     // x == 0
+        (local.x, IVec3::new(-1, 0, 0)),       // x == 0
         (last - local.x, IVec3::new(1, 0, 0)), // x == 15
-        (local.y, IVec3::new(0, -1, 0)),     // y == 0
+        (local.y, IVec3::new(0, -1, 0)),       // y == 0
         (last - local.y, IVec3::new(0, 1, 0)), // y == 15
-        (local.z, IVec3::new(0, 0, -1)),     // z == 0
+        (local.z, IVec3::new(0, 0, -1)),       // z == 0
         (last - local.z, IVec3::new(0, 0, 1)), // z == 15
     ];
 

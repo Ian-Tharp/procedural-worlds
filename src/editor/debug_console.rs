@@ -11,7 +11,7 @@
 //! Empty lines are skipped.
 
 use bevy::prelude::*;
-use bevy_egui::{egui, EguiContexts};
+use bevy_egui::{EguiContexts, egui};
 use std::collections::VecDeque;
 use std::fs;
 use std::path::Path;
@@ -163,8 +163,8 @@ impl DebugConsoleState {
     ///
     /// Returns the number of commands executed, or an error message
     pub fn execute_script(&mut self, path: &Path) -> Result<usize, String> {
-        let content = fs::read_to_string(path)
-            .map_err(|e| format!("Failed to read script file: {}", e))?;
+        let content =
+            fs::read_to_string(path).map_err(|e| format!("Failed to read script file: {}", e))?;
 
         let mut executed_count = 0;
 
@@ -227,7 +227,10 @@ impl DebugConsoleState {
                         .enumerate()
                         .map(|(i, cmd)| format!("  {}: {}", i + 1, cmd))
                         .collect();
-                    self.print(format!("Command history ({} entries):", history_lines.len()));
+                    self.print(format!(
+                        "Command history ({} entries):",
+                        history_lines.len()
+                    ));
                     for line in history_lines {
                         self.print(line);
                     }
@@ -258,7 +261,10 @@ impl DebugConsoleState {
                 let duration = now
                     .duration_since(SystemTime::UNIX_EPOCH)
                     .map_err(|e| e.to_string())?;
-                self.print(format!("System time: {} seconds since epoch", duration.as_secs()));
+                self.print(format!(
+                    "System time: {} seconds since epoch",
+                    duration.as_secs()
+                ));
                 Ok(())
             }
             "version" => {
@@ -268,7 +274,10 @@ impl DebugConsoleState {
                 ));
                 Ok(())
             }
-            _ => Err(format!("Unknown command: '{}'. Type 'help' for available commands.", cmd)),
+            _ => Err(format!(
+                "Unknown command: '{}'. Type 'help' for available commands.",
+                cmd
+            )),
         }
     }
 
@@ -311,10 +320,7 @@ pub fn console_toggle_system(
 }
 
 /// System to render the debug console UI
-pub fn console_ui_system(
-    mut contexts: EguiContexts,
-    mut console_state: ResMut<DebugConsoleState>,
-) {
+pub fn console_ui_system(mut contexts: EguiContexts, mut console_state: ResMut<DebugConsoleState>) {
     if !console_state.visible {
         return;
     }
@@ -547,7 +553,12 @@ mod tests {
 
         let result = console.execute_command("version");
         assert!(result.is_ok());
-        assert!(console.output.iter().any(|l| l.contains("Procedural Worlds")));
+        assert!(
+            console
+                .output
+                .iter()
+                .any(|l| l.contains("Procedural Worlds"))
+        );
     }
 
     #[test]

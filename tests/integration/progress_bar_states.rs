@@ -57,7 +57,11 @@ fn progress_bar_fade_out_logic() {
 
     // Should fade out in roughly 40 frames (~0.67s at 60fps)
     assert!(opacity < 0.01, "Should have faded out");
-    assert!(frames < 100, "Should fade out within reasonable frame count: {}", frames);
+    assert!(
+        frames < 100,
+        "Should fade out within reasonable frame count: {}",
+        frames
+    );
 }
 
 /// The fade-in is faster than the fade-out (4.0 vs 1.5 rate).
@@ -84,7 +88,8 @@ fn fade_in_faster_than_fade_out() {
     assert!(
         fade_in_frames < fade_out_frames,
         "Fade-in ({} frames) should be faster than fade-out ({} frames)",
-        fade_in_frames, fade_out_frames
+        fade_in_frames,
+        fade_out_frames
     );
 }
 
@@ -111,9 +116,9 @@ fn progress_calculation_formula() {
     // Simulate progress at various loaded counts
     let test_cases = [
         (0, 0.0_f32),
-        (283, 283.0 / 567.0),   // ~50%
-        (567, 1.0),              // complete
-        (600, 1.0),              // over-loaded (clamped)
+        (283, 283.0 / 567.0), // ~50%
+        (567, 1.0),           // complete
+        (600, 1.0),           // over-loaded (clamped)
     ];
 
     for &(loaded, expected_progress) in &test_cases {
@@ -125,7 +130,9 @@ fn progress_calculation_formula() {
         assert!(
             (progress - expected_progress).abs() < 0.01,
             "With {} loaded: expected {:.3}, got {:.3}",
-            loaded, expected_progress, progress
+            loaded,
+            expected_progress,
+            progress
         );
     }
 }

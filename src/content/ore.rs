@@ -213,8 +213,8 @@ impl OreRegistry {
     fn load_from_directory(&mut self, dir: &Path, is_user_content: bool) -> Result<usize, String> {
         let mut loaded = 0;
 
-        let entries = fs::read_dir(dir)
-            .map_err(|e| format!("Failed to read directory {:?}: {}", dir, e))?;
+        let entries =
+            fs::read_dir(dir).map_err(|e| format!("Failed to read directory {:?}: {}", dir, e))?;
 
         for entry in entries.flatten() {
             let path = entry.path();
@@ -237,11 +237,11 @@ impl OreRegistry {
 
     /// Load a single ore definition from a file
     fn load_file(&self, path: &Path, is_user_content: bool) -> Result<OreDefinition, String> {
-        let content = fs::read_to_string(path)
-            .map_err(|e| format!("Failed to read file: {}", e))?;
+        let content =
+            fs::read_to_string(path).map_err(|e| format!("Failed to read file: {}", e))?;
 
-        let mut ore: OreDefinition = ron::from_str(&content)
-            .map_err(|e| format!("Failed to parse RON: {}", e))?;
+        let mut ore: OreDefinition =
+            ron::from_str(&content).map_err(|e| format!("Failed to parse RON: {}", e))?;
 
         ore.user_content = is_user_content;
         Ok(ore)
@@ -281,15 +281,13 @@ impl OreRegistry {
         };
 
         // Ensure directory exists
-        fs::create_dir_all(dir)
-            .map_err(|e| format!("Failed to create directory: {}", e))?;
+        fs::create_dir_all(dir).map_err(|e| format!("Failed to create directory: {}", e))?;
 
         let path = dir.join(format!("{}.ron", ore.id));
         let content = ron::ser::to_string_pretty(&ore, ron::ser::PrettyConfig::default())
             .map_err(|e| format!("Failed to serialize: {}", e))?;
 
-        fs::write(&path, content)
-            .map_err(|e| format!("Failed to write file: {}", e))?;
+        fs::write(&path, content).map_err(|e| format!("Failed to write file: {}", e))?;
 
         info!("Saved ore {} to {:?}", ore.id, path);
         self.ores.insert(ore.id.clone(), ore);
@@ -298,7 +296,9 @@ impl OreRegistry {
 
     /// Delete an ore definition
     pub fn delete(&mut self, id: &str) -> Result<(), String> {
-        let ore = self.ores.get(id)
+        let ore = self
+            .ores
+            .get(id)
             .ok_or_else(|| format!("Ore '{}' not found", id))?;
 
         let dir = if ore.user_content {
@@ -309,8 +309,7 @@ impl OreRegistry {
 
         let path = dir.join(format!("{}.ron", id));
         if path.exists() {
-            fs::remove_file(&path)
-                .map_err(|e| format!("Failed to delete file: {}", e))?;
+            fs::remove_file(&path).map_err(|e| format!("Failed to delete file: {}", e))?;
         }
 
         self.ores.remove(id);
@@ -322,7 +321,7 @@ impl OreRegistry {
     pub fn create_new(&mut self) -> OreDefinition {
         let mut counter = 1;
         let mut id = "custom_ore".to_string();
-        
+
         while self.ores.contains_key(&id) {
             counter += 1;
             id = format!("custom_ore_{}", counter);
@@ -456,9 +455,7 @@ impl Plugin for OrePlugin {
 
 /// Initialize the ore registry on startup
 fn setup_ore_registry(mut commands: Commands) {
-    let assets_path = std::env::current_dir()
-        .unwrap_or_default()
-        .join("assets");
+    let assets_path = std::env::current_dir().unwrap_or_default().join("assets");
 
     let mut registry = OreRegistry::new(assets_path);
 
@@ -476,7 +473,7 @@ fn setup_ore_registry(mut commands: Commands) {
     if registry.is_empty() {
         info!("No ores found, creating defaults...");
         create_default_ores(&mut registry);
-        
+
         // Reload after creating defaults
         if let Err(e) = registry.load_all() {
             warn!("Error reloading ores: {}", e);

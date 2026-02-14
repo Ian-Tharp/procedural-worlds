@@ -4,7 +4,7 @@
 //! Changes can be applied immediately by regenerating the world.
 
 use bevy::prelude::*;
-use bevy_egui::{egui, EguiContexts};
+use bevy_egui::{EguiContexts, egui};
 
 use crate::actors::Player;
 use crate::generation::TerrainConfig;
@@ -139,10 +139,7 @@ pub struct RegenerationState {
 /// Draw the world generation config UI section.
 ///
 /// Returns `true` if the "Regenerate" button was clicked.
-pub fn draw_worldgen_panel(
-    ui: &mut egui::Ui,
-    state: &mut WorldGenPanelState,
-) -> bool {
+pub fn draw_worldgen_panel(ui: &mut egui::Ui, state: &mut WorldGenPanelState) -> bool {
     let mut regenerate_clicked = false;
 
     egui::CollapsingHeader::new("🌍 World Generation")
@@ -154,7 +151,7 @@ pub fn draw_worldgen_panel(
             ui.horizontal(|ui| {
                 ui.label("Seed:").on_hover_text(
                     "The world seed determines all terrain generation.\n\
-                    Same seed = same world every time."
+                    Same seed = same world every time.",
                 );
                 let response = ui.add(
                     egui::TextEdit::singleline(&mut state.seed_text)
@@ -167,7 +164,11 @@ pub fn draw_worldgen_panel(
                         state.dirty = true;
                     }
                 }
-                if ui.button("🎲").on_hover_text("Generate a random seed").clicked() {
+                if ui
+                    .button("🎲")
+                    .on_hover_text("Generate a random seed")
+                    .clicked()
+                {
                     state.seed = rand::random();
                     state.seed_text = state.seed.to_string();
                     state.dirty = true;
@@ -186,7 +187,8 @@ pub fn draw_worldgen_panel(
                     Default: 32 | Current: {:.0}",
                     state.base_height
                 ));
-                if ui.add(egui::Slider::new(&mut state.base_height, 16.0..=128.0))
+                if ui
+                    .add(egui::Slider::new(&mut state.base_height, 16.0..=128.0))
                     .on_hover_text(format!("Current: {:.0} blocks", state.base_height))
                     .changed()
                 {
@@ -201,8 +203,12 @@ pub fn draw_worldgen_panel(
                     Default: 16 | Current: {:.0}",
                     state.height_scale
                 ));
-                if ui.add(egui::Slider::new(&mut state.height_scale, 4.0..=64.0))
-                    .on_hover_text(format!("Current: {:.0} blocks variation", state.height_scale))
+                if ui
+                    .add(egui::Slider::new(&mut state.height_scale, 4.0..=64.0))
+                    .on_hover_text(format!(
+                        "Current: {:.0} blocks variation",
+                        state.height_scale
+                    ))
                     .changed()
                 {
                     state.dirty = true;
@@ -216,7 +222,8 @@ pub fn draw_worldgen_panel(
                     Default: 28 | Current: {}",
                     state.sea_level
                 ));
-                if ui.add(egui::Slider::new(&mut state.sea_level, 0..=64))
+                if ui
+                    .add(egui::Slider::new(&mut state.sea_level, 0..=64))
                     .on_hover_text(format!("Current: Y={}", state.sea_level))
                     .changed()
                 {
@@ -241,24 +248,33 @@ pub fn draw_worldgen_panel(
                     biome_size
                 ));
                 let mut biome_size_mut = biome_size;
-                if ui.add(
-                    egui::Slider::new(&mut biome_size_mut, 0.5..=10.0)
-                        .logarithmic(true)
-                        .suffix("x")
-                ).on_hover_text(format!("Current: {:.1}x", biome_size_mut)).changed() {
+                if ui
+                    .add(
+                        egui::Slider::new(&mut biome_size_mut, 0.5..=10.0)
+                            .logarithmic(true)
+                            .suffix("x"),
+                    )
+                    .on_hover_text(format!("Current: {:.1}x", biome_size_mut))
+                    .changed()
+                {
                     state.biome_scale = 1.0 / (biome_size_mut * 100.0);
                     state.dirty = true;
                 }
             });
 
             ui.horizontal(|ui| {
-                if ui.checkbox(&mut state.blend_enabled, "Blend Boundaries")
+                if ui
+                    .checkbox(&mut state.blend_enabled, "Blend Boundaries")
                     .on_hover_text(format!(
                         "Smoothly blend terrain between biomes.\n\
                         Creates gradual transitions instead of\n\
                         hard edges at biome borders.\n\
                         Current: {}",
-                        if state.blend_enabled { "Enabled" } else { "Disabled" }
+                        if state.blend_enabled {
+                            "Enabled"
+                        } else {
+                            "Disabled"
+                        }
                     ))
                     .changed()
                 {
@@ -274,7 +290,8 @@ pub fn draw_worldgen_panel(
                         Default: 32 | Current: {:.0} blocks",
                         state.blend_distance
                     ));
-                    if ui.add(egui::Slider::new(&mut state.blend_distance, 8.0..=128.0))
+                    if ui
+                        .add(egui::Slider::new(&mut state.blend_distance, 8.0..=128.0))
                         .on_hover_text(format!("Current: {:.0} blocks", state.blend_distance))
                         .changed()
                     {
@@ -290,7 +307,11 @@ pub fn draw_worldgen_panel(
                         Default: 0.45 | Current: {:.2}",
                         state.transition_noise_amplitude
                     ));
-                    if ui.add(egui::Slider::new(&mut state.transition_noise_amplitude, 0.0..=1.0))
+                    if ui
+                        .add(egui::Slider::new(
+                            &mut state.transition_noise_amplitude,
+                            0.0..=1.0,
+                        ))
                         .on_hover_text(format!("Current: {:.2}", state.transition_noise_amplitude))
                         .changed()
                     {
@@ -305,12 +326,17 @@ pub fn draw_worldgen_panel(
             ui.label(egui::RichText::new("Caves").strong());
 
             ui.horizontal(|ui| {
-                if ui.checkbox(&mut state.caves_enabled, "Enable Caves")
+                if ui
+                    .checkbox(&mut state.caves_enabled, "Enable Caves")
                     .on_hover_text(format!(
                         "Generate underground cave systems.\n\
                         Caves carve through stone below the surface.\n\
                         Current: {}",
-                        if state.caves_enabled { "Enabled" } else { "Disabled" }
+                        if state.caves_enabled {
+                            "Enabled"
+                        } else {
+                            "Disabled"
+                        }
                     ))
                     .changed()
                 {
@@ -327,7 +353,8 @@ pub fn draw_worldgen_panel(
                         Default: 0.70 | Current: {:.2}",
                         state.cave_threshold
                     ));
-                    if ui.add(egui::Slider::new(&mut state.cave_threshold, 0.5..=0.9))
+                    if ui
+                        .add(egui::Slider::new(&mut state.cave_threshold, 0.5..=0.9))
                         .on_hover_text(format!("Current: {:.2}", state.cave_threshold))
                         .changed()
                     {
@@ -343,12 +370,13 @@ pub fn draw_worldgen_panel(
                         Default: 0.05 | Current: {:.3}",
                         state.cave_frequency
                     ));
-                    if ui.add(
-                        egui::Slider::new(&mut state.cave_frequency, 0.02..=0.1)
-                            .logarithmic(true)
-                    )
-                    .on_hover_text(format!("Current: {:.3}", state.cave_frequency))
-                    .changed()
+                    if ui
+                        .add(
+                            egui::Slider::new(&mut state.cave_frequency, 0.02..=0.1)
+                                .logarithmic(true),
+                        )
+                        .on_hover_text(format!("Current: {:.3}", state.cave_frequency))
+                        .changed()
                     {
                         state.dirty = true;
                     }
@@ -361,7 +389,11 @@ pub fn draw_worldgen_panel(
                         Default: 5 | Current: {}",
                         state.cave_surface_protection
                     ));
-                    if ui.add(egui::Slider::new(&mut state.cave_surface_protection, 0..=15))
+                    if ui
+                        .add(egui::Slider::new(
+                            &mut state.cave_surface_protection,
+                            0..=15,
+                        ))
                         .on_hover_text(format!("Current: {} blocks", state.cave_surface_protection))
                         .changed()
                     {
@@ -385,10 +417,11 @@ pub fn draw_worldgen_panel(
                 ));
                 // Show as percentage
                 let mut density_pct = state.tree_density * 100.0;
-                if ui.add(
-                    egui::Slider::new(&mut density_pct, 0.0..=20.0)
-                        .suffix("%")
-                ).on_hover_text(format!("Current: {:.1}%", density_pct)).changed() {
+                if ui
+                    .add(egui::Slider::new(&mut density_pct, 0.0..=20.0).suffix("%"))
+                    .on_hover_text(format!("Current: {:.1}%", density_pct))
+                    .changed()
+                {
                     state.tree_density = density_pct / 100.0;
                     state.dirty = true;
                 }
@@ -401,10 +434,14 @@ pub fn draw_worldgen_panel(
                     Default: 1.0x | Current: {:.1}x",
                     state.cactus_density_multiplier
                 ));
-                if ui.add(
-                    egui::Slider::new(&mut state.cactus_density_multiplier, 0.0..=5.0)
-                        .suffix("x")
-                ).on_hover_text(format!("Current: {:.1}x", state.cactus_density_multiplier)).changed() {
+                if ui
+                    .add(
+                        egui::Slider::new(&mut state.cactus_density_multiplier, 0.0..=5.0)
+                            .suffix("x"),
+                    )
+                    .on_hover_text(format!("Current: {:.1}x", state.cactus_density_multiplier))
+                    .changed()
+                {
                     state.dirty = true;
                 }
             });
@@ -415,7 +452,9 @@ pub fn draw_worldgen_panel(
             egui::CollapsingHeader::new("⚙ Advanced")
                 .default_open(false)
                 .show(ui, |ui| {
-                    ui.small("⚠ These settings require understanding of noise-based terrain generation.");
+                    ui.small(
+                        "⚠ These settings require understanding of noise-based terrain generation.",
+                    );
                     ui.add_space(4.0);
 
                     ui.horizontal(|ui| {
@@ -426,10 +465,14 @@ pub fn draw_worldgen_panel(
                             Default: 0.02 | Current: {:.3}",
                             state.frequency
                         ));
-                        if ui.add(
-                            egui::Slider::new(&mut state.frequency, 0.005..=0.1)
-                                .logarithmic(true)
-                        ).on_hover_text(format!("Current: {:.3}", state.frequency)).changed() {
+                        if ui
+                            .add(
+                                egui::Slider::new(&mut state.frequency, 0.005..=0.1)
+                                    .logarithmic(true),
+                            )
+                            .on_hover_text(format!("Current: {:.3}", state.frequency))
+                            .changed()
+                        {
                             state.dirty = true;
                         }
                     });
@@ -443,7 +486,8 @@ pub fn draw_worldgen_panel(
                             state.octaves
                         ));
                         let mut octaves_i32 = state.octaves as i32;
-                        if ui.add(egui::Slider::new(&mut octaves_i32, 1..=8))
+                        if ui
+                            .add(egui::Slider::new(&mut octaves_i32, 1..=8))
                             .on_hover_text(format!("Current: {}", octaves_i32))
                             .changed()
                         {
@@ -460,9 +504,14 @@ pub fn draw_worldgen_panel(
                             Default: 0.08 | Current: {:.2}",
                             state.transition_noise_scale
                         ));
-                        if ui.add(
-                            egui::Slider::new(&mut state.transition_noise_scale, 0.01..=0.2)
-                        ).on_hover_text(format!("Current: {:.2}", state.transition_noise_scale)).changed() {
+                        if ui
+                            .add(egui::Slider::new(
+                                &mut state.transition_noise_scale,
+                                0.01..=0.2,
+                            ))
+                            .on_hover_text(format!("Current: {:.2}", state.transition_noise_scale))
+                            .changed()
+                        {
                             state.dirty = true;
                         }
                     });
@@ -485,7 +534,11 @@ pub fn draw_worldgen_panel(
                     state.dirty = false;
                 }
 
-                if ui.button("↺ Reset").on_hover_text("Reset to defaults").clicked() {
+                if ui
+                    .button("↺ Reset")
+                    .on_hover_text("Reset to defaults")
+                    .clicked()
+                {
                     *state = WorldGenPanelState::default();
                     regenerate_clicked = true;
                 }
@@ -511,11 +564,15 @@ impl Plugin for WorldGenPanelPlugin {
             .init_resource::<RegenerationState>()
             .add_event::<RegenerateWorldEvent>()
             .add_systems(Startup, sync_panel_from_config)
-            .add_systems(Update, (
-                handle_regenerate_event,
-                update_regeneration_state,
-                draw_loading_screen,
-            ).chain());
+            .add_systems(
+                Update,
+                (
+                    handle_regenerate_event,
+                    update_regeneration_state,
+                    draw_loading_screen,
+                )
+                    .chain(),
+            );
     }
 }
 
@@ -581,12 +638,12 @@ fn handle_regenerate_event(
             commands.entity(entity).despawn_recursive();
             despawned += 1;
         }
-        
+
         // Despawn pending chunk generation tasks
         for entity in pending_chunk_query.iter() {
             commands.entity(entity).despawn_recursive();
         }
-        
+
         // Despawn pending mesh tasks
         for entity in pending_mesh_query.iter() {
             commands.entity(entity).despawn_recursive();
@@ -596,7 +653,10 @@ fn handle_regenerate_event(
         if let Some(ref mut cm) = chunk_manager {
             cm.chunks.clear();
             cm.pending.clear();
-            info!("Despawned {} chunk entities, cleared manager for regeneration", despawned);
+            info!(
+                "Despawned {} chunk entities, cleared manager for regeneration",
+                despawned
+            );
         }
     }
 }
@@ -625,15 +685,18 @@ fn update_regeneration_state(
         if let Some(ref cm) = chunk_manager {
             let pending_chunks = cm.pending.len();
             let pending_meshes = pending_mesh_query.iter().count();
-            
+
             // Consider loading "mostly done" when pending work is low
             // and we have some chunks loaded
             let has_chunks = cm.chunks.len() > 0;
             let low_pending = pending_chunks < 5 && pending_meshes < 3;
-            
+
             if has_chunks && low_pending {
                 regen_state.regenerating = false;
-                info!("World regeneration complete: {} chunks loaded", cm.chunks.len());
+                info!(
+                    "World regeneration complete: {} chunks loaded",
+                    cm.chunks.len()
+                );
             }
         }
     }
@@ -687,7 +750,9 @@ fn draw_loading_screen(
                     ui.vertical_centered(|ui| {
                         ui.label(
                             egui::RichText::new("🌍 Regenerating World...")
-                                .color(egui::Color32::from_rgba_unmultiplied(255, 255, 255, text_alpha))
+                                .color(egui::Color32::from_rgba_unmultiplied(
+                                    255, 255, 255, text_alpha,
+                                ))
                                 .size(24.0)
                                 .strong(),
                         );
@@ -702,7 +767,9 @@ fn draw_loading_screen(
 
                             ui.label(
                                 egui::RichText::new(format!("Chunks loaded: {}", loaded))
-                                    .color(egui::Color32::from_rgba_unmultiplied(180, 180, 180, text_alpha))
+                                    .color(egui::Color32::from_rgba_unmultiplied(
+                                        180, 180, 180, text_alpha,
+                                    ))
                                     .size(14.0),
                             );
 
@@ -712,7 +779,9 @@ fn draw_loading_screen(
                                         "Generating: {}  Meshing: {}",
                                         pending_gen, pending_mesh
                                     ))
-                                    .color(egui::Color32::from_rgba_unmultiplied(150, 150, 150, text_alpha))
+                                    .color(egui::Color32::from_rgba_unmultiplied(
+                                        150, 150, 150, text_alpha,
+                                    ))
                                     .size(12.0),
                                 );
                             }
@@ -729,7 +798,9 @@ fn draw_loading_screen(
                         };
                         ui.label(
                             egui::RichText::new(format!("Please wait{}", dots))
-                                .color(egui::Color32::from_rgba_unmultiplied(120, 120, 120, text_alpha))
+                                .color(egui::Color32::from_rgba_unmultiplied(
+                                    120, 120, 120, text_alpha,
+                                ))
                                 .size(12.0)
                                 .italics(),
                         );

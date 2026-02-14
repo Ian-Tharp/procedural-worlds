@@ -10,8 +10,8 @@ use bevy::prelude::*;
 use bevy::render::mesh::{Indices, PrimitiveTopology};
 use bevy::render::render_asset::RenderAssetUsages;
 
-use super::{BlockType, Chunk, CHUNK_SIZE};
 use super::texture_atlas;
+use super::{BlockType, CHUNK_SIZE, Chunk};
 
 /// Face direction for cube faces
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -69,10 +69,10 @@ pub fn block_color(block: BlockType) -> [f32; 4] {
         BlockType::Cactus => [0.25, 0.55, 0.2, 1.0],
         BlockType::SandDunes => [0.85, 0.78, 0.55, 1.0],
         // Ores - base stone color with hint of ore
-        BlockType::CopperOre => [0.55, 0.42, 0.35, 1.0],  // Orange-brown tint
-        BlockType::IronOre => [0.45, 0.40, 0.38, 1.0],    // Dark grey-brown tint
-        BlockType::SilverOre => [0.65, 0.68, 0.72, 1.0],  // Silver-blue tint
-        BlockType::GoldOre => [0.65, 0.55, 0.30, 1.0],    // Golden tint
+        BlockType::CopperOre => [0.55, 0.42, 0.35, 1.0], // Orange-brown tint
+        BlockType::IronOre => [0.45, 0.40, 0.38, 1.0],   // Dark grey-brown tint
+        BlockType::SilverOre => [0.65, 0.68, 0.72, 1.0], // Silver-blue tint
+        BlockType::GoldOre => [0.65, 0.55, 0.30, 1.0],   // Golden tint
     }
 }
 
@@ -108,8 +108,7 @@ pub fn biome_grass_tint(world_x: f32, world_z: f32) -> [f32; 3] {
     let sz = world_z * scale;
 
     // Two overlapping waves for organic, non-axis-aligned variation
-    let raw = (sx * 0.7 + sz * 0.3).sin() * 0.5 + 0.5
-        + (sx * 0.3 - sz * 0.8).cos() * 0.25;
+    let raw = (sx * 0.7 + sz * 0.3).sin() * 0.5 + 0.5 + (sx * 0.3 - sz * 0.8).cos() * 0.25;
     let temp = raw.clamp(0.0, 1.0);
 
     // Temperature â†’ color multiplier
@@ -225,14 +224,16 @@ fn add_face(
 
     let face_uvs: [[f32; 2]; 4] = if let Some(ac) = atlas {
         let tile = texture_atlas::block_face_texture(block_type, face);
-        texture_atlas::face_uvs_atlas(tile, ac.tiles_per_row, ac.tile_size, ac.atlas_size, 1.0, 1.0)
+        texture_atlas::face_uvs_atlas(
+            tile,
+            ac.tiles_per_row,
+            ac.tile_size,
+            ac.atlas_size,
+            1.0,
+            1.0,
+        )
     } else {
-        [
-            [0.0, 0.0],
-            [1.0, 0.0],
-            [1.0, 1.0],
-            [0.0, 1.0],
-        ]
+        [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]]
     };
 
     // When atlas is active, vertex color is white so only AO darkens.
@@ -381,14 +382,16 @@ fn add_greedy_face(
 
     let face_uvs: [[f32; 2]; 4] = if let Some(ac) = atlas {
         let tile = texture_atlas::block_face_texture(block_type, face);
-        texture_atlas::face_uvs_atlas(tile, ac.tiles_per_row, ac.tile_size, ac.atlas_size, quad_w, quad_h)
+        texture_atlas::face_uvs_atlas(
+            tile,
+            ac.tiles_per_row,
+            ac.tile_size,
+            ac.atlas_size,
+            quad_w,
+            quad_h,
+        )
     } else {
-        [
-            [0.0, 0.0],
-            [quad_w, 0.0],
-            [quad_w, quad_h],
-            [0.0, quad_h],
-        ]
+        [[0.0, 0.0], [quad_w, 0.0], [quad_w, quad_h], [0.0, quad_h]]
     };
 
     // When atlas is active, vertex color is white so only AO darkens.
@@ -541,22 +544,22 @@ pub fn compute_face_ao(chunk: &Chunk, x: usize, y: usize, z: usize, face: Face) 
 
     // Tangent axes spanning the face plane.
     let (t1, t2): ((i32, i32, i32), (i32, i32, i32)) = match face {
-        Face::Top =>    ((1, 0, 0), (0, 0, 1)),
+        Face::Top => ((1, 0, 0), (0, 0, 1)),
         Face::Bottom => ((1, 0, 0), (0, 0, 1)),
-        Face::North =>  ((1, 0, 0), (0, 1, 0)),
-        Face::South =>  ((1, 0, 0), (0, 1, 0)),
-        Face::East =>   ((0, 0, 1), (0, 1, 0)),
-        Face::West =>   ((0, 0, 1), (0, 1, 0)),
+        Face::North => ((1, 0, 0), (0, 1, 0)),
+        Face::South => ((1, 0, 0), (0, 1, 0)),
+        Face::East => ((0, 0, 1), (0, 1, 0)),
+        Face::West => ((0, 0, 1), (0, 1, 0)),
     };
 
     // (s1, s2) pairs matching the vertex winding order in add_face for each face.
     let corners: [(i32, i32); 4] = match face {
-        Face::Top =>    [(-1, -1), ( 1, -1), ( 1,  1), (-1,  1)],
-        Face::Bottom => [(-1,  1), ( 1,  1), ( 1, -1), (-1, -1)],
-        Face::North =>  [(-1, -1), (-1,  1), ( 1,  1), ( 1, -1)],
-        Face::South =>  [( 1, -1), ( 1,  1), (-1,  1), (-1, -1)],
-        Face::East =>   [( 1, -1), ( 1,  1), (-1,  1), (-1, -1)],
-        Face::West =>   [(-1, -1), (-1,  1), ( 1,  1), ( 1, -1)],
+        Face::Top => [(-1, -1), (1, -1), (1, 1), (-1, 1)],
+        Face::Bottom => [(-1, 1), (1, 1), (1, -1), (-1, -1)],
+        Face::North => [(-1, -1), (-1, 1), (1, 1), (1, -1)],
+        Face::South => [(1, -1), (1, 1), (-1, 1), (-1, -1)],
+        Face::East => [(1, -1), (1, 1), (-1, 1), (-1, -1)],
+        Face::West => [(-1, -1), (-1, 1), (1, 1), (1, -1)],
     };
 
     let mut ao = [0u8; 4];
@@ -574,7 +577,6 @@ pub fn compute_face_ao(chunk: &Chunk, x: usize, y: usize, z: usize, face: Face) 
     ao
 }
 
-
 // â”€â”€ Cross-Chunk Neighbor Data â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 /// Block data from neighboring chunks for cross-chunk face culling.
@@ -584,12 +586,12 @@ pub fn compute_face_ao(chunk: &Chunk, x: usize, y: usize, z: usize, face: Face) 
 ///
 /// The flat array uses Chunk-native indexing: `x + y * CHUNK_SIZE + z * CHUNK_SIZE * CHUNK_SIZE`.
 pub struct ChunkNeighbors {
-    pub pos_x: Option<Vec<BlockType>>,  // +X neighbor
-    pub neg_x: Option<Vec<BlockType>>,  // -X neighbor
-    pub pos_y: Option<Vec<BlockType>>,  // +Y neighbor
-    pub neg_y: Option<Vec<BlockType>>,  // -Y neighbor
-    pub pos_z: Option<Vec<BlockType>>,  // +Z neighbor
-    pub neg_z: Option<Vec<BlockType>>,  // -Z neighbor
+    pub pos_x: Option<Vec<BlockType>>, // +X neighbor
+    pub neg_x: Option<Vec<BlockType>>, // -X neighbor
+    pub pos_y: Option<Vec<BlockType>>, // +Y neighbor
+    pub neg_y: Option<Vec<BlockType>>, // -Y neighbor
+    pub pos_z: Option<Vec<BlockType>>, // +Z neighbor
+    pub neg_z: Option<Vec<BlockType>>, // -Z neighbor
 }
 
 impl ChunkNeighbors {
@@ -597,9 +599,12 @@ impl ChunkNeighbors {
     #[allow(dead_code)]
     pub fn empty() -> Self {
         Self {
-            pos_x: None, neg_x: None,
-            pos_y: None, neg_y: None,
-            pos_z: None, neg_z: None,
+            pos_x: None,
+            neg_x: None,
+            pos_y: None,
+            neg_y: None,
+            pos_z: None,
+            neg_z: None,
         }
     }
 }
@@ -615,7 +620,9 @@ fn get_block_from_data(data: &[BlockType], x: usize, y: usize, z: usize) -> Bloc
 fn get_block_with_neighbors(
     chunk: &Chunk,
     neighbors: &ChunkNeighbors,
-    x: i32, y: i32, z: i32,
+    x: i32,
+    y: i32,
+    z: i32,
 ) -> BlockType {
     let cs = CHUNK_SIZE as i32;
     if x >= 0 && x < cs && y >= 0 && y < cs && z >= 0 && z < cs {
@@ -629,32 +636,44 @@ fn get_block_with_neighbors(
         return BlockType::Air;
     }
     if x < 0 {
-        return neighbors.neg_x.as_ref()
+        return neighbors
+            .neg_x
+            .as_ref()
             .map(|d| get_block_from_data(d, CHUNK_SIZE - 1, y as usize, z as usize))
             .unwrap_or(BlockType::Air);
     }
     if x >= cs {
-        return neighbors.pos_x.as_ref()
+        return neighbors
+            .pos_x
+            .as_ref()
             .map(|d| get_block_from_data(d, 0, y as usize, z as usize))
             .unwrap_or(BlockType::Air);
     }
     if y < 0 {
-        return neighbors.neg_y.as_ref()
+        return neighbors
+            .neg_y
+            .as_ref()
             .map(|d| get_block_from_data(d, x as usize, CHUNK_SIZE - 1, z as usize))
             .unwrap_or(BlockType::Air);
     }
     if y >= cs {
-        return neighbors.pos_y.as_ref()
+        return neighbors
+            .pos_y
+            .as_ref()
             .map(|d| get_block_from_data(d, x as usize, 0, z as usize))
             .unwrap_or(BlockType::Air);
     }
     if z < 0 {
-        return neighbors.neg_z.as_ref()
+        return neighbors
+            .neg_z
+            .as_ref()
             .map(|d| get_block_from_data(d, x as usize, y as usize, CHUNK_SIZE - 1))
             .unwrap_or(BlockType::Air);
     }
     if z >= cs {
-        return neighbors.pos_z.as_ref()
+        return neighbors
+            .pos_z
+            .as_ref()
             .map(|d| get_block_from_data(d, x as usize, y as usize, 0))
             .unwrap_or(BlockType::Air);
     }
@@ -662,40 +681,67 @@ fn get_block_with_neighbors(
 }
 
 /// Check if opaque, with cross-chunk neighbor lookups.
-fn is_opaque_with_neighbors(chunk: &Chunk, neighbors: &ChunkNeighbors, x: i32, y: i32, z: i32) -> bool {
+fn is_opaque_with_neighbors(
+    chunk: &Chunk,
+    neighbors: &ChunkNeighbors,
+    x: i32,
+    y: i32,
+    z: i32,
+) -> bool {
     !get_block_with_neighbors(chunk, neighbors, x, y, z).is_transparent()
 }
 
 /// Compute AO for a face with cross-chunk neighbor lookups.
 pub fn compute_face_ao_with_neighbors(
-    chunk: &Chunk, neighbors: &ChunkNeighbors,
-    x: usize, y: usize, z: usize, face: Face,
+    chunk: &Chunk,
+    neighbors: &ChunkNeighbors,
+    x: usize,
+    y: usize,
+    z: usize,
+    face: Face,
 ) -> [u8; 4] {
     let (bx, by, bz) = (x as i32, y as i32, z as i32);
     let (nx, ny, nz) = face.offset();
     let (fx, fy, fz) = (bx + nx, by + ny, bz + nz);
     let (t1, t2): ((i32, i32, i32), (i32, i32, i32)) = match face {
-        Face::Top =>    ((1, 0, 0), (0, 0, 1)),
+        Face::Top => ((1, 0, 0), (0, 0, 1)),
         Face::Bottom => ((1, 0, 0), (0, 0, 1)),
-        Face::North =>  ((1, 0, 0), (0, 1, 0)),
-        Face::South =>  ((1, 0, 0), (0, 1, 0)),
-        Face::East =>   ((0, 0, 1), (0, 1, 0)),
-        Face::West =>   ((0, 0, 1), (0, 1, 0)),
+        Face::North => ((1, 0, 0), (0, 1, 0)),
+        Face::South => ((1, 0, 0), (0, 1, 0)),
+        Face::East => ((0, 0, 1), (0, 1, 0)),
+        Face::West => ((0, 0, 1), (0, 1, 0)),
     };
     let corners: [(i32, i32); 4] = match face {
-        Face::Top =>    [(-1, -1), ( 1, -1), ( 1,  1), (-1,  1)],
-        Face::Bottom => [(-1,  1), ( 1,  1), ( 1, -1), (-1, -1)],
-        Face::North =>  [(-1, -1), (-1,  1), ( 1,  1), ( 1, -1)],
-        Face::South =>  [( 1, -1), ( 1,  1), (-1,  1), (-1, -1)],
-        Face::East =>   [( 1, -1), ( 1,  1), (-1,  1), (-1, -1)],
-        Face::West =>   [(-1, -1), (-1,  1), ( 1,  1), ( 1, -1)],
+        Face::Top => [(-1, -1), (1, -1), (1, 1), (-1, 1)],
+        Face::Bottom => [(-1, 1), (1, 1), (1, -1), (-1, -1)],
+        Face::North => [(-1, -1), (-1, 1), (1, 1), (1, -1)],
+        Face::South => [(1, -1), (1, 1), (-1, 1), (-1, -1)],
+        Face::East => [(1, -1), (1, 1), (-1, 1), (-1, -1)],
+        Face::West => [(-1, -1), (-1, 1), (1, 1), (1, -1)],
     };
     let mut ao = [0u8; 4];
     for (i, &(s1, s2)) in corners.iter().enumerate() {
-        let side1 = is_opaque_with_neighbors(chunk, neighbors, fx + s1 * t1.0, fy + s1 * t1.1, fz + s1 * t1.2);
-        let side2 = is_opaque_with_neighbors(chunk, neighbors, fx + s2 * t2.0, fy + s2 * t2.1, fz + s2 * t2.2);
-        let corner = is_opaque_with_neighbors(chunk, neighbors,
-            fx + s1 * t1.0 + s2 * t2.0, fy + s1 * t1.1 + s2 * t2.1, fz + s1 * t1.2 + s2 * t2.2);
+        let side1 = is_opaque_with_neighbors(
+            chunk,
+            neighbors,
+            fx + s1 * t1.0,
+            fy + s1 * t1.1,
+            fz + s1 * t1.2,
+        );
+        let side2 = is_opaque_with_neighbors(
+            chunk,
+            neighbors,
+            fx + s2 * t2.0,
+            fy + s2 * t2.1,
+            fz + s2 * t2.2,
+        );
+        let corner = is_opaque_with_neighbors(
+            chunk,
+            neighbors,
+            fx + s1 * t1.0 + s2 * t2.0,
+            fy + s1 * t1.1 + s2 * t2.1,
+            fz + s1 * t1.2 + s2 * t2.2,
+        );
         ao[i] = vertex_ao(side1, side2, corner);
     }
     ao
@@ -713,7 +759,9 @@ pub fn compute_face_ao_with_neighbors(
 /// `AlphaMode::Blend` for transparency. This split prevents the see-through
 /// terrain artifacts caused by rendering everything in the transparent pass.
 pub fn build_chunk_mesh_with_neighbors(
-    chunk: &Chunk, atlas: Option<AtlasConfig>, neighbors: &ChunkNeighbors,
+    chunk: &Chunk,
+    atlas: Option<AtlasConfig>,
+    neighbors: &ChunkNeighbors,
 ) -> (Mesh, Option<Mesh>) {
     build_chunk_mesh_neighbors_inner(chunk, atlas, neighbors)
 }
@@ -726,7 +774,9 @@ pub fn build_chunk_mesh_with_neighbors(
 /// uses `AlphaMode::Opaque` for reliable depth writes.
 #[allow(clippy::needless_range_loop)]
 fn build_chunk_mesh_neighbors_inner(
-    chunk: &Chunk, atlas: Option<AtlasConfig>, neighbors: &ChunkNeighbors,
+    chunk: &Chunk,
+    atlas: Option<AtlasConfig>,
+    neighbors: &ChunkNeighbors,
 ) -> (Mesh, Option<Mesh>) {
     let world_offset = chunk.world_position();
 
@@ -746,7 +796,14 @@ fn build_chunk_mesh_neighbors_inner(
     let mut w_uv1s: Vec<[f32; 2]> = Vec::new();
     let mut w_indices: Vec<u32> = Vec::new();
 
-    let faces = [Face::Top, Face::Bottom, Face::North, Face::South, Face::East, Face::West];
+    let faces = [
+        Face::Top,
+        Face::Bottom,
+        Face::North,
+        Face::South,
+        Face::East,
+        Face::West,
+    ];
     for face in faces {
         for slice in 0..CHUNK_SIZE {
             let mut mask: [[Option<(BlockType, [u8; 4])>; CHUNK_SIZE]; CHUNK_SIZE] =
@@ -759,7 +816,9 @@ fn build_chunk_mesh_neighbors_inner(
                         Face::East | Face::West => (slice, v, u),
                     };
                     let block = chunk.get_block(x, y, z);
-                    if block == BlockType::Air { continue; }
+                    if block == BlockType::Air {
+                        continue;
+                    }
                     let (ox, oy, oz) = face.offset();
                     let (nx, ny, nz) = (x as i32 + ox, y as i32 + oy, z as i32 + oz);
                     let neighbor = get_block_with_neighbors(chunk, neighbors, nx, ny, nz);
@@ -772,19 +831,29 @@ fn build_chunk_mesh_neighbors_inner(
             let mut visited = [[false; CHUNK_SIZE]; CHUNK_SIZE];
             for v in 0..CHUNK_SIZE {
                 for u in 0..CHUNK_SIZE {
-                    if visited[v][u] || mask[v][u].is_none() { continue; }
+                    if visited[v][u] || mask[v][u].is_none() {
+                        continue;
+                    }
                     let (block_type, ao) = mask[v][u].unwrap();
                     let key = (block_type, ao);
                     let mut w = 1usize;
-                    while u + w < CHUNK_SIZE && !visited[v][u + w] && mask[v][u + w] == Some(key) { w += 1; }
+                    while u + w < CHUNK_SIZE && !visited[v][u + w] && mask[v][u + w] == Some(key) {
+                        w += 1;
+                    }
                     let mut h = 1usize;
                     'expand_v: while v + h < CHUNK_SIZE {
                         for du in 0..w {
-                            if visited[v + h][u + du] || mask[v + h][u + du] != Some(key) { break 'expand_v; }
+                            if visited[v + h][u + du] || mask[v + h][u + du] != Some(key) {
+                                break 'expand_v;
+                            }
                         }
                         h += 1;
                     }
-                    for dv in 0..h { for du in 0..w { visited[v + dv][u + du] = true; } }
+                    for dv in 0..h {
+                        for du in 0..w {
+                            visited[v + dv][u + du] = true;
+                        }
+                    }
                     let (x, y, z) = match face {
                         Face::Top | Face::Bottom => (u, slice, v),
                         Face::North | Face::South => (u, v, slice),
@@ -795,17 +864,43 @@ fn build_chunk_mesh_neighbors_inner(
                     // Route water faces to the water mesh buffers
                     if block_type == BlockType::Water {
                         add_greedy_face(
-                            &mut w_positions, &mut w_normals, &mut w_colors,
-                            &mut w_uvs, &mut w_uv1s, &mut w_indices,
-                            x as f32, y as f32, z as f32, w as f32, h as f32,
-                            face, color, ao, atlas, block_type, world_offset,
+                            &mut w_positions,
+                            &mut w_normals,
+                            &mut w_colors,
+                            &mut w_uvs,
+                            &mut w_uv1s,
+                            &mut w_indices,
+                            x as f32,
+                            y as f32,
+                            z as f32,
+                            w as f32,
+                            h as f32,
+                            face,
+                            color,
+                            ao,
+                            atlas,
+                            block_type,
+                            world_offset,
                         );
                     } else {
                         add_greedy_face(
-                            &mut positions, &mut normals, &mut colors,
-                            &mut uvs, &mut uv1s, &mut indices,
-                            x as f32, y as f32, z as f32, w as f32, h as f32,
-                            face, color, ao, atlas, block_type, world_offset,
+                            &mut positions,
+                            &mut normals,
+                            &mut colors,
+                            &mut uvs,
+                            &mut uv1s,
+                            &mut indices,
+                            x as f32,
+                            y as f32,
+                            z as f32,
+                            w as f32,
+                            h as f32,
+                            face,
+                            color,
+                            ao,
+                            atlas,
+                            block_type,
+                            world_offset,
                         );
                     }
                 }
@@ -814,22 +909,32 @@ fn build_chunk_mesh_neighbors_inner(
     }
 
     // Build opaque mesh
-    let mut mesh = Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::default());
+    let mut mesh = Mesh::new(
+        PrimitiveTopology::TriangleList,
+        RenderAssetUsages::default(),
+    );
     mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
     mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, normals);
     mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, colors);
     mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, uvs);
-    if atlas.is_some() { mesh.insert_attribute(Mesh::ATTRIBUTE_UV_1, uv1s); }
+    if atlas.is_some() {
+        mesh.insert_attribute(Mesh::ATTRIBUTE_UV_1, uv1s);
+    }
     mesh.insert_indices(Indices::U32(indices));
 
     // Build water mesh (only if there are water faces)
     let water_mesh = if !w_positions.is_empty() {
-        let mut wm = Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::default());
+        let mut wm = Mesh::new(
+            PrimitiveTopology::TriangleList,
+            RenderAssetUsages::default(),
+        );
         wm.insert_attribute(Mesh::ATTRIBUTE_POSITION, w_positions);
         wm.insert_attribute(Mesh::ATTRIBUTE_NORMAL, w_normals);
         wm.insert_attribute(Mesh::ATTRIBUTE_COLOR, w_colors);
         wm.insert_attribute(Mesh::ATTRIBUTE_UV_0, w_uvs);
-        if atlas.is_some() { wm.insert_attribute(Mesh::ATTRIBUTE_UV_1, w_uv1s); }
+        if atlas.is_some() {
+            wm.insert_attribute(Mesh::ATTRIBUTE_UV_1, w_uv1s);
+        }
         wm.insert_indices(Indices::U32(w_indices));
         Some(wm)
     } else {
@@ -946,10 +1051,7 @@ fn build_chunk_mesh_inner(chunk: &Chunk, atlas: Option<AtlasConfig>) -> Mesh {
 
                     // Expand width in the u-direction
                     let mut w = 1usize;
-                    while u + w < CHUNK_SIZE
-                        && !visited[v][u + w]
-                        && mask[v][u + w] == Some(key)
-                    {
+                    while u + w < CHUNK_SIZE && !visited[v][u + w] && mask[v][u + w] == Some(key) {
                         w += 1;
                     }
 
@@ -957,9 +1059,7 @@ fn build_chunk_mesh_inner(chunk: &Chunk, atlas: Option<AtlasConfig>) -> Mesh {
                     let mut h = 1usize;
                     'expand_v: while v + h < CHUNK_SIZE {
                         for du in 0..w {
-                            if visited[v + h][u + du]
-                                || mask[v + h][u + du] != Some(key)
-                            {
+                            if visited[v + h][u + du] || mask[v + h][u + du] != Some(key) {
                                 break 'expand_v;
                             }
                         }
@@ -1007,7 +1107,10 @@ fn build_chunk_mesh_inner(chunk: &Chunk, atlas: Option<AtlasConfig>) -> Mesh {
     }
 
     // Create the mesh
-    let mut mesh = Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::default());
+    let mut mesh = Mesh::new(
+        PrimitiveTopology::TriangleList,
+        RenderAssetUsages::default(),
+    );
 
     mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
     mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, normals);
@@ -1122,7 +1225,10 @@ fn build_chunk_mesh_naive_inner(chunk: &Chunk, atlas: Option<AtlasConfig>) -> Me
     }
 
     // Create the mesh
-    let mut mesh = Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::default());
+    let mut mesh = Mesh::new(
+        PrimitiveTopology::TriangleList,
+        RenderAssetUsages::default(),
+    );
 
     mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
     mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, normals);
@@ -1223,9 +1329,21 @@ mod tests {
         let mut chunk = Chunk::new(IVec3::ZERO);
         chunk.set_block(8, 8, 8, BlockType::Stone);
 
-        for face in [Face::Top, Face::Bottom, Face::North, Face::South, Face::East, Face::West] {
+        for face in [
+            Face::Top,
+            Face::Bottom,
+            Face::North,
+            Face::South,
+            Face::East,
+            Face::West,
+        ] {
             let ao = compute_face_ao(&chunk, 8, 8, 8, face);
-            assert_eq!(ao, [0, 0, 0, 0], "isolated block face {:?} should have zero AO", face);
+            assert_eq!(
+                ao,
+                [0, 0, 0, 0],
+                "isolated block face {:?} should have zero AO",
+                face
+            );
         }
     }
 
@@ -1246,7 +1364,12 @@ mod tests {
         let ao = compute_face_ao(&chunk, 8, 8, 8, Face::Top);
         // All 4 vertices should see surrounding blocks and have AO > 0
         for (i, &val) in ao.iter().enumerate() {
-            assert!(val > 0, "vertex {} of surrounded top face should have AO > 0, got {}", i, val);
+            assert!(
+                val > 0,
+                "vertex {} of surrounded top face should have AO > 0, got {}",
+                i,
+                val
+            );
         }
     }
 
@@ -1433,7 +1556,11 @@ mod tests {
         let mut chunk = Chunk::new(IVec3::ZERO);
         for x in 0..CHUNK_SIZE {
             for z in 0..CHUNK_SIZE {
-                let block = if (x + z) % 2 == 0 { BlockType::Stone } else { BlockType::Dirt };
+                let block = if (x + z) % 2 == 0 {
+                    BlockType::Stone
+                } else {
+                    BlockType::Dirt
+                };
                 chunk.set_block(x, 0, z, block);
             }
         }
@@ -1465,7 +1592,10 @@ mod tests {
 
         assert_eq!(nv, 2304);
         // Greedy with AO still provides significant reduction
-        assert!(gv < nv / 2, "greedy ({gv}) should be much less than naive ({nv})");
+        assert!(
+            gv < nv / 2,
+            "greedy ({gv}) should be much less than naive ({nv})"
+        );
     }
 
     // ==================================================================
@@ -1484,7 +1614,11 @@ mod tests {
         let uv_attr = mesh
             .attribute(Mesh::ATTRIBUTE_UV_0)
             .expect("naive mesh should have UV_0 attribute");
-        assert_eq!(uv_attr.len(), vert_count, "UV count must equal vertex count");
+        assert_eq!(
+            uv_attr.len(),
+            vert_count,
+            "UV count must equal vertex count"
+        );
     }
 
     #[test]
@@ -1499,7 +1633,11 @@ mod tests {
         let uv_attr = mesh
             .attribute(Mesh::ATTRIBUTE_UV_0)
             .expect("greedy mesh should have UV_0 attribute");
-        assert_eq!(uv_attr.len(), vert_count, "UV count must equal vertex count");
+        assert_eq!(
+            uv_attr.len(),
+            vert_count,
+            "UV count must equal vertex count"
+        );
     }
 
     #[test]
@@ -1516,8 +1654,14 @@ mod tests {
             let max_v = uv_data.iter().map(|uv| uv[1]).fold(0.0_f32, f32::max);
 
             // Interior blocks share AO=[0,0,0,0] and merge into large quads
-            assert!(max_u > 1.0, "max U should be > 1.0 for merged quads, got {max_u}");
-            assert!(max_v > 1.0, "max V should be > 1.0 for merged quads, got {max_v}");
+            assert!(
+                max_u > 1.0,
+                "max U should be > 1.0 for merged quads, got {max_u}"
+            );
+            assert!(
+                max_v > 1.0,
+                "max V should be > 1.0 for merged quads, got {max_v}"
+            );
         } else {
             panic!("UV_0 attribute missing or wrong type");
         }
@@ -1538,17 +1682,37 @@ mod tests {
                 assert_eq!(uv_data.len(), 24, "{label}: expected 24 UVs");
 
                 for uv in uv_data {
-                    assert!(uv[0] >= 0.0 && uv[0] <= 1.0, "{label}: U out of range: {}", uv[0]);
-                    assert!(uv[1] >= 0.0 && uv[1] <= 1.0, "{label}: V out of range: {}", uv[1]);
+                    assert!(
+                        uv[0] >= 0.0 && uv[0] <= 1.0,
+                        "{label}: U out of range: {}",
+                        uv[0]
+                    );
+                    assert!(
+                        uv[1] >= 0.0 && uv[1] <= 1.0,
+                        "{label}: V out of range: {}",
+                        uv[1]
+                    );
                 }
 
                 for face_idx in 0..6 {
                     let base = face_idx * 4;
                     let face_uvs: Vec<[f32; 2]> = uv_data[base..base + 4].to_vec();
-                    assert!(face_uvs.contains(&[0.0, 0.0]), "{label} face {face_idx}: missing [0,0]");
-                    assert!(face_uvs.contains(&[1.0, 0.0]), "{label} face {face_idx}: missing [1,0]");
-                    assert!(face_uvs.contains(&[1.0, 1.0]), "{label} face {face_idx}: missing [1,1]");
-                    assert!(face_uvs.contains(&[0.0, 1.0]), "{label} face {face_idx}: missing [0,1]");
+                    assert!(
+                        face_uvs.contains(&[0.0, 0.0]),
+                        "{label} face {face_idx}: missing [0,0]"
+                    );
+                    assert!(
+                        face_uvs.contains(&[1.0, 0.0]),
+                        "{label} face {face_idx}: missing [1,0]"
+                    );
+                    assert!(
+                        face_uvs.contains(&[1.0, 1.0]),
+                        "{label} face {face_idx}: missing [1,1]"
+                    );
+                    assert!(
+                        face_uvs.contains(&[0.0, 1.0]),
+                        "{label} face {face_idx}: missing [0,1]"
+                    );
                 }
             } else {
                 panic!("{label}: UV_0 attribute missing or wrong type");
@@ -1673,7 +1837,11 @@ mod tests {
             textured.attribute(Mesh::ATTRIBUTE_COLOR)
         {
             for c in colors {
-                assert_eq!(*c, [1.0, 1.0, 1.0, 1.0], "atlas mode should use white vertex colors");
+                assert_eq!(
+                    *c,
+                    [1.0, 1.0, 1.0, 1.0],
+                    "atlas mode should use white vertex colors"
+                );
             }
         } else {
             panic!("COLOR attribute missing");
@@ -1700,10 +1868,18 @@ mod tests {
             // Stone = tile 0, so UVs should be within [0, 1/16] range
             let tile_uv = 1.0 / 16.0_f32;
             for uv in uv_data {
-                assert!(uv[0] >= -1e-6 && uv[0] <= tile_uv + 1e-6,
-                    "Stone tile 0 U should be in [0, {}], got {}", tile_uv, uv[0]);
-                assert!(uv[1] >= -1e-6 && uv[1] <= tile_uv + 1e-6,
-                    "Stone tile 0 V should be in [0, {}], got {}", tile_uv, uv[1]);
+                assert!(
+                    uv[0] >= -1e-6 && uv[0] <= tile_uv + 1e-6,
+                    "Stone tile 0 U should be in [0, {}], got {}",
+                    tile_uv,
+                    uv[0]
+                );
+                assert!(
+                    uv[1] >= -1e-6 && uv[1] <= tile_uv + 1e-6,
+                    "Stone tile 0 V should be in [0, {}], got {}",
+                    tile_uv,
+                    uv[1]
+                );
             }
         } else {
             panic!("UV_0 attribute missing");
@@ -1833,7 +2009,10 @@ mod tests {
             // Collect unique UV1 values
             let mut unique: Vec<[f32; 2]> = Vec::new();
             for uv1 in uv1_data {
-                if !unique.iter().any(|u| (u[0] - uv1[0]).abs() < 1e-6 && (u[1] - uv1[1]).abs() < 1e-6) {
+                if !unique
+                    .iter()
+                    .any(|u| (u[0] - uv1[0]).abs() < 1e-6 && (u[1] - uv1[1]).abs() < 1e-6)
+                {
                     unique.push(*uv1);
                 }
             }
@@ -1848,14 +2027,18 @@ mod tests {
 
             // Grass top = tile 2 â†’ (2, 0)
             assert!(
-                unique.iter().any(|u| (u[0] - 2.0).abs() < 1e-6 && u[1].abs() < 1e-6),
+                unique
+                    .iter()
+                    .any(|u| (u[0] - 2.0).abs() < 1e-6 && u[1].abs() < 1e-6),
                 "Grass should have tile (2, 0) for top face, unique tiles: {:?}",
                 unique
             );
 
             // Grass side = tile 3 â†’ (3, 0)
             assert!(
-                unique.iter().any(|u| (u[0] - 3.0).abs() < 1e-6 && u[1].abs() < 1e-6),
+                unique
+                    .iter()
+                    .any(|u| (u[0] - 3.0).abs() < 1e-6 && u[1].abs() < 1e-6),
                 "Grass should have tile (3, 0) for side faces, unique tiles: {:?}",
                 unique
             );
@@ -2031,9 +2214,8 @@ mod tests {
             pos_z: None,
             neg_z: None,
         };
-        let ao_with = compute_face_ao_with_neighbors(
-            &chunk, &neighbors, CHUNK_SIZE - 1, 0, 0, Face::Top,
-        );
+        let ao_with =
+            compute_face_ao_with_neighbors(&chunk, &neighbors, CHUNK_SIZE - 1, 0, 0, Face::Top);
 
         assert_ne!(
             ao_without, ao_with,

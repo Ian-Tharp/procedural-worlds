@@ -182,12 +182,8 @@ pub fn collect_needed_chunks_sorted(
                     continue;
                 }
 
-                let score = compute_priority_score(
-                    chunk_pos,
-                    player_chunk,
-                    forward_dir,
-                    direction_weight,
-                );
+                let score =
+                    compute_priority_score(chunk_pos, player_chunk, forward_dir, direction_weight);
 
                 scored.push(ScoredChunk {
                     position: chunk_pos,
@@ -198,7 +194,11 @@ pub fn collect_needed_chunks_sorted(
     }
 
     // Sort by score ascending (lowest = highest priority)
-    scored.sort_by(|a, b| a.score.partial_cmp(&b.score).unwrap_or(std::cmp::Ordering::Equal));
+    scored.sort_by(|a, b| {
+        a.score
+            .partial_cmp(&b.score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
 
     scored
 }
@@ -229,7 +229,10 @@ mod tests {
         let near = compute_priority_score(IVec3::new(1, 0, 0), player, forward, 0.5);
         let far = compute_priority_score(IVec3::new(5, 0, 0), player, forward, 0.5);
 
-        assert!(near < far, "Nearer chunks should have lower scores: near={near}, far={far}");
+        assert!(
+            near < far,
+            "Nearer chunks should have lower scores: near={near}, far={far}"
+        );
     }
 
     #[test]
@@ -330,7 +333,10 @@ mod tests {
         // Chunk behind (+X direction)
         let behind = compute_priority_score(IVec3::new(-2, 0, -5), player, forward, 0.5);
 
-        assert!(front < behind, "Forward chunk should score lower in negative coords");
+        assert!(
+            front < behind,
+            "Forward chunk should score lower in negative coords"
+        );
     }
 
     // --- collect_needed_chunks_sorted tests ---
@@ -345,19 +351,22 @@ mod tests {
         pending.insert(IVec3::new(-1, 0, 0));
 
         let sorted = collect_needed_chunks_sorted(
-            player,
-            1,    // load_distance
+            player, 1,    // load_distance
             0,    // vert_down
             0,    // vert_up
             None, // no direction
-            0.5,
-            &loaded,
-            &pending,
+            0.5, &loaded, &pending,
         );
 
         let positions: HashSet<IVec3> = sorted.iter().map(|s| s.position).collect();
-        assert!(!positions.contains(&IVec3::new(1, 0, 0)), "Should exclude loaded");
-        assert!(!positions.contains(&IVec3::new(-1, 0, 0)), "Should exclude pending");
+        assert!(
+            !positions.contains(&IVec3::new(1, 0, 0)),
+            "Should exclude loaded"
+        );
+        assert!(
+            !positions.contains(&IVec3::new(-1, 0, 0)),
+            "Should exclude pending"
+        );
     }
 
     #[test]
@@ -429,16 +438,8 @@ mod tests {
         let loaded = HashSet::new();
         let pending = HashSet::new();
 
-        let sorted = collect_needed_chunks_sorted(
-            player,
-            2,
-            0,
-            0,
-            Some(Vec3::X),
-            0.5,
-            &loaded,
-            &pending,
-        );
+        let sorted =
+            collect_needed_chunks_sorted(player, 2, 0, 0, Some(Vec3::X), 0.5, &loaded, &pending);
 
         assert!(!sorted.is_empty());
         assert_eq!(
@@ -455,14 +456,9 @@ mod tests {
         let pending = HashSet::new();
 
         let sorted = collect_needed_chunks_sorted(
-            player,
-            1,
-            2, // vert_down
+            player, 1, 2, // vert_down
             3, // vert_up
-            None,
-            0.5,
-            &loaded,
-            &pending,
+            None, 0.5, &loaded, &pending,
         );
 
         // Horizontal: 3x3 = 9 positions, vertical: -2..=3 = 6 layers → 54 total
@@ -487,16 +483,7 @@ mod tests {
             }
         }
 
-        let sorted = collect_needed_chunks_sorted(
-            player,
-            1,
-            0,
-            0,
-            None,
-            0.5,
-            &loaded,
-            &pending,
-        );
+        let sorted = collect_needed_chunks_sorted(player, 1, 0, 0, None, 0.5, &loaded, &pending);
 
         assert!(sorted.is_empty(), "All chunks loaded — nothing to collect");
     }
@@ -507,16 +494,7 @@ mod tests {
         let loaded = HashSet::new();
         let pending = HashSet::new();
 
-        let sorted = collect_needed_chunks_sorted(
-            player,
-            2,
-            0,
-            0,
-            None,
-            0.5,
-            &loaded,
-            &pending,
-        );
+        let sorted = collect_needed_chunks_sorted(player, 2, 0, 0, None, 0.5, &loaded, &pending);
 
         // 5x5 grid * 1 vertical layer = 25
         assert_eq!(sorted.len(), 25);
@@ -529,14 +507,8 @@ mod tests {
         let pending = HashSet::new();
 
         let sorted = collect_needed_chunks_sorted(
-            player,
-            3,
-            0,
-            0,
-            None, // no direction bias
-            0.5,
-            &loaded,
-            &pending,
+            player, 3, 0, 0, None, // no direction bias
+            0.5, &loaded, &pending,
         );
 
         // First chunk should be the player chunk (distance 0)
