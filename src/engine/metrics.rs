@@ -20,6 +20,7 @@
 
 use bevy::diagnostic::{DiagnosticsStore, FrameTimeDiagnosticsPlugin};
 use bevy::prelude::*;
+use bevy_egui::{egui, EguiContexts};
 
 use crate::engine::memory;
 
@@ -359,6 +360,173 @@ pub fn overlay_keyboard_input(
     }
 }
 
+/// Render the minimal F2 performance overlay.
+///
+/// This is a lightweight always-on-top display showing just FPS, memory,
+/// and chunk count with color-coded warning levels. Unlike the F8 dashboard,
+/// this overlay is designed to be minimally intrusive during gameplay.
+pub fn render_minimal_overlay(
+    mut contexts: EguiContexts,
+    overlay: Res<PerformanceOverlay>,
+    metrics: Res<PerformanceMetrics>,
+    thresholds: Res<PerformanceThresholds>,
+) {
+    if !overlay.visible {
+        return;
+    }
+
+    let warnings = metrics.warning_levels(&thresholds);
+
+    // Helper to convert WarningLevel to egui color
+    let level_color = |level: WarningLevel| -> egui::Color32 {
+        let (r, g, b) = level.to_rgb();
+        egui::Color32::from_rgb(r, g, b)
+    };
+
+    if overlay.compact {
+        // Compact mode: single-line overlay at the specified position
+        egui::Area::new(egui::Id::new("perf_overlay_compact"))
+            .fixed_pos(egui::pos2(overlay.x, overlay.y))
+            .order(egui::Order::Foreground)
+            .show(contexts.ctx_mut(), |ui| {
+                egui::Frame::none()
+                    .fill(egui::Color32::from_rgba_unmultiplied(0, 0, 0, 180))
+                    .inner_margin(egui::Margin::symmetric(8.0, 4.0))
+                    .rounding(egui::Rounding::same(4.0))
+                    .show(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            ui.spacing_mut().item_spacing.x = 12.0;
+
+                            if overlay.show_fps {
+                                ui.colored_label(
+                                    level_color(warnings.fps),
+                                    format!("{:.0} FPS", metrics.fps),
+                                );
+                            }
+
+                            if overlay.show_memory {
+                                ui.colored_label(
+                                    level_color(warnings.memory),
+                                    format!("{:.0} MB", metrics.memory_mb),
+                                );
+                            }
+
+                            if overlay.show_chunks {
+                                ui.label(format!("{} chunks", metrics.active_chunks));
+                            }
+                        });
+                    });
+            });
+    } else {
+        // Expanded mode: multi-line overlay with more detail
+        egui::Area::new(egui::Id::new("perf_overlay_expanded"))
+            .fixed_pos(egui::pos2(overlay.x, overlay.y))
+            .order(egui::Order::Foreground)
+            .show(contexts.ctx_mut(), |ui| {
+                egui::Frame::none()
+                    .fill(egui::Color32::from_rgba_unmultiplied(0, 0, 0, 200))
+                    .inner_margin(egui::Margin::symmetric(10.0, 8.0))
+                    .rounding(egui::Rounding::same(6.0))
+                    .show(ui, |ui| {
+                        // Title
+                        ui.horizontal(|ui| {
+                            ui.label(egui::RichText::new("⚡").size(12.0));
+                            ui.label(
+                                egui::RichText::new("Performance")
+                                    .small()
+                                    .color(egui::Color32::from_rgb(150, 150, 150)),
+                            );
+                        });
+
+                        ui.add_space(4.0);
+
+                        if overlay.show_fps {
+                            ui.horizontal(|ui| {
+                                // FPS with large colored number
+                                ui.colored_label(
+                                    level_color(warnings.fps),
+                                    egui::RichText::new(format!("{:.0}", metrics.fps))
+                                        .strong()
+                                        .size(18.0),
+                                );
+                                ui.label(
+                                    egui::RichText::new("FPS")
+                                        .small()
+                                        .color(egui::Color32::from_rgb(150, 150, 150)),
+                                );
+
+                                // Frame time in smaller text
+                                ui.label(
+                                    egui::RichText::new(format!("({:.1}ms)", metrics.frame_time_ms))
+                                        .small()
+                                        .color(level_color(warnings.frame_time)),
+                                );
+                            });
+                        }
+
+                        if overlay.show_memory {
+                            ui.horizontal(|ui| {
+                                ui.label("💾");
+                                ui.colored_label(
+                                    level_color(warnings.memory),
+                                    format!("{:.0} MB", metrics.memory_mb),
+                                );
+                                if let Some(peak) = metrics.peak_memory_mb {
+                                    ui.label(
+                                        egui::RichText::new(format!("(peak {:.0})", peak))
+                                            .small()
+                                            .color(egui::Color32::from_rgb(120, 120, 120)),
+                                    );
+                                }
+                            });
+                        }
+
+                        if overlay.show_chunks {
+                            ui.horizontal(|ui| {
+                                ui.label("📦");
+                                ui.label(format!("{} chunks", metrics.active_chunks));
+
+                                // Show chunks/sec if actively loading
+                                if metrics.chunks_per_second > 0.5 {
+                                    ui.label(
+                                        egui::RichText::new(format!(
+                                            "(+{:.1}/s)",
+                                            metrics.chunks_per_second
+                                        ))
+                                        .small()
+                                        .color(egui::Color32::from_rgb(100, 200, 255)),
+                                    );
+                                }
+                            });
+
+                            // Show avg load time if significant
+                            if metrics.avg_chunk_load_ms > 5.0 {
+                                ui.horizontal(|ui| {
+                                    ui.add_space(18.0); // Indent
+                                    ui.label(
+                                        egui::RichText::new(format!(
+                                            "load: {:.0}ms",
+                                            metrics.avg_chunk_load_ms
+                                        ))
+                                        .small()
+                                        .color(level_color(warnings.chunk_load)),
+                                    );
+                                });
+                            }
+                        }
+
+                        // Subtle hint at bottom
+                        ui.add_space(2.0);
+                        ui.label(
+                            egui::RichText::new("F2 hide | F8 dashboard")
+                                .small()
+                                .weak(),
+                        );
+                    });
+            });
+    }
+}
+
 // ============================================================================
 // Plugin
 // ============================================================================
@@ -375,6 +543,7 @@ pub fn overlay_keyboard_input(
 ///
 /// - [`update_performance_metrics`] — Collects metrics each frame
 /// - [`overlay_keyboard_input`] — F2 toggle handling
+/// - [`render_minimal_overlay`] — Renders the F2 minimal overlay
 pub struct MetricsPlugin;
 
 impl Plugin for MetricsPlugin {
@@ -384,7 +553,12 @@ impl Plugin for MetricsPlugin {
             .init_resource::<PerformanceOverlay>()
             .add_systems(
                 Update,
-                (update_performance_metrics, overlay_keyboard_input),
+                (
+                    update_performance_metrics,
+                    overlay_keyboard_input,
+                    render_minimal_overlay,
+                )
+                    .chain(),
             );
     }
 }

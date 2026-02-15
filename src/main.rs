@@ -52,6 +52,7 @@ fn main() {
         .add_plugins(editor::MinimapPlugin)
         .add_plugins(engine::CameraPlugin)
         .add_plugins(engine::profiler::ProfilerPlugin)
+        .add_plugins(engine::MetricsPlugin)
         .add_plugins(engine::RaycastPlugin)
         .add_plugins(engine::lighting::DayNightPlugin)
         .add_plugins(engine::post_processing::PostProcessingPlugin)
