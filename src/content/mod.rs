@@ -30,11 +30,13 @@
 //! ```
 
 pub mod block;
+pub mod block_validator;
 pub mod ore;
 
 use bevy::prelude::*;
 
 pub use block::{BlockDefinition, BlockRegistry, BlockCategory, BlockPlugin};
+pub use block_validator::{BlockDefinitionValidator, BlockValidationResult, ValidationError};
 pub use ore::{OreDefinition, OreGeneration, OreRegistry, BiomeFilter};
 
 /// Plugin that initializes all content registries
