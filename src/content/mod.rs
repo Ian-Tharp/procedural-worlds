@@ -30,6 +30,7 @@
 //! ```
 
 pub mod block;
+pub mod block_validator;
 pub mod ore;
 
 use bevy::prelude::*;

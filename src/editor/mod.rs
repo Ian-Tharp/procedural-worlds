@@ -8,6 +8,7 @@ pub mod debug_overlay;
 pub mod hud;
 pub mod minimap;
 pub mod performance;
+pub mod validation_display;
 pub mod worldgen_panel;
 
 pub use block_highlight::BlockHighlightPlugin;
