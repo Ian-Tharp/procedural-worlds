@@ -10,6 +10,8 @@ use procedural_worlds::actors;
 use procedural_worlds::audio;
 use procedural_worlds::config;
 use procedural_worlds::content;
+use procedural_worlds::crafting;
+use procedural_worlds::creatures;
 use procedural_worlds::drops;
 use procedural_worlds::editor;
 use procedural_worlds::engine;
@@ -17,6 +19,7 @@ use procedural_worlds::health;
 use procedural_worlds::inventory;
 use procedural_worlds::inventory_health;
 use procedural_worlds::physics;
+use procedural_worlds::weather;
 use procedural_worlds::world;
 
 fn main() {
@@ -76,8 +79,14 @@ fn main() {
         .add_plugins(inventory::InventoryPlugin)
         // Health & hunger system
         .add_plugins(health::HealthPlugin)
+        // Crafting system
+        .add_plugins(crafting::CraftingPlugin)
+        // Creature system
+        .add_plugins(creatures::CreaturePlugin)
         // Inventory-health bridge (food consumption, death drops)
         .add_plugins(inventory_health::InventoryHealthPlugin)
+        // Weather system
+        .add_plugins(weather::WeatherPlugin)
         // Startup systems
         .add_systems(Startup, setup_scene)
         .run();
