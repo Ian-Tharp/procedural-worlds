@@ -10,6 +10,7 @@ use procedural_worlds::actors;
 use procedural_worlds::audio;
 use procedural_worlds::config;
 use procedural_worlds::content;
+use procedural_worlds::drops;
 use procedural_worlds::editor;
 use procedural_worlds::engine;
 use procedural_worlds::health;
@@ -69,6 +70,8 @@ fn main() {
         .add_plugins(config::audio::AudioConfigPlugin)
         // Content system (ores, blocks, etc. - data-driven definitions)
         .add_plugins(content::ContentPlugin)
+        // Block drops system
+        .add_plugins(drops::BlockDropPlugin)
         // Inventory system
         .add_plugins(inventory::InventoryPlugin)
         // Health & hunger system

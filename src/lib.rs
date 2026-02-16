@@ -9,6 +9,7 @@ pub mod actors;
 pub mod audio;
 pub mod config;
 pub mod content;
+pub mod drops;
 pub mod editor;
 pub mod engine;
 pub mod generation;
