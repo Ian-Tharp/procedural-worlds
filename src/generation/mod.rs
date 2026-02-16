@@ -8,14 +8,14 @@
 
 pub mod biome;
 
-use std::hash::{Hash, Hasher};
 use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
 
 use bevy::prelude::*;
 use noise::{NoiseFn, Perlin, Simplex};
 
-use crate::world::{BlockType, Chunk, CHUNK_SIZE};
-use biome::{biome_at, BiomeParams, BiomeType};
+use crate::world::{BlockType, CHUNK_SIZE, Chunk};
+use biome::{BiomeParams, BiomeType, biome_at};
 
 pub use self::OreSpawnConfig as OreConfig;
 
@@ -74,7 +74,6 @@ pub struct TerrainConfig {
     pub transition_noise_amplitude: f64,
 
     // ── Cave Generation ──
-
     /// Whether cave generation is enabled.
     pub caves_enabled: bool,
     /// Noise threshold for cave generation (0.0–1.0).
@@ -95,7 +94,6 @@ pub struct TerrainConfig {
     pub cave_frequency: f64,
 
     // ── Vegetation ──
-
     /// Cactus density multiplier (relative to biome defaults).
     ///
     /// Similar to tree_density but for desert cacti.
@@ -192,7 +190,11 @@ fn blended_biome_params(
 
     if !config.blend_enabled || config.blend_distance <= 0.0 {
         let params = primary_biome.params();
-        return (params.terrain_amplitude, params.terrain_frequency, primary_biome);
+        return (
+            params.terrain_amplitude,
+            params.terrain_frequency,
+            primary_biome,
+        );
     }
 
     let bd = config.blend_distance;
@@ -200,11 +202,15 @@ fn blended_biome_params(
     // Sample at center + 8 surrounding points (cardinal + diagonal) at blend_distance.
     // This gives good coverage of nearby biome boundaries without excessive cost.
     let offsets: &[(f64, f64)] = &[
-        (0.0, 0.0),                         // center
-        (-bd, 0.0), (bd, 0.0),              // W, E
-        (0.0, -bd), (0.0, bd),              // N, S
-        (-bd, -bd), (bd, -bd),              // NW, NE
-        (-bd, bd),  (bd, bd),               // SW, SE
+        (0.0, 0.0), // center
+        (-bd, 0.0),
+        (bd, 0.0), // W, E
+        (0.0, -bd),
+        (0.0, bd), // N, S
+        (-bd, -bd),
+        (bd, -bd), // NW, NE
+        (-bd, bd),
+        (bd, bd), // SW, SE
     ];
 
     // Maximum possible distance among samples (diagonal corner)
@@ -271,10 +277,14 @@ fn biome_blend_factor(
 
     // Sample cardinal and diagonal neighbors to find the nearest differing biome
     let sample_offsets: &[(f64, f64)] = &[
-        (-bd, 0.0), (bd, 0.0),
-        (0.0, -bd), (0.0, bd),
-        (-bd, -bd), (bd, -bd),
-        (-bd, bd),  (bd, bd),
+        (-bd, 0.0),
+        (bd, 0.0),
+        (0.0, -bd),
+        (0.0, bd),
+        (-bd, -bd),
+        (bd, -bd),
+        (-bd, bd),
+        (bd, bd),
     ];
 
     let max_dist = bd * (2.0_f64).sqrt();
@@ -349,7 +359,12 @@ fn blended_block_palette(
     config: &TerrainConfig,
 ) -> BiomeParams {
     let (secondary_biome, blend_factor) = biome_blend_factor(
-        world_x, world_z, primary_biome, biome_noise, transition_noise, config,
+        world_x,
+        world_z,
+        primary_biome,
+        biome_noise,
+        transition_noise,
+        config,
     );
 
     if blend_factor <= 0.0 || secondary_biome == primary_biome {
@@ -399,10 +414,7 @@ fn terrain_column(
     let mut freq = blended_frequency;
 
     for _ in 0..config.octaves {
-        height += terrain_noise.get([
-            world_x as f64 * freq,
-            world_z as f64 * freq,
-        ]) * octave_amp;
+        height += terrain_noise.get([world_x as f64 * freq, world_z as f64 * freq]) * octave_amp;
         octave_amp *= 0.5;
         freq *= 2.0;
     }
@@ -430,14 +442,25 @@ pub fn generate_chunk_terrain(chunk: &mut Chunk, config: &TerrainConfig) {
             let world_x = world_pos.x + local_x as i32;
             let world_z = world_pos.z + local_z as i32;
 
-            let (terrain_height, biome) =
-                terrain_column(world_x, world_z, &terrain_noise, &biome_noise, &transition_noise, config);
+            let (terrain_height, biome) = terrain_column(
+                world_x,
+                world_z,
+                &terrain_noise,
+                &biome_noise,
+                &transition_noise,
+                config,
+            );
 
             // Select block palette: at biome boundaries, probabilistically
             // pick between primary and secondary biome palettes for natural
             // surface block transitions.
             let params = blended_block_palette(
-                world_x, world_z, biome, &biome_noise, &transition_noise, config,
+                world_x,
+                world_z,
+                biome,
+                &biome_noise,
+                &transition_noise,
+                config,
             );
             let effective_sea_level = config.sea_level + params.sea_level_offset;
 
@@ -501,8 +524,14 @@ pub fn generate_caves(chunk: &mut Chunk, config: &TerrainConfig) {
             let world_z = world_pos.z + z as i32;
 
             // Calculate terrain height at this column (biome-aware, same as terrain generation)
-            let (terrain_height, _biome) =
-                terrain_column(world_x, world_z, &terrain_noise, &biome_noise, &transition_noise, config);
+            let (terrain_height, _biome) = terrain_column(
+                world_x,
+                world_z,
+                &terrain_noise,
+                &biome_noise,
+                &transition_noise,
+                config,
+            );
 
             for y in 0..CHUNK_SIZE {
                 let world_y = world_pos.y + y as i32;
@@ -743,7 +772,8 @@ pub fn generate_cacti(chunk: &mut Chunk, config: &TerrainConfig) {
 
             // --- Biome-aware cactus density ---
             let biome = biome_at(world_x, world_z, &biome_noise, config.biome_scale);
-            let effective_density = biome.params().cactus_density * config.cactus_density_multiplier;
+            let effective_density =
+                biome.params().cactus_density * config.cactus_density_multiplier;
 
             if effective_density <= 0.0 {
                 continue;
@@ -782,7 +812,7 @@ pub fn generate_cacti(chunk: &mut Chunk, config: &TerrainConfig) {
 // ============================================================================
 
 /// Ore spawn configuration - matches data from OreRegistry
-/// 
+///
 /// This is a lightweight struct that can be cloned and passed
 /// to async chunk generation tasks.
 #[derive(Debug, Clone)]
@@ -807,52 +837,61 @@ pub struct OreSpawnConfig {
 /// then grows veins by replacing Stone blocks with ore blocks.
 pub fn generate_ores(chunk: &mut Chunk, config: &TerrainConfig, ore_configs: &[OreSpawnConfig]) {
     let world_pos = chunk.world_position();
-    
+
     for (ore_index, ore) in ore_configs.iter().enumerate() {
         // Each ore type gets its own noise with a unique seed offset
         let ore_seed = config.seed.wrapping_add(5000 + ore_index as u32 * 100);
         let noise = Perlin::new(ore_seed);
-        
+
         // Vein center noise (determines where veins start)
         let vein_noise = Simplex::new(ore_seed.wrapping_add(1));
-        
+
         // Frequency for finding vein centers
         let vein_freq = 0.08; // Controls vein spacing
-        
+
         for x in 0..CHUNK_SIZE {
             for z in 0..CHUNK_SIZE {
                 let world_x = world_pos.x + x as i32;
                 let world_z = world_pos.z + z as i32;
-                
+
                 for y in 0..CHUNK_SIZE {
                     let world_y = world_pos.y + y as i32;
-                    
+
                     // Skip if outside Y range
                     if world_y < ore.min_y || world_y > ore.max_y {
                         continue;
                     }
-                    
+
                     // Skip if not stone (ores only replace stone)
                     if chunk.get_block(x, y, z) != BlockType::Stone {
                         continue;
                     }
-                    
+
                     // 3D noise for vein center detection
                     let center_noise = vein_noise.get([
                         world_x as f64 * vein_freq,
                         world_y as f64 * vein_freq,
                         world_z as f64 * vein_freq,
                     ]);
-                    
+
                     // Only consider as vein center if noise is above threshold
                     // Threshold based on ore frequency
                     let center_threshold = 1.0 - (ore.frequency * 10.0).min(0.8);
                     if center_noise < center_threshold {
                         continue;
                     }
-                    
+
                     // This is a vein center - grow the vein
-                    grow_ore_vein(chunk, x, y, z, ore.block_type, ore.vein_size, &noise, ore_seed);
+                    grow_ore_vein(
+                        chunk,
+                        x,
+                        y,
+                        z,
+                        ore.block_type,
+                        ore.vein_size,
+                        &noise,
+                        ore_seed,
+                    );
                 }
             }
         }
@@ -872,11 +911,11 @@ fn grow_ore_vein(
 ) {
     let mut placed = 0u32;
     let max_radius = (target_size as f64).sqrt().ceil() as i32 + 1;
-    
+
     // Place center block
     chunk.set_block(center_x, center_y, center_z, ore_type);
     placed += 1;
-    
+
     // Grow outward in a roughly spherical pattern
     for dx in -max_radius..=max_radius {
         for dy in -max_radius..=max_radius {
@@ -884,49 +923,52 @@ fn grow_ore_vein(
                 if placed >= target_size {
                     return;
                 }
-                
+
                 let nx = center_x as i32 + dx;
                 let ny = center_y as i32 + dy;
                 let nz = center_z as i32 + dz;
-                
+
                 // Skip if out of chunk bounds
-                if nx < 0 || nx >= CHUNK_SIZE as i32 ||
-                   ny < 0 || ny >= CHUNK_SIZE as i32 ||
-                   nz < 0 || nz >= CHUNK_SIZE as i32 {
+                if nx < 0
+                    || nx >= CHUNK_SIZE as i32
+                    || ny < 0
+                    || ny >= CHUNK_SIZE as i32
+                    || nz < 0
+                    || nz >= CHUNK_SIZE as i32
+                {
                     continue;
                 }
-                
+
                 // Skip center (already placed)
                 if dx == 0 && dy == 0 && dz == 0 {
                     continue;
                 }
-                
+
                 // Calculate distance-based probability
                 let dist_sq = (dx * dx + dy * dy + dz * dz) as f64;
                 let max_dist_sq = (max_radius * max_radius) as f64;
                 let dist_factor = 1.0 - (dist_sq / max_dist_sq).sqrt();
-                
+
                 // Add noise variation
                 let noise_val = noise.get([
                     (center_x as i32 + dx) as f64 * 0.5,
                     (center_y as i32 + dy) as f64 * 0.5,
                     (center_z as i32 + dz) as f64 * 0.5,
-                ]) * 0.5 + 0.5;
-                
+                ]) * 0.5
+                    + 0.5;
+
                 // Probability based on distance and noise
                 let prob = dist_factor * noise_val;
-                
+
                 // Deterministic check using position hash
-                let hash = ore_placement_hash(
-                    nx, ny, nz, seed
-                );
+                let hash = ore_placement_hash(nx, ny, nz, seed);
                 let hash_prob = hash as f64 / u64::MAX as f64;
-                
+
                 if hash_prob < prob {
                     let ux = nx as usize;
                     let uy = ny as usize;
                     let uz = nz as usize;
-                    
+
                     // Only replace stone
                     if chunk.get_block(ux, uy, uz) == BlockType::Stone {
                         chunk.set_block(ux, uy, uz, ore_type);
@@ -950,7 +992,7 @@ fn ore_placement_hash(x: i32, y: i32, z: i32, seed: u32) -> u64 {
 }
 
 /// Map ore ID to BlockType.
-/// 
+///
 /// Note: This is a temporary bridge until BlockType becomes data-driven.
 /// Currently only the 4 built-in ores are supported. Custom ores created
 /// in the editor won't spawn until we refactor BlockType to be dynamic.
@@ -965,10 +1007,12 @@ pub fn ore_id_to_block_type(id: &str) -> Option<BlockType> {
 }
 
 /// Convert OreDefinitions from the content system into spawn configs.
-/// 
+///
 /// This reads from the OreRegistry so changes made in the editor
 /// affect world generation (after chunk regeneration).
-pub fn ore_configs_from_definitions(definitions: &[crate::content::OreDefinition]) -> Vec<OreSpawnConfig> {
+pub fn ore_configs_from_definitions(
+    definitions: &[crate::content::OreDefinition],
+) -> Vec<OreSpawnConfig> {
     definitions
         .iter()
         .filter_map(|def| {
@@ -985,7 +1029,7 @@ pub fn ore_configs_from_definitions(definitions: &[crate::content::OreDefinition
 }
 
 /// Get default ore spawn configurations.
-/// 
+///
 /// DEPRECATED: Use `ore_configs_from_definitions()` with OreRegistry instead.
 /// This exists as a fallback when the registry isn't available.
 pub fn default_ore_configs() -> Vec<OreSpawnConfig> {
@@ -1044,7 +1088,7 @@ mod tests {
     #[test]
     fn test_terrain_generation_creates_surface() {
         let config = TerrainConfig::default();
-        let mut chunk = Chunk::new(IVec3::new(0, 2, 0));  // Chunk at y=32 (surface level)
+        let mut chunk = Chunk::new(IVec3::new(0, 2, 0)); // Chunk at y=32 (surface level)
 
         generate_chunk_terrain(&mut chunk, &config);
 
@@ -1072,7 +1116,7 @@ mod tests {
     #[test]
     fn test_terrain_generation_underground_chunk() {
         let config = TerrainConfig::default();
-        let mut chunk = Chunk::new(IVec3::new(0, 0, 0));  // Chunk at y=0 (underground)
+        let mut chunk = Chunk::new(IVec3::new(0, 0, 0)); // Chunk at y=0 (underground)
 
         generate_chunk_terrain(&mut chunk, &config);
 
@@ -1099,7 +1143,7 @@ mod tests {
     #[test]
     fn test_terrain_generation_sky_chunk() {
         let config = TerrainConfig::default();
-        let mut chunk = Chunk::new(IVec3::new(0, 5, 0));  // Chunk at y=80 (high in sky)
+        let mut chunk = Chunk::new(IVec3::new(0, 5, 0)); // Chunk at y=80 (high in sky)
 
         generate_chunk_terrain(&mut chunk, &config);
 
@@ -1111,7 +1155,9 @@ mod tests {
                         chunk.get_block(x, y, z),
                         BlockType::Air,
                         "Sky chunk should be all air at ({}, {}, {})",
-                        x, y, z
+                        x,
+                        y,
+                        z
                     );
                 }
             }
@@ -1121,7 +1167,7 @@ mod tests {
     #[test]
     fn test_terrain_has_grass_layer() {
         let config = TerrainConfig::default();
-        let mut chunk = Chunk::new(IVec3::new(0, 2, 0));  // Surface level
+        let mut chunk = Chunk::new(IVec3::new(0, 2, 0)); // Surface level
 
         generate_chunk_terrain(&mut chunk, &config);
 
@@ -1144,7 +1190,7 @@ mod tests {
     #[test]
     fn test_terrain_has_dirt_below_grass() {
         let config = TerrainConfig::default();
-        let mut chunk = Chunk::new(IVec3::new(0, 2, 0));  // Surface level
+        let mut chunk = Chunk::new(IVec3::new(0, 2, 0)); // Surface level
 
         generate_chunk_terrain(&mut chunk, &config);
 
@@ -1160,7 +1206,7 @@ mod tests {
                             "Block below grass should be dirt or stone, was {:?}",
                             below
                         );
-                        return;  // Found and verified
+                        return; // Found and verified
                     }
                 }
             }
@@ -1186,7 +1232,9 @@ mod tests {
                         chunk1.get_block(x, y, z),
                         chunk2.get_block(x, y, z),
                         "Same seed should produce same terrain at ({}, {}, {})",
-                        x, y, z
+                        x,
+                        y,
+                        z
                     );
                 }
             }
@@ -1195,8 +1243,14 @@ mod tests {
 
     #[test]
     fn test_different_seeds_produce_different_terrain() {
-        let config1 = TerrainConfig { seed: 12345, ..Default::default() };
-        let config2 = TerrainConfig { seed: 54321, ..Default::default() };
+        let config1 = TerrainConfig {
+            seed: 12345,
+            ..Default::default()
+        };
+        let config2 = TerrainConfig {
+            seed: 54321,
+            ..Default::default()
+        };
 
         let mut chunk1 = Chunk::new(IVec3::new(0, 2, 0));
         let mut chunk2 = Chunk::new(IVec3::new(0, 2, 0));
@@ -1264,7 +1318,10 @@ mod tests {
             }
         }
 
-        assert!(has_water, "Should have water blocks where air is below sea_level");
+        assert!(
+            has_water,
+            "Should have water blocks where air is below sea_level"
+        );
     }
 
     #[test]
@@ -1284,7 +1341,9 @@ mod tests {
                         chunk.get_block(x, y, z),
                         BlockType::Water,
                         "No water should exist above sea_level at local ({}, {}, {})",
-                        x, y, z
+                        x,
+                        y,
+                        z
                     );
                 }
             }
@@ -1311,7 +1370,10 @@ mod tests {
                         block,
                         BlockType::Water,
                         "Water should not replace solid blocks at ({}, {}, {}), found {:?}",
-                        x, y, z, block
+                        x,
+                        y,
+                        z,
+                        block
                     );
                 }
             }
@@ -1321,7 +1383,7 @@ mod tests {
     #[test]
     fn test_caves_dont_break_surface() {
         let config = TerrainConfig::default();
-        let mut chunk = Chunk::new(IVec3::new(0, 2, 0));  // Surface level
+        let mut chunk = Chunk::new(IVec3::new(0, 2, 0)); // Surface level
 
         generate_chunk_terrain(&mut chunk, &config);
 
@@ -1346,7 +1408,9 @@ mod tests {
                 chunk.get_block(*x, *y, *z),
                 BlockType::Grass,
                 "Cave generation should not remove grass at ({}, {}, {})",
-                x, y, z
+                x,
+                y,
+                z
             );
         }
     }
@@ -1389,7 +1453,10 @@ mod tests {
         }
 
         assert!(has_wood, "Surface chunk with trees should have Wood blocks");
-        assert!(has_leaves, "Surface chunk with trees should have Leaves blocks");
+        assert!(
+            has_leaves,
+            "Surface chunk with trees should have Leaves blocks"
+        );
     }
 
     #[test]
@@ -1409,7 +1476,9 @@ mod tests {
                         chunk1.get_block(x, y, z),
                         chunk2.get_block(x, y, z),
                         "Tree generation must be deterministic at ({}, {}, {})",
-                        x, y, z
+                        x,
+                        y,
+                        z
                     );
                 }
             }
@@ -1432,7 +1501,10 @@ mod tests {
                         block,
                         BlockType::Air,
                         "Sky chunk should have no tree blocks at ({}, {}, {}), found {:?}",
-                        x, y, z, block
+                        x,
+                        y,
+                        z,
+                        block
                     );
                 }
             }
@@ -1473,7 +1545,10 @@ mod tests {
                         below,
                         BlockType::Grass,
                         "Block below trunk at ({}, {}, {}) should be Grass, found {:?}",
-                        x, trunk_base - 1, z, below
+                        x,
+                        trunk_base - 1,
+                        z,
+                        below
                     );
                 }
 
@@ -1488,7 +1563,9 @@ mod tests {
                 assert!(
                     (4..=6).contains(&trunk_height),
                     "Trunk height should be 4-6, got {} at column ({}, {})",
-                    trunk_height, x, z
+                    trunk_height,
+                    x,
+                    z
                 );
 
                 return; // Verified one tree, that's enough
@@ -1521,7 +1598,9 @@ mod tests {
                         chunk_before.get_block(x, y, z),
                         chunk_after.get_block(x, y, z),
                         "Zero density should produce no trees at ({}, {}, {})",
-                        x, y, z
+                        x,
+                        y,
+                        z
                     );
                 }
             }
@@ -1564,8 +1643,8 @@ mod tests {
     #[test]
     fn test_cacti_appear_in_desert() {
         let config = TerrainConfig::default();
-        let chunk_pos = find_desert_chunk_pos(&config)
-            .expect("Should find a desert chunk within scan range");
+        let chunk_pos =
+            find_desert_chunk_pos(&config).expect("Should find a desert chunk within scan range");
 
         let chunk = make_surface_chunk_with_cacti(&config, chunk_pos);
 
@@ -1578,9 +1657,13 @@ mod tests {
                         break;
                     }
                 }
-                if has_cactus { break; }
+                if has_cactus {
+                    break;
+                }
             }
-            if has_cactus { break; }
+            if has_cactus {
+                break;
+            }
         }
 
         // With default density (0.008), it's possible a single chunk has no cacti.
@@ -1603,21 +1686,28 @@ mod tests {
                                 }
                             }
                         }
-                        if has_cactus { break; }
+                        if has_cactus {
+                            break;
+                        }
                     }
                 }
-                if has_cactus { break; }
+                if has_cactus {
+                    break;
+                }
             }
         }
 
-        assert!(has_cactus, "Desert biome should produce at least some cacti");
+        assert!(
+            has_cactus,
+            "Desert biome should produce at least some cacti"
+        );
     }
 
     #[test]
     fn test_cactus_generation_deterministic() {
         let config = TerrainConfig::default();
-        let chunk_pos = find_desert_chunk_pos(&config)
-            .expect("Should find a desert chunk within scan range");
+        let chunk_pos =
+            find_desert_chunk_pos(&config).expect("Should find a desert chunk within scan range");
 
         let chunk1 = make_surface_chunk_with_cacti(&config, chunk_pos);
         let chunk2 = make_surface_chunk_with_cacti(&config, chunk_pos);
@@ -1629,7 +1719,9 @@ mod tests {
                         chunk1.get_block(x, y, z),
                         chunk2.get_block(x, y, z),
                         "Cactus generation must be deterministic at ({}, {}, {})",
-                        x, y, z
+                        x,
+                        y,
+                        z
                     );
                 }
             }
@@ -1639,8 +1731,8 @@ mod tests {
     #[test]
     fn test_cactus_height_is_2_to_4() {
         let config = TerrainConfig::default();
-        let _chunk_pos = find_desert_chunk_pos(&config)
-            .expect("Should find a desert chunk within scan range");
+        let _chunk_pos =
+            find_desert_chunk_pos(&config).expect("Should find a desert chunk within scan range");
 
         // Scan multiple desert chunks to find a cactus and verify its height
         let biome_noise = Simplex::new(config.seed.wrapping_add(config.biome_seed_offset));
@@ -1682,7 +1774,9 @@ mod tests {
                         assert!(
                             (2..=4).contains(&cactus_height),
                             "Cactus height should be 2-4, got {} at column ({}, {})",
-                            cactus_height, x, z
+                            cactus_height,
+                            x,
+                            z
                         );
 
                         // Block below cactus should be SandDunes or Sand
@@ -1691,7 +1785,10 @@ mod tests {
                             assert!(
                                 below == BlockType::SandDunes || below == BlockType::Sand,
                                 "Block below cactus at ({}, {}, {}) should be SandDunes or Sand, found {:?}",
-                                x, cactus_base - 1, z, below
+                                x,
+                                cactus_base - 1,
+                                z,
+                                below
                             );
                         }
 
@@ -1729,7 +1826,9 @@ mod tests {
                                 chunk.get_block(x, y, z),
                                 BlockType::Cactus,
                                 "Plains biome should not have cacti at ({}, {}, {})",
-                                x, y, z
+                                x,
+                                y,
+                                z
                             );
                         }
                     }
@@ -1764,7 +1863,10 @@ mod tests {
     #[test]
     fn test_blend_config_defaults() {
         let config = TerrainConfig::default();
-        assert!(config.blend_enabled, "Blending should be enabled by default");
+        assert!(
+            config.blend_enabled,
+            "Blending should be enabled by default"
+        );
         assert!(
             (config.blend_distance - 32.0).abs() < f64::EPSILON,
             "Default blend_distance should be 32.0"
@@ -1782,11 +1884,19 @@ mod tests {
 
         let terrain_noise = Simplex::new(config.seed);
         let biome_noise = Simplex::new(config.seed.wrapping_add(config.biome_seed_offset));
-        let transition_noise = Perlin::new(config.seed.wrapping_add(config.biome_seed_offset + 500));
+        let transition_noise =
+            Perlin::new(config.seed.wrapping_add(config.biome_seed_offset + 500));
 
         for x in -20..20 {
             for z in -20..20 {
-                let (h, b) = terrain_column(x, z, &terrain_noise, &biome_noise, &transition_noise, &config);
+                let (h, b) = terrain_column(
+                    x,
+                    z,
+                    &terrain_noise,
+                    &biome_noise,
+                    &transition_noise,
+                    &config,
+                );
 
                 // Replicate the original algorithm manually
                 let expected_biome = biome_at(x, z, &biome_noise, config.biome_scale);
@@ -1797,15 +1907,14 @@ mod tests {
                 let mut frequency = params.terrain_frequency;
 
                 for _ in 0..config.octaves {
-                    height += terrain_noise.get([
-                        x as f64 * frequency,
-                        z as f64 * frequency,
-                    ]) * amplitude;
+                    height +=
+                        terrain_noise.get([x as f64 * frequency, z as f64 * frequency]) * amplitude;
                     amplitude *= 0.5;
                     frequency *= 2.0;
                 }
 
-                let expected_height = (config.base_height + height * params.terrain_amplitude) as i32;
+                let expected_height =
+                    (config.base_height + height * params.terrain_amplitude) as i32;
 
                 assert_eq!(b, expected_biome, "Biome mismatch at ({}, {})", x, z);
                 assert_eq!(h, expected_height, "Height mismatch at ({}, {})", x, z);
@@ -1823,12 +1932,27 @@ mod tests {
 
         let terrain_noise = Simplex::new(config.seed);
         let biome_noise = Simplex::new(config.seed.wrapping_add(config.biome_seed_offset));
-        let transition_noise = Perlin::new(config.seed.wrapping_add(config.biome_seed_offset + 500));
+        let transition_noise =
+            Perlin::new(config.seed.wrapping_add(config.biome_seed_offset + 500));
 
         for x in -50..50 {
             for z in -50..50 {
-                let (h1, b1) = terrain_column(x, z, &terrain_noise, &biome_noise, &transition_noise, &config);
-                let (h2, b2) = terrain_column(x, z, &terrain_noise, &biome_noise, &transition_noise, &config);
+                let (h1, b1) = terrain_column(
+                    x,
+                    z,
+                    &terrain_noise,
+                    &biome_noise,
+                    &transition_noise,
+                    &config,
+                );
+                let (h2, b2) = terrain_column(
+                    x,
+                    z,
+                    &terrain_noise,
+                    &biome_noise,
+                    &transition_noise,
+                    &config,
+                );
                 assert_eq!(h1, h2, "Blended height not deterministic at ({}, {})", x, z);
                 assert_eq!(b1, b2, "Blended biome not deterministic at ({}, {})", x, z);
             }
@@ -1847,7 +1971,8 @@ mod tests {
         };
 
         let biome_noise = Simplex::new(config.seed.wrapping_add(config.biome_seed_offset));
-        let transition_noise = Perlin::new(config.seed.wrapping_add(config.biome_seed_offset + 500));
+        let transition_noise =
+            Perlin::new(config.seed.wrapping_add(config.biome_seed_offset + 500));
         let bd = config.blend_distance as i32;
 
         // Find a position where ALL sample points return the same biome
@@ -1857,14 +1982,24 @@ mod tests {
 
                 // Check all 9 sample offsets
                 let all_same = [
-                    (0, 0), (-bd, 0), (bd, 0), (0, -bd), (0, bd),
-                    (-bd, -bd), (bd, -bd), (-bd, bd), (bd, bd),
-                ].iter().all(|&(dx, dz)| {
+                    (0, 0),
+                    (-bd, 0),
+                    (bd, 0),
+                    (0, -bd),
+                    (0, bd),
+                    (-bd, -bd),
+                    (bd, -bd),
+                    (-bd, bd),
+                    (bd, bd),
+                ]
+                .iter()
+                .all(|&(dx, dz)| {
                     biome_at(x + dx, z + dz, &biome_noise, config.biome_scale) == center_biome
                 });
 
                 if all_same {
-                    let (amp, freq, biome) = blended_biome_params(x, z, &biome_noise, &transition_noise, &config);
+                    let (amp, freq, biome) =
+                        blended_biome_params(x, z, &biome_noise, &transition_noise, &config);
                     let raw = center_biome.params();
 
                     assert_eq!(biome, center_biome);
@@ -1874,12 +2009,14 @@ mod tests {
                     assert!(
                         (amp - raw.terrain_amplitude).abs() < 0.01,
                         "Uniform biome: blended amplitude {:.4} should match raw {:.4}",
-                        amp, raw.terrain_amplitude
+                        amp,
+                        raw.terrain_amplitude
                     );
                     assert!(
                         (freq - raw.terrain_frequency).abs() < 0.001,
                         "Uniform biome: blended frequency {:.6} should match raw {:.6}",
-                        freq, raw.terrain_frequency
+                        freq,
+                        raw.terrain_frequency
                     );
                     return; // Found and verified
                 }
@@ -1900,7 +2037,8 @@ mod tests {
         };
 
         let biome_noise = Simplex::new(config.seed.wrapping_add(config.biome_seed_offset));
-        let transition_noise = Perlin::new(config.seed.wrapping_add(config.biome_seed_offset + 500));
+        let transition_noise =
+            Perlin::new(config.seed.wrapping_add(config.biome_seed_offset + 500));
         let bd = config.blend_distance as i32;
 
         // Find a position where the center biome differs from at least one sample
@@ -1909,20 +2047,24 @@ mod tests {
                 let center_biome = biome_at(x, z, &biome_noise, config.biome_scale);
 
                 // Find a neighboring biome that has different amplitude
-                let neighbor_biome = [
-                    (-bd, 0), (bd, 0), (0, -bd), (0, bd),
-                ].iter().find_map(|&(dx, dz)| {
-                    let b = biome_at(x + dx, z + dz, &biome_noise, config.biome_scale);
-                    if b != center_biome {
-                        let diff = (b.params().terrain_amplitude - center_biome.params().terrain_amplitude).abs();
-                        if diff > 2.0 { Some(b) } else { None }
-                    } else {
-                        None
-                    }
-                });
+                let neighbor_biome =
+                    [(-bd, 0), (bd, 0), (0, -bd), (0, bd)]
+                        .iter()
+                        .find_map(|&(dx, dz)| {
+                            let b = biome_at(x + dx, z + dz, &biome_noise, config.biome_scale);
+                            if b != center_biome {
+                                let diff = (b.params().terrain_amplitude
+                                    - center_biome.params().terrain_amplitude)
+                                    .abs();
+                                if diff > 2.0 { Some(b) } else { None }
+                            } else {
+                                None
+                            }
+                        });
 
                 if let Some(other) = neighbor_biome {
-                    let (amp, _freq, _biome) = blended_biome_params(x, z, &biome_noise, &transition_noise, &config);
+                    let (amp, _freq, _biome) =
+                        blended_biome_params(x, z, &biome_noise, &transition_noise, &config);
                     let amp_a = center_biome.params().terrain_amplitude;
                     let amp_b = other.params().terrain_amplitude;
                     let lo = amp_a.min(amp_b);
@@ -1934,7 +2076,13 @@ mod tests {
                         amp >= lo - 1.0 && amp <= hi + 1.0,
                         "Blended amplitude {:.2} should be between {:.2} and {:.2} \
                          (biomes {:?} and {:?}) at ({}, {})",
-                        amp, lo, hi, center_biome, other, x, z
+                        amp,
+                        lo,
+                        hi,
+                        center_biome,
+                        other,
+                        x,
+                        z
                     );
 
                     // And it should NOT exactly equal the center biome's raw value
@@ -1942,7 +2090,10 @@ mod tests {
                     assert!(
                         (amp - amp_a).abs() > 0.01,
                         "Blended amplitude {:.4} should differ from raw {:.4} at boundary ({}, {})",
-                        amp, amp_a, x, z
+                        amp,
+                        amp_a,
+                        x,
+                        z
                     );
                     return; // Found and verified
                 }
@@ -1966,14 +2117,37 @@ mod tests {
         };
 
         let terrain_noise = Simplex::new(config_zero.seed);
-        let biome_noise = Simplex::new(config_zero.seed.wrapping_add(config_zero.biome_seed_offset));
-        let transition_noise = Perlin::new(config_zero.seed.wrapping_add(config_zero.biome_seed_offset + 500));
+        let biome_noise =
+            Simplex::new(config_zero.seed.wrapping_add(config_zero.biome_seed_offset));
+        let transition_noise = Perlin::new(
+            config_zero
+                .seed
+                .wrapping_add(config_zero.biome_seed_offset + 500),
+        );
 
         for x in -20..20 {
             for z in -20..20 {
-                let (h1, b1) = terrain_column(x, z, &terrain_noise, &biome_noise, &transition_noise, &config_zero);
-                let (h2, b2) = terrain_column(x, z, &terrain_noise, &biome_noise, &transition_noise, &config_off);
-                assert_eq!(h1, h2, "Zero distance should match disabled at ({}, {})", x, z);
+                let (h1, b1) = terrain_column(
+                    x,
+                    z,
+                    &terrain_noise,
+                    &biome_noise,
+                    &transition_noise,
+                    &config_zero,
+                );
+                let (h2, b2) = terrain_column(
+                    x,
+                    z,
+                    &terrain_noise,
+                    &biome_noise,
+                    &transition_noise,
+                    &config_off,
+                );
+                assert_eq!(
+                    h1, h2,
+                    "Zero distance should match disabled at ({}, {})",
+                    x, z
+                );
                 assert_eq!(b1, b2, "Biome should match at ({}, {})", x, z);
             }
         }
@@ -2034,7 +2208,11 @@ mod tests {
             for z in -50..50 {
                 let a = transition_noise_at(x, z, &tn, &config);
                 let b = transition_noise_at(x, z, &tn, &config);
-                assert_eq!(a, b, "Transition noise must be deterministic at ({}, {})", x, z);
+                assert_eq!(
+                    a, b,
+                    "Transition noise must be deterministic at ({}, {})",
+                    x, z
+                );
             }
         }
     }
@@ -2053,7 +2231,9 @@ mod tests {
                 assert!(
                     val.abs() < f64::EPSILON,
                     "Zero amplitude should produce zero noise at ({}, {}), got {}",
-                    x, z, val
+                    x,
+                    z,
+                    val
                 );
             }
         }
@@ -2073,7 +2253,10 @@ mod tests {
                 assert!(
                     val.abs() <= config.transition_noise_amplitude + f64::EPSILON,
                     "Transition noise {} should be bounded by amplitude {} at ({}, {})",
-                    val, config.transition_noise_amplitude, x, z
+                    val,
+                    config.transition_noise_amplitude,
+                    x,
+                    z
                 );
             }
         }
@@ -2096,15 +2279,29 @@ mod tests {
             ..Default::default()
         };
 
-        let biome_noise = Simplex::new(config_noisy.seed.wrapping_add(config_noisy.biome_seed_offset));
-        let tn_noisy = Perlin::new(config_noisy.seed.wrapping_add(config_noisy.biome_seed_offset + 500));
-        let tn_geo = Perlin::new(config_geometric.seed.wrapping_add(config_geometric.biome_seed_offset + 500));
+        let biome_noise = Simplex::new(
+            config_noisy
+                .seed
+                .wrapping_add(config_noisy.biome_seed_offset),
+        );
+        let tn_noisy = Perlin::new(
+            config_noisy
+                .seed
+                .wrapping_add(config_noisy.biome_seed_offset + 500),
+        );
+        let tn_geo = Perlin::new(
+            config_geometric
+                .seed
+                .wrapping_add(config_geometric.biome_seed_offset + 500),
+        );
 
         let mut differences = 0;
         for x in -100..100 {
             for z in -100..100 {
-                let (amp_n, _, _) = blended_biome_params(x, z, &biome_noise, &tn_noisy, &config_noisy);
-                let (amp_g, _, _) = blended_biome_params(x, z, &biome_noise, &tn_geo, &config_geometric);
+                let (amp_n, _, _) =
+                    blended_biome_params(x, z, &biome_noise, &tn_noisy, &config_noisy);
+                let (amp_g, _, _) =
+                    blended_biome_params(x, z, &biome_noise, &tn_geo, &config_geometric);
                 if (amp_n - amp_g).abs() > 0.001 {
                     differences += 1;
                 }
@@ -2124,8 +2321,18 @@ mod tests {
             for z in -20..20 {
                 let a = block_blend_hash(x, 0, z, seed);
                 let b = block_blend_hash(x, 0, z, seed);
-                assert_eq!(a, b, "block_blend_hash must be deterministic at ({}, {}, {})", x, 0, z);
-                assert!((0.0..1.0).contains(&a), "Hash should be in [0, 1) at ({}, {}, {})", x, 0, z);
+                assert_eq!(
+                    a, b,
+                    "block_blend_hash must be deterministic at ({}, {}, {})",
+                    x, 0, z
+                );
+                assert!(
+                    (0.0..1.0).contains(&a),
+                    "Hash should be in [0, 1) at ({}, {}, {})",
+                    x,
+                    0,
+                    z
+                );
             }
         }
     }
@@ -2160,7 +2367,8 @@ mod tests {
         };
 
         let biome_noise = Simplex::new(config.seed.wrapping_add(config.biome_seed_offset));
-        let transition_noise = Perlin::new(config.seed.wrapping_add(config.biome_seed_offset + 500));
+        let transition_noise =
+            Perlin::new(config.seed.wrapping_add(config.biome_seed_offset + 500));
         let bd = config.blend_distance as i32;
 
         // Find a position where ALL sample points return the same biome
@@ -2169,15 +2377,28 @@ mod tests {
                 let center_biome = biome_at(x, z, &biome_noise, config.biome_scale);
 
                 let all_same = [
-                    (-bd, 0), (bd, 0), (0, -bd), (0, bd),
-                    (-bd, -bd), (bd, -bd), (-bd, bd), (bd, bd),
-                ].iter().all(|&(dx, dz)| {
+                    (-bd, 0),
+                    (bd, 0),
+                    (0, -bd),
+                    (0, bd),
+                    (-bd, -bd),
+                    (bd, -bd),
+                    (-bd, bd),
+                    (bd, bd),
+                ]
+                .iter()
+                .all(|&(dx, dz)| {
                     biome_at(x + dx, z + dz, &biome_noise, config.biome_scale) == center_biome
                 });
 
                 if all_same {
                     let palette = blended_block_palette(
-                        x, z, center_biome, &biome_noise, &transition_noise, &config,
+                        x,
+                        z,
+                        center_biome,
+                        &biome_noise,
+                        &transition_noise,
+                        &config,
                     );
                     let expected = center_biome.params();
                     assert_eq!(
@@ -2209,7 +2430,8 @@ mod tests {
         };
 
         let biome_noise = Simplex::new(config.seed.wrapping_add(config.biome_seed_offset));
-        let transition_noise = Perlin::new(config.seed.wrapping_add(config.biome_seed_offset + 500));
+        let transition_noise =
+            Perlin::new(config.seed.wrapping_add(config.biome_seed_offset + 500));
         let bd = config.blend_distance as i32;
 
         let mut found_mixed = false;
@@ -2220,12 +2442,14 @@ mod tests {
                 let center_biome = biome_at(x, z, &biome_noise, config.biome_scale);
 
                 // Check if any nearby sample has a different biome with different surface
-                let has_different_neighbor = [
-                    (-bd, 0), (bd, 0), (0, -bd), (0, bd),
-                ].iter().any(|&(dx, dz)| {
-                    let b = biome_at(x + dx, z + dz, &biome_noise, config.biome_scale);
-                    b != center_biome && b.params().surface_block != center_biome.params().surface_block
-                });
+                let has_different_neighbor =
+                    [(-bd, 0), (bd, 0), (0, -bd), (0, bd)]
+                        .iter()
+                        .any(|&(dx, dz)| {
+                            let b = biome_at(x + dx, z + dz, &biome_noise, config.biome_scale);
+                            b != center_biome
+                                && b.params().surface_block != center_biome.params().surface_block
+                        });
 
                 if !has_different_neighbor {
                     continue;
@@ -2239,10 +2463,17 @@ mod tests {
                         let bx = x + dx;
                         let bz = z + dz;
                         let local_biome = biome_at(bx, bz, &biome_noise, config.biome_scale);
-                        if local_biome != center_biome { continue; }
+                        if local_biome != center_biome {
+                            continue;
+                        }
 
                         let palette = blended_block_palette(
-                            bx, bz, local_biome, &biome_noise, &transition_noise, &config,
+                            bx,
+                            bz,
+                            local_biome,
+                            &biome_noise,
+                            &transition_noise,
+                            &config,
                         );
                         if palette.surface_block != primary_surface {
                             found_mixed = true;
@@ -2269,14 +2500,14 @@ mod tests {
         };
 
         let biome_noise = Simplex::new(config.seed.wrapping_add(config.biome_seed_offset));
-        let transition_noise = Perlin::new(config.seed.wrapping_add(config.biome_seed_offset + 500));
+        let transition_noise =
+            Perlin::new(config.seed.wrapping_add(config.biome_seed_offset + 500));
 
         for x in -50..50 {
             for z in -50..50 {
                 let biome = biome_at(x, z, &biome_noise, config.biome_scale);
-                let palette = blended_block_palette(
-                    x, z, biome, &biome_noise, &transition_noise, &config,
-                );
+                let palette =
+                    blended_block_palette(x, z, biome, &biome_noise, &transition_noise, &config);
                 let expected = biome.params();
                 assert_eq!(
                     palette.surface_block, expected.surface_block,
@@ -2310,7 +2541,9 @@ mod tests {
                         chunk1.get_block(x, y, z),
                         chunk2.get_block(x, y, z),
                         "Noise-fade terrain must be deterministic at ({}, {}, {})",
-                        x, y, z
+                        x,
+                        y,
+                        z
                     );
                 }
             }

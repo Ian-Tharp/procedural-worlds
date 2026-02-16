@@ -36,15 +36,15 @@ use super::input::{ActionStates, InputAction};
 pub struct CameraController {
     /// Mouse sensitivity for rotation (degrees per pixel)
     pub sensitivity: f32,
-    
+
     /// Smoothing factor for rotation interpolation
     pub rotation_smoothing: f32,
-    
+
     /// Target yaw angle (horizontal rotation) in degrees
     pub target_yaw: f32,
     /// Target pitch angle (vertical rotation) in degrees  
     pub target_pitch: f32,
-    
+
     /// Whether the controller has been initialized
     initialized: bool,
 }
@@ -71,17 +71,17 @@ impl CameraController {
             0.0,
         )
     }
-    
+
     /// Get forward direction vector based on camera rotation
     pub fn forward(&self) -> Vec3 {
         self.rotation() * Vec3::NEG_Z
     }
-    
+
     /// Get right direction vector based on camera rotation
     pub fn right(&self) -> Vec3 {
         self.rotation() * Vec3::X
     }
-    
+
     /// Get forward direction projected onto horizontal plane (for walking)
     pub fn horizontal_forward(&self) -> Vec3 {
         let forward = self.forward();
@@ -124,7 +124,12 @@ impl Plugin for ControllerPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<CursorState>()
             // Input runs AFTER editor UI (so egui state is current) and BEFORE physics
-            .configure_sets(Update, ControllerInputSet.after(EditorUiSet).before(crate::physics::PhysicsSet))
+            .configure_sets(
+                Update,
+                ControllerInputSet
+                    .after(EditorUiSet)
+                    .before(crate::physics::PhysicsSet),
+            )
             // Sync runs AFTER physics
             .configure_sets(Update, ControllerSyncSet.after(crate::physics::PhysicsSet))
             .add_systems(Startup, setup_cursor_grab)
@@ -139,10 +144,7 @@ impl Plugin for ControllerPlugin {
                     .chain()
                     .in_set(ControllerInputSet),
             )
-            .add_systems(
-                Update,
-                camera_sync_system.in_set(ControllerSyncSet),
-            );
+            .add_systems(Update, camera_sync_system.in_set(ControllerSyncSet));
     }
 }
 
@@ -190,9 +192,7 @@ fn cursor_grab_system(
         let egui_wants_pointer = egui_contexts
             .try_ctx_mut()
             .map(|ctx| {
-                ctx.is_pointer_over_area()
-                    || ctx.wants_pointer_input()
-                    || ctx.is_using_pointer()
+                ctx.is_pointer_over_area() || ctx.wants_pointer_input() || ctx.is_using_pointer()
             })
             .unwrap_or(false);
 
@@ -258,7 +258,7 @@ fn movement_mode_system(
             phys.flying = !phys.flying;
         }
     }
-    
+
     // Toggle noclip mode
     if actions.just_pressed(InputAction::ToggleNoclip) {
         for mut movement in &mut player_query {
@@ -310,7 +310,7 @@ fn player_movement_system(
 
         // Build movement direction from actions
         let mut move_dir = Vec3::ZERO;
-        
+
         if actions.is_active(InputAction::MoveForward) {
             move_dir += forward;
         }
@@ -337,7 +337,7 @@ fn player_movement_system(
         // Apply velocity
         if move_dir != Vec3::ZERO {
             move_dir = move_dir.normalize();
-            
+
             if movement.flying {
                 velocity.linear = move_dir * speed;
             } else {
@@ -380,7 +380,7 @@ fn camera_sync_system(
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_camera_controller_default() {
         let controller = CameraController::default();
@@ -388,26 +388,26 @@ mod tests {
         assert_eq!(controller.target_yaw, 0.0);
         assert_eq!(controller.target_pitch, 0.0);
     }
-    
+
     #[test]
     fn test_camera_controller_forward() {
         let mut controller = CameraController::default();
         controller.target_yaw = 0.0;
         controller.target_pitch = 0.0;
-        
+
         let forward = controller.forward();
         // Looking along -Z by default
         assert!((forward.z - -1.0).abs() < 0.01);
         assert!(forward.x.abs() < 0.01);
         assert!(forward.y.abs() < 0.01);
     }
-    
+
     #[test]
     fn test_camera_controller_horizontal_forward() {
         let mut controller = CameraController::default();
         controller.target_yaw = 0.0;
         controller.target_pitch = -45.0; // Looking down
-        
+
         let horizontal = controller.horizontal_forward();
         // Should still be along -Z when projected
         assert!((horizontal.z - -1.0).abs() < 0.01);

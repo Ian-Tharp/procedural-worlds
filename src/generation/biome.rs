@@ -356,10 +356,7 @@ mod tests {
             (p.tree_density - 0.0).abs() < f64::EPSILON,
             "Desert should have no trees"
         );
-        assert!(
-            p.cactus_density > 0.0,
-            "Desert should have some cacti"
-        );
+        assert!(p.cactus_density > 0.0, "Desert should have some cacti");
         assert!(p.snow_cap_height.is_none());
     }
 
@@ -389,7 +386,10 @@ mod tests {
             p.tree_density < BiomeType::Plains.params().tree_density,
             "Mountains should have low tree density"
         );
-        assert!(p.snow_cap_height.is_some(), "Mountains should have snow caps");
+        assert!(
+            p.snow_cap_height.is_some(),
+            "Mountains should have snow caps"
+        );
     }
 
     #[test]

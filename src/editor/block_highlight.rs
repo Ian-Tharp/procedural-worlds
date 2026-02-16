@@ -37,20 +37,32 @@ fn create_wireframe_cube() -> Mesh {
     // 12 edges, each defined by 2 vertices (LineList)
     let positions: Vec<[f32; 3]> = vec![
         // Bottom face edges
-        [-s, -s, -s], [ s, -s, -s],
-        [ s, -s, -s], [ s, -s,  s],
-        [ s, -s,  s], [-s, -s,  s],
-        [-s, -s,  s], [-s, -s, -s],
+        [-s, -s, -s],
+        [s, -s, -s],
+        [s, -s, -s],
+        [s, -s, s],
+        [s, -s, s],
+        [-s, -s, s],
+        [-s, -s, s],
+        [-s, -s, -s],
         // Top face edges
-        [-s,  s, -s], [ s,  s, -s],
-        [ s,  s, -s], [ s,  s,  s],
-        [ s,  s,  s], [-s,  s,  s],
-        [-s,  s,  s], [-s,  s, -s],
+        [-s, s, -s],
+        [s, s, -s],
+        [s, s, -s],
+        [s, s, s],
+        [s, s, s],
+        [-s, s, s],
+        [-s, s, s],
+        [-s, s, -s],
         // Vertical edges
-        [-s, -s, -s], [-s,  s, -s],
-        [ s, -s, -s], [ s,  s, -s],
-        [ s, -s,  s], [ s,  s,  s],
-        [-s, -s,  s], [-s,  s,  s],
+        [-s, -s, -s],
+        [-s, s, -s],
+        [s, -s, -s],
+        [s, s, -s],
+        [s, -s, s],
+        [s, s, s],
+        [-s, -s, s],
+        [-s, s, s],
     ];
 
     let mut mesh = Mesh::new(PrimitiveTopology::LineList, RenderAssetUsages::default());

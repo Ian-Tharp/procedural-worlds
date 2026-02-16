@@ -34,8 +34,8 @@ pub mod ore;
 
 use bevy::prelude::*;
 
-pub use block::{BlockDefinition, BlockRegistry, BlockCategory, BlockPlugin};
-pub use ore::{OreDefinition, OreGeneration, OreRegistry, BiomeFilter};
+pub use block::{BlockCategory, BlockDefinition, BlockPlugin, BlockRegistry};
+pub use ore::{BiomeFilter, OreDefinition, OreGeneration, OreRegistry};
 
 /// Plugin that initializes all content registries
 pub struct ContentPlugin;

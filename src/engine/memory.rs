@@ -345,14 +345,13 @@ impl ChunkMeshPool {
     }
 
     /// Create a new pool with custom buffer capacities.
-    pub fn with_capacity(
-        pool_size: usize,
-        vertex_capacity: usize,
-        index_capacity: usize,
-    ) -> Self {
+    pub fn with_capacity(pool_size: usize, vertex_capacity: usize, index_capacity: usize) -> Self {
         let mut available = VecDeque::with_capacity(pool_size);
         for _ in 0..pool_size {
-            available.push_back(MeshBufferData::with_capacity(vertex_capacity, index_capacity));
+            available.push_back(MeshBufferData::with_capacity(
+                vertex_capacity,
+                index_capacity,
+            ));
         }
 
         Self {
@@ -425,10 +424,8 @@ impl ChunkMeshPool {
     /// Get the estimated total memory capacity of all pool buffers.
     pub fn total_capacity_bytes(&self) -> usize {
         let inner = self.inner.lock().unwrap();
-        let per_buffer = MeshBufferData::with_capacity(
-            inner.vertex_capacity,
-            inner.index_capacity,
-        ).capacity_bytes();
+        let per_buffer = MeshBufferData::with_capacity(inner.vertex_capacity, inner.index_capacity)
+            .capacity_bytes();
         inner.total_created * per_buffer
     }
 
@@ -486,7 +483,11 @@ mod tests {
         )) {
             let mem = mem.expect("Should return memory on supported platform");
             // Process should be using at least some memory
-            assert!(mem.rss_bytes > 0, "RSS should be > 0, got {}", mem.rss_bytes);
+            assert!(
+                mem.rss_bytes > 0,
+                "RSS should be > 0, got {}",
+                mem.rss_bytes
+            );
         }
     }
 
@@ -610,7 +611,7 @@ mod tests {
         let b2 = pool.acquire();
         let b3 = pool.acquire();
         let b4 = pool.acquire(); // This should be our original buffer, cleared
-        
+
         pool.release(b1);
         pool.release(b2);
         pool.release(b3);

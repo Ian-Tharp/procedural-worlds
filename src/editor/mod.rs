@@ -20,10 +20,10 @@ pub use minimap::MinimapPlugin;
 pub use performance::PerformanceDashboardPlugin;
 pub use worldgen_panel::WorldGenPanelPlugin;
 
+use bevy::diagnostic::FrameTimeDiagnosticsPlugin;
 use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
-use bevy::diagnostic::FrameTimeDiagnosticsPlugin;
-use bevy_egui::{egui, EguiContexts};
+use bevy_egui::{EguiContexts, egui};
 
 use crate::actors::{Movement, Player};
 use crate::config::audio::AudioSettingsPanelState;
@@ -33,7 +33,7 @@ use crate::engine::profiler::ProfilerState;
 use crate::engine::raycast::CurrentTarget;
 use crate::world::ChunkLoadMetrics;
 
-use worldgen_panel::{WorldGenPanelState, RegenerateWorldEvent};
+use worldgen_panel::{RegenerateWorldEvent, WorldGenPanelState};
 
 /// System set for editor UI (runs in Update).
 ///
@@ -51,10 +51,7 @@ impl Plugin for EditorPlugin {
             .add_plugins(BlockHighlightPlugin)
             .add_plugins(WorldGenPanelPlugin)
             .init_resource::<EditorState>()
-            .add_systems(
-                Update,
-                editor_ui_system.in_set(EditorUiSet),
-            );
+            .add_systems(Update, editor_ui_system.in_set(EditorUiSet));
     }
 }
 
@@ -125,7 +122,11 @@ fn draw_profiler_overlay(ui_ctx: &mut egui::Context, profiler: &ProfilerState) {
             // ── Frame time headline ─────────────────────────
             ui.horizontal(|ui| {
                 let frame_ms = profiler.current_frame_ms();
-                let fps = if frame_ms > 0.0 { 1000.0 / frame_ms } else { 0.0 };
+                let fps = if frame_ms > 0.0 {
+                    1000.0 / frame_ms
+                } else {
+                    0.0
+                };
                 let color = if fps >= 60.0 {
                     egui::Color32::from_rgb(100, 255, 100)
                 } else if fps >= 30.0 {
@@ -222,10 +223,7 @@ fn draw_profiler_overlay(ui_ctx: &mut egui::Context, profiler: &ProfilerState) {
                     let recent: Vec<f64> = history.iter().rev().take(120).copied().collect();
                     // Target 16.67ms = 16670us
                     let target_us = 16_670.0_f64;
-                    let max_us = recent
-                        .iter()
-                        .copied()
-                        .fold(target_us * 2.0, f64::max);
+                    let max_us = recent.iter().copied().fold(target_us * 2.0, f64::max);
 
                     let graph_width = ui.available_width().min(360.0);
                     let graph_height = 40.0;
@@ -385,15 +383,10 @@ fn draw_profiler_overlay(ui_ctx: &mut egui::Context, profiler: &ProfilerState) {
 
                         // Mini cache hit rate bar
                         let bar_width = ui.available_width().min(200.0);
-                        let (rect, _) = ui.allocate_exact_size(
-                            egui::vec2(bar_width, 10.0),
-                            egui::Sense::hover(),
-                        );
-                        ui.painter().rect_filled(
-                            rect,
-                            2.0,
-                            egui::Color32::from_rgb(200, 60, 60),
-                        );
+                        let (rect, _) = ui
+                            .allocate_exact_size(egui::vec2(bar_width, 10.0), egui::Sense::hover());
+                        ui.painter()
+                            .rect_filled(rect, 2.0, egui::Color32::from_rgb(200, 60, 60));
                         let hit_width = rect.width() * cm.cache_hit_rate;
                         if hit_width > 0.0 {
                             let hit_rect = egui::Rect::from_min_max(
@@ -421,10 +414,7 @@ fn draw_profiler_overlay(ui_ctx: &mut egui::Context, profiler: &ProfilerState) {
                         ui.label(egui::RichText::new("⏱ Load Time History").strong());
 
                         let times = &cm.recent_load_times_ms;
-                        let max_time = times
-                            .iter()
-                            .copied()
-                            .fold(50.0_f32, f32::max);
+                        let max_time = times.iter().copied().fold(50.0_f32, f32::max);
 
                         let graph_width = ui.available_width().min(360.0);
                         let graph_height = 35.0;
@@ -434,17 +424,13 @@ fn draw_profiler_overlay(ui_ctx: &mut egui::Context, profiler: &ProfilerState) {
                         );
 
                         // Background
-                        ui.painter().rect_filled(
-                            rect,
-                            2.0,
-                            egui::Color32::from_rgb(20, 20, 30),
-                        );
+                        ui.painter()
+                            .rect_filled(rect, 2.0, egui::Color32::from_rgb(20, 20, 30));
 
                         // 50ms target line
                         let target_ms = 50.0_f32;
                         if target_ms < max_time {
-                            let target_y = rect.max.y
-                                - (target_ms / max_time) * rect.height();
+                            let target_y = rect.max.y - (target_ms / max_time) * rect.height();
                             ui.painter().line_segment(
                                 [
                                     egui::pos2(rect.min.x, target_y),
@@ -452,9 +438,7 @@ fn draw_profiler_overlay(ui_ctx: &mut egui::Context, profiler: &ProfilerState) {
                                 ],
                                 egui::Stroke::new(
                                     1.0,
-                                    egui::Color32::from_rgba_premultiplied(
-                                        255, 200, 100, 80,
-                                    ),
+                                    egui::Color32::from_rgba_premultiplied(255, 200, 100, 80),
                                 ),
                             );
                         }
@@ -623,10 +607,7 @@ fn editor_ui_system(
                         .default_open(true)
                         .show(ui, |ui| {
                             let pos = panels.editor.player_position;
-                            ui.label(format!(
-                                "Feet: ({:.1}, {:.1}, {:.1})",
-                                pos.x, pos.y, pos.z
-                            ));
+                            ui.label(format!("Feet: ({:.1}, {:.1}, {:.1})", pos.x, pos.y, pos.z));
                             let cam = panels.editor.camera_position;
                             ui.label(format!(
                                 "Camera: ({:.1}, {:.1}, {:.1})",
@@ -640,7 +621,7 @@ fn editor_ui_system(
                                 ui.label(
                                     egui::RichText::new(cardinal)
                                         .strong()
-                                        .color(egui::Color32::from_rgb(100, 200, 255))
+                                        .color(egui::Color32::from_rgb(100, 200, 255)),
                                 );
                                 ui.label(format!("({:.0}°)", panels.editor.camera_yaw));
                             });
@@ -651,17 +632,21 @@ fn editor_ui_system(
                             if let Ok(mut movement) = player_query.get_single_mut() {
                                 ui.horizontal(|ui| {
                                     let flying_text = if movement.flying {
-                                        egui::RichText::new("Flying").color(egui::Color32::from_rgb(100, 255, 100))
+                                        egui::RichText::new("Flying")
+                                            .color(egui::Color32::from_rgb(100, 255, 100))
                                     } else {
-                                        egui::RichText::new("Walking").color(egui::Color32::from_rgb(255, 200, 100))
+                                        egui::RichText::new("Walking")
+                                            .color(egui::Color32::from_rgb(255, 200, 100))
                                     };
                                     ui.checkbox(&mut movement.flying, flying_text);
                                 });
                                 ui.horizontal(|ui| {
                                     let noclip_text = if movement.noclip {
-                                        egui::RichText::new("Noclip").color(egui::Color32::from_rgb(255, 100, 100))
+                                        egui::RichText::new("Noclip")
+                                            .color(egui::Color32::from_rgb(255, 100, 100))
                                     } else {
-                                        egui::RichText::new("Collision").color(egui::Color32::from_rgb(150, 150, 150))
+                                        egui::RichText::new("Collision")
+                                            .color(egui::Color32::from_rgb(150, 150, 150))
                                     };
                                     ui.checkbox(&mut movement.noclip, noclip_text);
                                 });
@@ -709,11 +694,26 @@ fn editor_ui_system(
                         ui.heading("Debug");
                         ui.separator();
 
-                        let chunk_count = chunk_manager.as_ref().map(|cm| cm.chunks.len()).unwrap_or(0);
-                        let render_distance = chunk_manager.as_ref().map(|cm| cm.render_distance as u32).unwrap_or(0);
-                        let ld = chunk_manager.as_ref().map(|cm| cm.effective_load_distance()).unwrap_or(render_distance as i32);
-                        let vert_up = chunk_manager.as_ref().map(|cm| cm.vertical_load_up).unwrap_or(4);
-                        let vert_down = chunk_manager.as_ref().map(|cm| cm.vertical_load_down).unwrap_or(2);
+                        let chunk_count = chunk_manager
+                            .as_ref()
+                            .map(|cm| cm.chunks.len())
+                            .unwrap_or(0);
+                        let render_distance = chunk_manager
+                            .as_ref()
+                            .map(|cm| cm.render_distance as u32)
+                            .unwrap_or(0);
+                        let ld = chunk_manager
+                            .as_ref()
+                            .map(|cm| cm.effective_load_distance())
+                            .unwrap_or(render_distance as i32);
+                        let vert_up = chunk_manager
+                            .as_ref()
+                            .map(|cm| cm.vertical_load_up)
+                            .unwrap_or(4);
+                        let vert_down = chunk_manager
+                            .as_ref()
+                            .map(|cm| cm.vertical_load_down)
+                            .unwrap_or(2);
 
                         debug_overlay::draw_debug_ui(
                             ui,
@@ -733,10 +733,7 @@ fn editor_ui_system(
                         // Chunk border legend (shows when F4 overlay is active)
                         if panels.chunk_debug.visible {
                             ui.separator();
-                            chunk_debug::draw_chunk_state_legend(
-                                ui,
-                                &mut panels.chunk_debug,
-                            );
+                            chunk_debug::draw_chunk_state_legend(ui, &mut panels.chunk_debug);
                         }
                     }
                 });
@@ -760,7 +757,13 @@ fn editor_ui_system(
                         if let Some(ref mut cm) = chunk_manager {
                             ui.horizontal(|ui| {
                                 ui.label("View Distance:");
-                                if ui.add(egui::Slider::new(&mut cm.render_distance, 2..=16).suffix(" chunks")).changed() {
+                                if ui
+                                    .add(
+                                        egui::Slider::new(&mut cm.render_distance, 2..=16)
+                                            .suffix(" chunks"),
+                                    )
+                                    .changed()
+                                {
                                     // Slider changed - chunks will update automatically via streaming system
                                 }
                             });

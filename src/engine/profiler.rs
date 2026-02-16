@@ -349,7 +349,11 @@ impl ProfilerState {
     /// Get all scopes sorted by average time (descending) for display.
     pub fn scopes_sorted_by_avg(&self) -> Vec<&ScopeStats> {
         let mut scopes: Vec<&ScopeStats> = self.scopes.values().collect();
-        scopes.sort_by(|a, b| b.avg_us.partial_cmp(&a.avg_us).unwrap_or(std::cmp::Ordering::Equal));
+        scopes.sort_by(|a, b| {
+            b.avg_us
+                .partial_cmp(&a.avg_us)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         scopes
     }
 
@@ -515,7 +519,10 @@ pub fn profile_chunk_metrics(
         }
 
         // Build snapshot for the overlay
-        let loaded_count = chunk_manager.as_ref().map(|cm| cm.chunks.len()).unwrap_or(0);
+        let loaded_count = chunk_manager
+            .as_ref()
+            .map(|cm| cm.chunks.len())
+            .unwrap_or(0);
         profiler.chunk_metrics = ChunkMetricsSnapshot {
             avg_load_time_ms: metrics.avg_load_time_ms,
             peak_load_time_ms: metrics.peak_load_time_ms,
@@ -545,16 +552,15 @@ pub struct ProfilerPlugin;
 
 impl Plugin for ProfilerPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<ProfilerState>()
-            .add_systems(
-                Update,
-                (
-                    update_profiler_system,
-                    profiler_keyboard_input,
-                    profile_chunk_metrics,
-                )
-                    .chain(),
-            );
+        app.init_resource::<ProfilerState>().add_systems(
+            Update,
+            (
+                update_profiler_system,
+                profiler_keyboard_input,
+                profile_chunk_metrics,
+            )
+                .chain(),
+        );
     }
 }
 

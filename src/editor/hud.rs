@@ -9,16 +9,16 @@
 //! - Uses egui for rendering, consistent with the rest of the editor UI
 
 use bevy::prelude::*;
-use bevy_egui::{egui, EguiContexts};
+use bevy_egui::{EguiContexts, egui};
 
 use noise::Simplex;
 
 use crate::engine::controller::CursorState;
 use crate::engine::raycast::CurrentTarget;
-use crate::generation::biome::{biome_at, BiomeType};
 use crate::generation::TerrainConfig;
+use crate::generation::biome::{BiomeType, biome_at};
 use crate::world::interaction::SelectedBlock;
-use crate::world::{ChunkLoadMetrics, ChunkManager, PendingMesh, CHUNK_SIZE};
+use crate::world::{CHUNK_SIZE, ChunkLoadMetrics, ChunkManager, PendingMesh};
 
 /// Tracks the chunk loading progress bar visibility and animation state.
 ///
@@ -119,7 +119,11 @@ impl Plugin for HudPlugin {
             .init_resource::<BiomeIndicatorState>()
             .add_systems(
                 Update,
-                (hud_system, chunk_loading_progress_system, biome_indicator_system),
+                (
+                    hud_system,
+                    chunk_loading_progress_system,
+                    biome_indicator_system,
+                ),
             );
     }
 }
@@ -369,12 +373,19 @@ fn chunk_loading_progress_system(
     let label_text = if phase_text.is_empty() {
         format!(
             "Loading World: {}/{} ({:.0}%){}",
-            loaded, expected, progress * 100.0, cps_text,
+            loaded,
+            expected,
+            progress * 100.0,
+            cps_text,
         )
     } else {
         format!(
             "Loading World: {}/{} ({:.0}%){}  [{}]",
-            loaded, expected, progress * 100.0, cps_text, phase_text,
+            loaded,
+            expected,
+            progress * 100.0,
+            cps_text,
+            phase_text,
         )
     };
 
@@ -433,7 +444,8 @@ fn chunk_loading_progress_system(
                             0.0
                         };
                         let meshing_frac = if expected > 0 {
-                            (meshing as f32 / expected as f32).clamp(0.0, 1.0 - completed_frac - generating_frac)
+                            (meshing as f32 / expected as f32)
+                                .clamp(0.0, 1.0 - completed_frac - generating_frac)
                         } else {
                             0.0
                         };
@@ -519,8 +531,7 @@ fn biome_indicator_system(
             // Sample biome at the center of the player's chunk
             let world_x = cm.player_chunk.x * CHUNK_SIZE as i32 + CHUNK_SIZE as i32 / 2;
             let world_z = cm.player_chunk.z * CHUNK_SIZE as i32 + CHUNK_SIZE as i32 / 2;
-            let biome_noise =
-                Simplex::new(config.seed.wrapping_add(config.biome_seed_offset));
+            let biome_noise = Simplex::new(config.seed.wrapping_add(config.biome_seed_offset));
             let biome = biome_at(world_x, world_z, &biome_noise, config.biome_scale);
 
             if indicator.current_biome != Some(biome) {
@@ -572,9 +583,7 @@ fn biome_indicator_system(
                     ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
                     ui.label(
                         egui::RichText::new(display_text)
-                            .color(egui::Color32::from_rgba_unmultiplied(
-                                255, 255, 240, alpha,
-                            ))
+                            .color(egui::Color32::from_rgba_unmultiplied(255, 255, 240, alpha))
                             .size(20.0)
                             .strong(),
                     );

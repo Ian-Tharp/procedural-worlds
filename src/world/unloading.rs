@@ -21,7 +21,7 @@
 //! ```
 
 use bevy::prelude::*;
-use bevy::tasks::{block_on, futures_lite::future, AsyncComputeTaskPool, Task};
+use bevy::tasks::{AsyncComputeTaskPool, Task, block_on, futures_lite::future};
 
 use super::persistence::{self, ChunkStorage};
 use super::save::SaveSystem;
@@ -88,8 +88,8 @@ impl UnloadConfig {
     pub fn effective_unload_distance(&self, render_distance: i32) -> i32 {
         let base = self.unload_distance.unwrap_or(render_distance + 2);
 
-        let under_pressure = get_process_memory()
-            .is_some_and(|mem| mem.rss_bytes > self.memory_threshold_bytes);
+        let under_pressure =
+            get_process_memory().is_some_and(|mem| mem.rss_bytes > self.memory_threshold_bytes);
 
         if under_pressure {
             (base - self.memory_pressure_reduction).max(render_distance)

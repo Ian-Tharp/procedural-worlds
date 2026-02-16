@@ -382,10 +382,7 @@ impl Plugin for MetricsPlugin {
         app.init_resource::<PerformanceMetrics>()
             .init_resource::<PerformanceThresholds>()
             .init_resource::<PerformanceOverlay>()
-            .add_systems(
-                Update,
-                (update_performance_metrics, overlay_keyboard_input),
-            );
+            .add_systems(Update, (update_performance_metrics, overlay_keyboard_input));
     }
 }
 
@@ -491,9 +488,9 @@ mod tests {
     #[test]
     fn test_metrics_warning_levels() {
         let m = PerformanceMetrics {
-            fps: 45.0,              // Warning
-            frame_time_ms: 22.0,    // Warning
-            memory_mb: 1000.0,      // Normal
+            fps: 45.0,           // Warning
+            frame_time_ms: 22.0, // Warning
+            memory_mb: 1000.0,   // Normal
             active_chunks: 100,
             avg_chunk_load_ms: 150.0, // Critical
             ..Default::default()

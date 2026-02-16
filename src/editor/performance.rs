@@ -320,13 +320,12 @@ impl PerformanceDashboard {
         // Compute trend (simple linear: compare first half avg to second half avg)
         if self.memory_snapshots.len() >= 4 {
             let mid = self.memory_snapshots.len() / 2;
-            let first_avg =
-                self.memory_snapshots[..mid].iter().sum::<usize>() as f64 / mid as f64;
-            let second_avg =
-                self.memory_snapshots[mid..].iter().sum::<usize>() as f64
-                    / (self.memory_snapshots.len() - mid) as f64;
+            let first_avg = self.memory_snapshots[..mid].iter().sum::<usize>() as f64 / mid as f64;
+            let second_avg = self.memory_snapshots[mid..].iter().sum::<usize>() as f64
+                / (self.memory_snapshots.len() - mid) as f64;
             let delta_bytes = second_avg - first_avg;
-            let time_span = (self.memory_snapshots.len() as f64 / 2.0) * MEMORY_TREND_INTERVAL as f64;
+            let time_span =
+                (self.memory_snapshots.len() as f64 / 2.0) * MEMORY_TREND_INTERVAL as f64;
             if time_span > 0.0 {
                 self.memory_trend_mb_per_sec = delta_bytes / (1024.0 * 1024.0) / time_span;
             }
@@ -444,11 +443,11 @@ impl PerformanceDashboard {
 /// Generate ISO 8601 timestamp string.
 fn generate_timestamp() -> String {
     use std::time::{SystemTime, UNIX_EPOCH};
-    
+
     let now = SystemTime::now();
     let duration = now.duration_since(UNIX_EPOCH).unwrap_or_default();
     let secs = duration.as_secs();
-    
+
     // Calculate date/time components from Unix timestamp
     // This is a simplified calculation - for production, consider using chrono crate
     let days = secs / 86400;
@@ -456,11 +455,11 @@ fn generate_timestamp() -> String {
     let hours = remaining / 3600;
     let minutes = (remaining % 3600) / 60;
     let seconds = remaining % 60;
-    
+
     // Approximate year/month/day (simplified leap year handling)
     let mut year = 1970;
     let mut remaining_days = days as i64;
-    
+
     loop {
         let days_in_year = if year % 4 == 0 && (year % 100 != 0 || year % 400 == 0) {
             366
@@ -473,13 +472,13 @@ fn generate_timestamp() -> String {
         remaining_days -= days_in_year;
         year += 1;
     }
-    
+
     let days_in_months: [i64; 12] = if year % 4 == 0 && (year % 100 != 0 || year % 400 == 0) {
         [31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
     } else {
         [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
     };
-    
+
     let mut month = 1;
     for &days in &days_in_months {
         if remaining_days < days {
@@ -489,7 +488,7 @@ fn generate_timestamp() -> String {
         month += 1;
     }
     let day = remaining_days + 1;
-    
+
     format!(
         "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z",
         year, month, day, hours, minutes, seconds
@@ -504,7 +503,7 @@ fn generate_export_path(format: ExportFormat) -> PathBuf {
 /// Generate a timestamped export file path with a custom suffix.
 fn generate_export_path_with_suffix(suffix: &str, format: ExportFormat) -> PathBuf {
     use std::time::{SystemTime, UNIX_EPOCH};
-    
+
     let now = SystemTime::now();
     let duration = now.duration_since(UNIX_EPOCH).unwrap_or_default();
     let timestamp = duration.as_secs();
@@ -520,7 +519,8 @@ fn generate_export_path_with_suffix(suffix: &str, format: ExportFormat) -> PathB
 /// Ensure the export directory exists.
 fn ensure_export_dir(path: &Path) -> Result<(), String> {
     if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).map_err(|e| format!("Failed to create export directory: {}", e))?;
+        fs::create_dir_all(parent)
+            .map_err(|e| format!("Failed to create export directory: {}", e))?;
     }
     Ok(())
 }
@@ -536,32 +536,64 @@ fn snapshot_to_csv(snapshot: &MetricsSnapshot) -> String {
     csv.push_str(&format!("timestamp,{}\n", snapshot.timestamp));
     csv.push_str(&format!("fps,{:.2}\n", snapshot.fps));
     csv.push_str(&format!("frame_time_ms,{:.3}\n", snapshot.frame_time_ms));
-    csv.push_str(&format!("frame_time_min_ms,{:.3}\n", snapshot.frame_time_min_ms));
-    csv.push_str(&format!("frame_time_max_ms,{:.3}\n", snapshot.frame_time_max_ms));
-    csv.push_str(&format!("frame_time_avg_ms,{:.3}\n", snapshot.frame_time_avg_ms));
-    csv.push_str(&format!("p1_frame_time_ms,{:.3}\n", snapshot.p1_frame_time_ms));
-    csv.push_str(&format!("p01_frame_time_ms,{:.3}\n", snapshot.p01_frame_time_ms));
+    csv.push_str(&format!(
+        "frame_time_min_ms,{:.3}\n",
+        snapshot.frame_time_min_ms
+    ));
+    csv.push_str(&format!(
+        "frame_time_max_ms,{:.3}\n",
+        snapshot.frame_time_max_ms
+    ));
+    csv.push_str(&format!(
+        "frame_time_avg_ms,{:.3}\n",
+        snapshot.frame_time_avg_ms
+    ));
+    csv.push_str(&format!(
+        "p1_frame_time_ms,{:.3}\n",
+        snapshot.p1_frame_time_ms
+    ));
+    csv.push_str(&format!(
+        "p01_frame_time_ms,{:.3}\n",
+        snapshot.p01_frame_time_ms
+    ));
     csv.push_str(&format!("fps_1_low,{:.2}\n", snapshot.fps_1_low));
     csv.push_str(&format!("fps_01_low,{:.2}\n", snapshot.fps_01_low));
-    csv.push_str(&format!("budget_usage_percent,{:.2}\n", snapshot.budget_usage_percent));
-    csv.push_str(&format!("frames_over_budget,{}\n", snapshot.frames_over_budget));
+    csv.push_str(&format!(
+        "budget_usage_percent,{:.2}\n",
+        snapshot.budget_usage_percent
+    ));
+    csv.push_str(&format!(
+        "frames_over_budget,{}\n",
+        snapshot.frames_over_budget
+    ));
     csv.push_str(&format!("memory_rss_bytes,{}\n", snapshot.memory_rss_bytes));
     csv.push_str(&format!(
         "memory_peak_bytes,{}\n",
-        snapshot.memory_peak_bytes.map_or(String::new(), |v| v.to_string())
+        snapshot
+            .memory_peak_bytes
+            .map_or(String::new(), |v| v.to_string())
     ));
-    csv.push_str(&format!("memory_trend_mb_per_sec,{:.4}\n", snapshot.memory_trend_mb_per_sec));
+    csv.push_str(&format!(
+        "memory_trend_mb_per_sec,{:.4}\n",
+        snapshot.memory_trend_mb_per_sec
+    ));
     csv.push_str(&format!(
         "active_chunks,{}\n",
-        snapshot.active_chunks.map_or(String::new(), |v| v.to_string())
+        snapshot
+            .active_chunks
+            .map_or(String::new(), |v| v.to_string())
     ));
     csv.push_str(&format!(
         "chunks_per_second,{}\n",
-        snapshot.chunks_per_second.map_or(String::new(), |v| format!("{:.2}", v))
+        snapshot
+            .chunks_per_second
+            .map_or(String::new(), |v| format!("{:.2}", v))
     ));
     csv.push_str(&format!(
         "avg_chunk_load_time_ms,{}\n",
-        snapshot.avg_chunk_load_time_ms.map_or(String::new(), |v| format!("{:.2}", v))
+        snapshot
+            .avg_chunk_load_time_ms
+            .map_or(String::new(), |v| format!("{:.2}", v))
     ));
 
     csv
@@ -634,7 +666,10 @@ pub fn render_dashboard_with_exports(
         return;
     }
 
-    let chunk_count = chunk_manager.as_ref().map(|cm| cm.chunks.len()).unwrap_or(0);
+    let chunk_count = chunk_manager
+        .as_ref()
+        .map(|cm| cm.chunks.len())
+        .unwrap_or(0);
     draw_performance_dashboard(
         contexts.ctx_mut(),
         &dashboard,
@@ -744,7 +779,8 @@ pub fn draw_performance_dashboard(
                     .rect_filled(rect, 2.0, egui::Color32::from_rgb(40, 40, 40));
                 // Fill
                 let fill_width = rect.width() * (budget / 2.0).min(1.0);
-                let fill_rect = egui::Rect::from_min_size(rect.min, egui::vec2(fill_width, rect.height()));
+                let fill_rect =
+                    egui::Rect::from_min_size(rect.min, egui::vec2(fill_width, rect.height()));
                 ui.painter().rect_filled(fill_rect, 2.0, budget_color);
                 // Target line at 50% (= 100% budget)
                 let target_x = rect.min.x + rect.width() * 0.5;
@@ -774,7 +810,10 @@ pub fn draw_performance_dashboard(
                             } else {
                                 0.0
                             };
-                            ui.colored_label(fps_color(avg_fps as f64), format!("{:.1} FPS", avg_fps));
+                            ui.colored_label(
+                                fps_color(avg_fps as f64),
+                                format!("{:.1} FPS", avg_fps),
+                            );
                             ui.end_row();
 
                             ui.label("1% Low:");
@@ -802,10 +841,7 @@ pub fn draw_performance_dashboard(
                             };
                             ui.colored_label(
                                 ob_color,
-                                format!(
-                                    "{} / {}",
-                                    ob, DASHBOARD_HISTORY_SIZE
-                                ),
+                                format!("{} / {}", ob, DASHBOARD_HISTORY_SIZE),
                             );
                             ui.end_row();
                         });
@@ -868,14 +904,17 @@ pub fn draw_performance_dashboard(
                         .rect_filled(rect, 2.0, egui::Color32::from_rgb(20, 20, 30));
 
                     // 16.67ms target line
-                    let target_y = rect.max.y
-                        - (TARGET_FRAME_TIME_MS as f32 / max_ft) * rect.height();
+                    let target_y =
+                        rect.max.y - (TARGET_FRAME_TIME_MS as f32 / max_ft) * rect.height();
                     ui.painter().line_segment(
                         [
                             egui::pos2(rect.min.x, target_y),
                             egui::pos2(rect.max.x, target_y),
                         ],
-                        egui::Stroke::new(1.0, egui::Color32::from_rgba_premultiplied(255, 255, 100, 80)),
+                        egui::Stroke::new(
+                            1.0,
+                            egui::Color32::from_rgba_premultiplied(255, 255, 100, 80),
+                        ),
                     );
 
                     // Bars
@@ -961,10 +1000,7 @@ pub fn draw_performance_dashboard(
                             if dashboard.current_rss_bytes > 0 {
                                 ui.monospace(memory::format_bytes(dashboard.current_rss_bytes));
                             } else {
-                                ui.colored_label(
-                                    egui::Color32::from_rgb(150, 150, 150),
-                                    "N/A",
-                                );
+                                ui.colored_label(egui::Color32::from_rgb(150, 150, 150), "N/A");
                             }
                             ui.end_row();
 
@@ -1393,7 +1429,7 @@ mod tests {
     fn test_generate_export_path() {
         let path = generate_export_path(ExportFormat::Json);
         let path_str = path.to_string_lossy();
-        
+
         assert!(path_str.contains("exports"));
         assert!(path_str.contains("performance"));
         assert!(path_str.ends_with(".json"));
@@ -1406,7 +1442,7 @@ mod tests {
     fn test_generate_export_path_with_suffix() {
         let path = generate_export_path_with_suffix("frame_history", ExportFormat::Csv);
         let path_str = path.to_string_lossy();
-        
+
         assert!(path_str.contains("frame_history"));
         assert!(path_str.ends_with(".csv"));
     }
@@ -1414,7 +1450,7 @@ mod tests {
     #[test]
     fn test_generate_timestamp() {
         let ts = generate_timestamp();
-        
+
         // Should be in ISO 8601 format
         assert!(ts.contains('T'));
         assert!(ts.ends_with('Z'));
@@ -1458,10 +1494,10 @@ mod tests {
         let json = serde_json::to_string(&snapshot).expect("Should serialize to JSON");
         assert!(json.contains("\"fps\":60.0"));
         assert!(json.contains("\"active_chunks\":100"));
-        
+
         // Test deserialization roundtrip
-        let deserialized: MetricsSnapshot = serde_json::from_str(&json)
-            .expect("Should deserialize from JSON");
+        let deserialized: MetricsSnapshot =
+            serde_json::from_str(&json).expect("Should deserialize from JSON");
         assert!((deserialized.fps - 60.0).abs() < 0.01);
         assert_eq!(deserialized.active_chunks, Some(100));
     }

@@ -89,8 +89,12 @@ pub struct BlockDefinition {
     pub category: BlockCategory,
 }
 
-fn default_hardness() -> f32 { 1.0 }
-fn default_tool() -> String { "any".to_string() }
+fn default_hardness() -> f32 {
+    1.0
+}
+fn default_tool() -> String {
+    "any".to_string()
+}
 
 /// Block categories for editor organization
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -110,9 +114,9 @@ impl BlockDefinition {
         let id = block_type_to_id(block_type);
         let display_name = block_type.display_name().to_string();
         let numeric_id = block_type as u16;
-        
+
         let (physics, visuals, category) = block_type_properties(block_type);
-        
+
         Self {
             id,
             display_name,
@@ -149,7 +153,8 @@ fn block_type_to_id(bt: BlockType) -> String {
         BlockType::IronOre => "iron_ore",
         BlockType::SilverOre => "silver_ore",
         BlockType::GoldOre => "gold_ore",
-    }.to_string()
+    }
+    .to_string()
 }
 
 /// Get physics, visuals, and category for a BlockType
@@ -159,10 +164,10 @@ fn block_type_properties(bt: BlockType) -> (BlockPhysics, BlockVisuals, BlockCat
         transparent: bt.is_transparent(),
         passable: !bt.is_solid() || bt == BlockType::Water,
     };
-    
+
     // Get colors from meshing module
     let color = crate::world::meshing::block_color(bt);
-    
+
     // Get texture tiles
     let tex = crate::world::texture_atlas::block_textures(bt);
     let visuals = BlockVisuals {
@@ -170,19 +175,25 @@ fn block_type_properties(bt: BlockType) -> (BlockPhysics, BlockVisuals, BlockCat
         texture_tiles: [tex.top, tex.bottom, tex.side],
         light_level: 0,
     };
-    
+
     let category = match bt {
-        BlockType::CopperOre | BlockType::IronOre | 
-        BlockType::SilverOre | BlockType::GoldOre => BlockCategory::Ore,
+        BlockType::CopperOre | BlockType::IronOre | BlockType::SilverOre | BlockType::GoldOre => {
+            BlockCategory::Ore
+        }
         BlockType::Water => BlockCategory::Fluid,
         BlockType::Air => BlockCategory::Special,
-        BlockType::Stone | BlockType::Dirt | BlockType::Grass |
-        BlockType::Sand | BlockType::Snow | BlockType::Ice |
-        BlockType::SandDunes | BlockType::VolcanicRock => BlockCategory::Natural,
+        BlockType::Stone
+        | BlockType::Dirt
+        | BlockType::Grass
+        | BlockType::Sand
+        | BlockType::Snow
+        | BlockType::Ice
+        | BlockType::SandDunes
+        | BlockType::VolcanicRock => BlockCategory::Natural,
         BlockType::Wood | BlockType::Leaves | BlockType::Cactus => BlockCategory::Natural,
         BlockType::Sandstone | BlockType::Obsidian => BlockCategory::Building,
     };
-    
+
     (physics, visuals, category)
 }
 
@@ -191,11 +202,13 @@ fn block_type_hardness(bt: BlockType) -> f32 {
     match bt {
         BlockType::Air => 0.0,
         BlockType::Leaves => 0.2,
-        BlockType::Grass | BlockType::Dirt | BlockType::Sand | 
-        BlockType::Snow | BlockType::SandDunes => 0.5,
+        BlockType::Grass
+        | BlockType::Dirt
+        | BlockType::Sand
+        | BlockType::Snow
+        | BlockType::SandDunes => 0.5,
         BlockType::Wood | BlockType::Cactus => 2.0,
-        BlockType::Stone | BlockType::Sandstone | BlockType::Ice |
-        BlockType::VolcanicRock => 3.0,
+        BlockType::Stone | BlockType::Sandstone | BlockType::Ice | BlockType::VolcanicRock => 3.0,
         BlockType::CopperOre => 2.0,
         BlockType::IronOre => 3.0,
         BlockType::SilverOre => 2.5,
@@ -208,14 +221,24 @@ fn block_type_hardness(bt: BlockType) -> f32 {
 /// Get required tool for a BlockType
 fn block_type_tool(bt: BlockType) -> String {
     match bt {
-        BlockType::Stone | BlockType::Sandstone | BlockType::Obsidian |
-        BlockType::CopperOre | BlockType::IronOre | BlockType::SilverOre |
-        BlockType::GoldOre | BlockType::VolcanicRock | BlockType::Ice => "pickaxe",
-        BlockType::Dirt | BlockType::Grass | BlockType::Sand |
-        BlockType::Snow | BlockType::SandDunes => "shovel",
+        BlockType::Stone
+        | BlockType::Sandstone
+        | BlockType::Obsidian
+        | BlockType::CopperOre
+        | BlockType::IronOre
+        | BlockType::SilverOre
+        | BlockType::GoldOre
+        | BlockType::VolcanicRock
+        | BlockType::Ice => "pickaxe",
+        BlockType::Dirt
+        | BlockType::Grass
+        | BlockType::Sand
+        | BlockType::Snow
+        | BlockType::SandDunes => "shovel",
         BlockType::Wood | BlockType::Leaves | BlockType::Cactus => "axe",
         _ => "any",
-    }.to_string()
+    }
+    .to_string()
 }
 
 // ============================================================================
@@ -241,10 +264,10 @@ impl Default for BlockRegistry {
             by_numeric: HashMap::new(),
             next_id: 100, // Reserve 0-99 for built-in blocks
         };
-        
+
         // Register all built-in BlockType variants
         registry.register_builtin_blocks();
-        
+
         registry
     }
 }
@@ -273,56 +296,60 @@ impl BlockRegistry {
             BlockType::SilverOre,
             BlockType::GoldOre,
         ];
-        
+
         for bt in builtins {
             let def = BlockDefinition::from_block_type(bt);
             self.blocks.insert(def.id.clone(), def.clone());
             self.by_numeric.insert(def.numeric_id, def.id.clone());
         }
-        
-        info!("BlockRegistry initialized with {} built-in blocks", self.blocks.len());
+
+        info!(
+            "BlockRegistry initialized with {} built-in blocks",
+            self.blocks.len()
+        );
     }
-    
+
     /// Get a block definition by string ID
     pub fn get(&self, id: &str) -> Option<&BlockDefinition> {
         self.blocks.get(id)
     }
-    
+
     /// Get a block definition by numeric ID
     pub fn get_by_numeric(&self, id: u16) -> Option<&BlockDefinition> {
         self.by_numeric.get(&id).and_then(|s| self.blocks.get(s))
     }
-    
+
     /// Get BlockType for a string ID (Phase 1 compatibility)
     pub fn get_block_type(&self, id: &str) -> Option<BlockType> {
         self.blocks.get(id).and_then(|def| def.block_type)
     }
-    
+
     /// Iterate all blocks
     pub fn iter(&self) -> impl Iterator<Item = &BlockDefinition> {
         self.blocks.values()
     }
-    
+
     /// Get all block IDs sorted
     pub fn ids_sorted(&self) -> Vec<String> {
         let mut ids: Vec<_> = self.blocks.keys().cloned().collect();
         ids.sort();
         ids
     }
-    
+
     /// Count of registered blocks
     pub fn len(&self) -> usize {
         self.blocks.len()
     }
-    
+
     /// Is registry empty
     pub fn is_empty(&self) -> bool {
         self.blocks.is_empty()
     }
-    
+
     /// Get blocks by category
     pub fn by_category(&self, category: BlockCategory) -> Vec<&BlockDefinition> {
-        self.blocks.values()
+        self.blocks
+            .values()
             .filter(|b| b.category == category)
             .collect()
     }
@@ -348,13 +375,16 @@ impl Plugin for BlockPlugin {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_block_registry_default() {
         let registry = BlockRegistry::default();
-        assert!(registry.len() >= 19, "Should have at least 19 built-in blocks");
+        assert!(
+            registry.len() >= 19,
+            "Should have at least 19 built-in blocks"
+        );
     }
-    
+
     #[test]
     fn test_block_registry_get() {
         let registry = BlockRegistry::default();
@@ -362,7 +392,7 @@ mod tests {
         assert!(stone.is_some());
         assert_eq!(stone.unwrap().display_name, "Stone");
     }
-    
+
     #[test]
     fn test_block_registry_get_by_numeric() {
         let registry = BlockRegistry::default();
@@ -370,7 +400,7 @@ mod tests {
         assert!(stone.is_some());
         assert_eq!(stone.unwrap().id, "stone");
     }
-    
+
     #[test]
     fn test_block_definition_from_block_type() {
         let def = BlockDefinition::from_block_type(BlockType::IronOre);
@@ -378,7 +408,7 @@ mod tests {
         assert_eq!(def.category, BlockCategory::Ore);
         assert!(def.physics.solid);
     }
-    
+
     #[test]
     fn test_block_categories() {
         let registry = BlockRegistry::default();

@@ -7,12 +7,8 @@ use std::io;
 
 use bevy::math::IVec3;
 
-use procedural_worlds::world::persistence::{
-    self, ChunkStorage, SaveFormat,
-};
-use procedural_worlds::world::{
-    BlockType, Chunk, ChunkManager, CHUNK_SIZE,
-};
+use procedural_worlds::world::persistence::{self, ChunkStorage, SaveFormat};
+use procedural_worlds::world::{BlockType, CHUNK_SIZE, Chunk, ChunkManager};
 
 // ============================================================================
 // Helpers
@@ -169,7 +165,10 @@ fn auto_detect_corrupted_binary_does_not_fallback() {
 
     // Auto-detect tries binary first; it exists but is corrupted → error
     let result = persistence::load_chunk(IVec3::ZERO, &storage);
-    assert!(result.is_err(), "Should fail on corrupted binary, not silently fall through");
+    assert!(
+        result.is_err(),
+        "Should fail on corrupted binary, not silently fall through"
+    );
 
     cleanup(&storage);
 }
@@ -274,7 +273,10 @@ fn out_of_bounds_block_access_is_safe() {
     assert_eq!(chunk.get_block(CHUNK_SIZE, 0, 0), BlockType::Air);
     assert_eq!(chunk.get_block(0, CHUNK_SIZE, 0), BlockType::Air);
     assert_eq!(chunk.get_block(0, 0, CHUNK_SIZE), BlockType::Air);
-    assert_eq!(chunk.get_block(usize::MAX, usize::MAX, usize::MAX), BlockType::Air);
+    assert_eq!(
+        chunk.get_block(usize::MAX, usize::MAX, usize::MAX),
+        BlockType::Air
+    );
 }
 
 /// Out-of-bounds set_block is silently ignored.
@@ -368,7 +370,9 @@ fn all_block_types_survive_round_trip() {
             loaded.get_block(x, y, 0),
             block,
             "Block type {:?} lost at ({}, {}, 0)",
-            block, x, y
+            block,
+            x,
+            y
         );
     }
 

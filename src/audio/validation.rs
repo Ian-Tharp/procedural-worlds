@@ -6,15 +6,17 @@
 
 use bevy::prelude::*;
 
-use crate::config::audio::AudioSettings;
 use crate::config::EngineConfig;
+use crate::config::audio::AudioSettings;
 
 // ============================================================================
 // CONSTANTS
 // ============================================================================
 
 /// Valid sample rates accepted by the validator.
-const VALID_SAMPLE_RATES: &[u32] = &[8000, 11025, 16000, 22050, 44100, 48000, 88200, 96000, 176400, 192000];
+const VALID_SAMPLE_RATES: &[u32] = &[
+    8000, 11025, 16000, 22050, 44100, 48000, 88200, 96000, 176400, 192000,
+];
 
 /// Minimum buffer size in frames.
 const MIN_BUFFER_SIZE: u32 = 32;
@@ -259,8 +261,7 @@ fn validate_audio_startup(mut commands: Commands, config: Res<EngineConfig>) {
     let (audio_available, device_names) = probe_audio_devices();
 
     // Step 3: Resolve device state
-    let device_state =
-        resolve_device_state(&result.config, &device_names, audio_available);
+    let device_state = resolve_device_state(&result.config, &device_names, audio_available);
 
     // Log the outcome
     match &device_state {
@@ -302,7 +303,10 @@ fn validate_audio_startup(mut commands: Commands, config: Res<EngineConfig>) {
         warnings: result.warnings,
     });
 
-    info!("Audio validation complete (master_volume: {})", result.config.master_volume);
+    info!(
+        "Audio validation complete (master_volume: {})",
+        result.config.master_volume
+    );
 }
 
 /// Probe the OS for available audio output devices.
@@ -357,7 +361,10 @@ mod tests {
     fn test_valid_config_passes_without_warnings() {
         let config = AudioSettings::default();
         let result = validate_audio_config(&config);
-        assert!(result.warnings.is_empty(), "Default config should produce no warnings");
+        assert!(
+            result.warnings.is_empty(),
+            "Default config should produce no warnings"
+        );
         assert_eq!(result.config.master_volume, 0.8);
         assert_eq!(result.config.sample_rate, None);
         assert_eq!(result.config.buffer_size, None);
@@ -507,10 +514,7 @@ mod tests {
             ..Default::default()
         };
         let result = validate_audio_config(&config);
-        assert_eq!(
-            result.config.preferred_device,
-            Some("My Speakers".into())
-        );
+        assert_eq!(result.config.preferred_device, Some("My Speakers".into()));
         assert!(result.warnings.is_empty());
     }
 
@@ -613,7 +617,11 @@ mod tests {
         };
         let result = validate_audio_config(&config);
         // Should have warnings for: volume, sample rate, buffer size, device name
-        assert!(result.warnings.len() >= 3, "Expected multiple warnings, got: {:?}", result.warnings);
+        assert!(
+            result.warnings.len() >= 3,
+            "Expected multiple warnings, got: {:?}",
+            result.warnings
+        );
         assert_eq!(result.config.master_volume, 1.0);
         assert_eq!(result.config.sample_rate, None);
         assert_eq!(result.config.buffer_size, Some(MIN_BUFFER_SIZE));

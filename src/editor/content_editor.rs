@@ -7,9 +7,9 @@
 //! - Save changes to disk
 
 use bevy::prelude::*;
-use bevy_egui::{egui, EguiContexts};
+use bevy_egui::{EguiContexts, egui};
 
-use crate::content::{OreDefinition, OreRegistry, BiomeFilter};
+use crate::content::{BiomeFilter, OreDefinition, OreRegistry};
 
 // ============================================================================
 // STATE
@@ -82,12 +82,15 @@ pub struct ContentEditorPlugin;
 
 impl Plugin for ContentEditorPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<ContentEditorState>()
-            .add_systems(Update, (
+        app.init_resource::<ContentEditorState>().add_systems(
+            Update,
+            (
                 content_editor_toggle_system,
                 content_editor_ui_system,
                 update_message_timer,
-            ).chain());
+            )
+                .chain(),
+        );
     }
 }
 
@@ -103,14 +106,14 @@ fn content_editor_toggle_system(
     if egui_wants_keyboard {
         return;
     }
-    
+
     if keyboard.just_pressed(KeyCode::F10) {
         state.visible = !state.visible;
         if !state.visible {
             state.fullscreen = false;
         }
     }
-    
+
     // ESC exits fullscreen or closes editor
     if keyboard.just_pressed(KeyCode::Escape) {
         if state.fullscreen {
@@ -122,10 +125,7 @@ fn content_editor_toggle_system(
 }
 
 /// Update message display timer
-fn update_message_timer(
-    mut state: ResMut<ContentEditorState>,
-    time: Res<Time>,
-) {
+fn update_message_timer(mut state: ResMut<ContentEditorState>, time: Res<Time>) {
     if state.editing.message_timer > 0.0 {
         state.editing.message_timer -= time.delta_secs();
         if state.editing.message_timer <= 0.0 {
@@ -205,9 +205,11 @@ fn draw_fullscreen_editor(
 ) {
     // Use CentralPanel for true fullscreen - covers entire screen
     egui::CentralPanel::default()
-        .frame(egui::Frame::none()
-            .fill(egui::Color32::from_rgba_unmultiplied(20, 22, 28, 250))
-            .inner_margin(egui::Margin::same(20.0)))
+        .frame(
+            egui::Frame::none()
+                .fill(egui::Color32::from_rgba_unmultiplied(20, 22, 28, 250))
+                .inner_margin(egui::Margin::same(20.0)),
+        )
         .show(ctx, |ui| {
             // Title bar
             ui.horizontal(|ui| {
@@ -223,7 +225,7 @@ fn draw_fullscreen_editor(
                 });
             });
             ui.separator();
-            
+
             // Main content
             draw_editor_content(ui, state, ore_registry);
         });
@@ -246,13 +248,25 @@ fn draw_editor_content(
         ui.separator();
 
         // Fullscreen toggle
-        let fullscreen_text = if state.fullscreen { "⊟ Exit Fullscreen" } else { "⊞ Fullscreen" };
-        if ui.button(fullscreen_text).on_hover_text("Toggle fullscreen mode (pauses game)").clicked() {
+        let fullscreen_text = if state.fullscreen {
+            "⊟ Exit Fullscreen"
+        } else {
+            "⊞ Fullscreen"
+        };
+        if ui
+            .button(fullscreen_text)
+            .on_hover_text("Toggle fullscreen mode (pauses game)")
+            .clicked()
+        {
             state.fullscreen = !state.fullscreen;
         }
 
         // Close button
-        if ui.button("✕ Close").on_hover_text("Close editor (F10)").clicked() {
+        if ui
+            .button("✕ Close")
+            .on_hover_text("Close editor (F10)")
+            .clicked()
+        {
             state.visible = false;
             state.fullscreen = false;
         }
@@ -263,12 +277,18 @@ fn draw_editor_content(
     // Status messages
     if let Some(ref error) = state.editing.error_message {
         ui.horizontal(|ui| {
-            ui.colored_label(egui::Color32::from_rgb(255, 100, 100), format!("❌ {}", error));
+            ui.colored_label(
+                egui::Color32::from_rgb(255, 100, 100),
+                format!("❌ {}", error),
+            );
         });
     }
     if let Some(ref success) = state.editing.success_message {
         ui.horizontal(|ui| {
-            ui.colored_label(egui::Color32::from_rgb(100, 255, 100), format!("✓ {}", success));
+            ui.colored_label(
+                egui::Color32::from_rgb(100, 255, 100),
+                format!("✓ {}", success),
+            );
         });
     }
 
@@ -287,7 +307,10 @@ fn draw_ores_tab(
     ore_registry: Option<&mut OreRegistry>,
 ) {
     let Some(registry) = ore_registry else {
-        ui.colored_label(egui::Color32::from_rgb(255, 200, 100), "Ore registry not loaded");
+        ui.colored_label(
+            egui::Color32::from_rgb(255, 200, 100),
+            "Ore registry not loaded",
+        );
         return;
     };
 
@@ -299,7 +322,11 @@ fn draw_ores_tab(
         left.separator();
 
         // New ore button
-        if left.button("➕ New Ore").on_hover_text("Create a new ore definition").clicked() {
+        if left
+            .button("➕ New Ore")
+            .on_hover_text("Create a new ore definition")
+            .clicked()
+        {
             let new_ore = registry.create_new();
             state.editing.selected_ore = Some(new_ore.id.clone());
             state.editing.editing_ore = Some(new_ore);
@@ -323,13 +350,13 @@ fn draw_ores_tab(
                         };
 
                         let response = ui.selectable_label(is_selected, &label);
-                        
+
                         if response.clicked() {
                             state.editing.selected_ore = Some(id.clone());
                             state.editing.editing_ore = Some(ore.clone());
                             state.editing.dirty = false;
                         }
-                        
+
                         response.on_hover_text(format!(
                             "ID: {}\nY: {}-{}\nFrequency: {:.3}",
                             ore.id,
@@ -346,12 +373,22 @@ fn draw_ores_tab(
 
         // RIGHT: Ore editor
         let right = &mut columns[1];
-        
+
         // Check if we have an ore to edit
         let has_ore = state.editing.editing_ore.is_some();
         let is_dirty = state.editing.dirty;
-        let is_user_content = state.editing.editing_ore.as_ref().map(|o| o.user_content).unwrap_or(false);
-        let ore_name = state.editing.editing_ore.as_ref().map(|o| o.display_name.clone()).unwrap_or_default();
+        let is_user_content = state
+            .editing
+            .editing_ore
+            .as_ref()
+            .map(|o| o.user_content)
+            .unwrap_or(false);
+        let ore_name = state
+            .editing
+            .editing_ore
+            .as_ref()
+            .map(|o| o.display_name.clone())
+            .unwrap_or_default();
         let ore_id = state.editing.editing_ore.as_ref().map(|o| o.id.clone());
 
         if has_ore {
@@ -364,27 +401,37 @@ fn draw_ores_tab(
 
             // Action buttons
             let save_text = if is_dirty {
-                egui::RichText::new("💾 Save").color(egui::Color32::from_rgb(255, 200, 100)).strong()
+                egui::RichText::new("💾 Save")
+                    .color(egui::Color32::from_rgb(255, 200, 100))
+                    .strong()
             } else {
                 egui::RichText::new("💾 Save")
             };
 
-            let (save_clicked, revert_clicked, delete_clicked) = right.horizontal(|ui| {
-                let save = ui.button(save_text).on_hover_text("Save changes to disk").clicked();
-                let revert = ui.button("↩ Revert").on_hover_text("Discard changes").clicked();
-                ui.separator();
+            let (save_clicked, revert_clicked, delete_clicked) = right
+                .horizontal(|ui| {
+                    let save = ui
+                        .button(save_text)
+                        .on_hover_text("Save changes to disk")
+                        .clicked();
+                    let revert = ui
+                        .button("↩ Revert")
+                        .on_hover_text("Discard changes")
+                        .clicked();
+                    ui.separator();
 
-                let delete = if is_user_content {
-                    ui.button("🗑 Delete")
-                        .on_hover_text("Delete this ore definition")
-                        .clicked()
-                } else {
-                    ui.add_enabled(false, egui::Button::new("🗑 Delete"))
-                        .on_hover_text("Cannot delete built-in ores");
-                    false
-                };
-                (save, revert, delete)
-            }).inner;
+                    let delete = if is_user_content {
+                        ui.button("🗑 Delete")
+                            .on_hover_text("Delete this ore definition")
+                            .clicked()
+                    } else {
+                        ui.add_enabled(false, egui::Button::new("🗑 Delete"))
+                            .on_hover_text("Cannot delete built-in ores");
+                        false
+                    };
+                    (save, revert, delete)
+                })
+                .inner;
 
             // Handle button actions
             if save_clicked {
@@ -423,10 +470,15 @@ fn draw_ores_tab(
                     egui::Color32::from_rgb(255, 200, 100),
                     format!("Delete '{}'? This cannot be undone.", ore_name),
                 );
-                
-                let (confirm_delete, cancel_delete) = right.horizontal(|ui| {
-                    (ui.button("Yes, Delete").clicked(), ui.button("Cancel").clicked())
-                }).inner;
+
+                let (confirm_delete, cancel_delete) = right
+                    .horizontal(|ui| {
+                        (
+                            ui.button("Yes, Delete").clicked(),
+                            ui.button("Cancel").clicked(),
+                        )
+                    })
+                    .inner;
 
                 if confirm_delete {
                     if let Some(id) = ore_id {
@@ -454,10 +506,7 @@ fn draw_ores_tab(
             // Dirty indicator
             if is_dirty {
                 right.separator();
-                right.colored_label(
-                    egui::Color32::from_rgb(255, 200, 100),
-                    "⚠ Unsaved changes",
-                );
+                right.colored_label(egui::Color32::from_rgb(255, 200, 100), "⚠ Unsaved changes");
             }
         } else {
             right.centered_and_justified(|ui| {
@@ -478,43 +527,60 @@ fn draw_ore_editor(ui: &mut egui::Ui, ore: &mut OreDefinition, dirty: &mut bool)
         .show(ui, |ui| {
             // Basic Info
             ui.label("ID:");
-            if ui.add(egui::TextEdit::singleline(&mut ore.id).hint_text("unique_id")).changed() {
+            if ui
+                .add(egui::TextEdit::singleline(&mut ore.id).hint_text("unique_id"))
+                .changed()
+            {
                 *dirty = true;
             }
             ui.end_row();
 
             ui.label("Display Name:");
-            if ui.add(egui::TextEdit::singleline(&mut ore.display_name).hint_text("Display Name")).changed() {
+            if ui
+                .add(egui::TextEdit::singleline(&mut ore.display_name).hint_text("Display Name"))
+                .changed()
+            {
                 *dirty = true;
             }
             ui.end_row();
 
             ui.label("Description:");
-            if ui.add(
-                egui::TextEdit::multiline(&mut ore.description)
-                    .desired_rows(2)
-                    .hint_text("Optional description...")
-            ).changed() {
+            if ui
+                .add(
+                    egui::TextEdit::multiline(&mut ore.description)
+                        .desired_rows(2)
+                        .hint_text("Optional description..."),
+                )
+                .changed()
+            {
                 *dirty = true;
             }
             ui.end_row();
 
             ui.label("Texture Index:");
-            if ui.add(egui::DragValue::new(&mut ore.texture_index).range(0..=255)).changed() {
+            if ui
+                .add(egui::DragValue::new(&mut ore.texture_index).range(0..=255))
+                .changed()
+            {
                 *dirty = true;
             }
             ui.end_row();
 
             ui.label("Hardness:");
-            if ui.add(
-                egui::Slider::new(&mut ore.hardness, 0.5..=10.0)
-            ).on_hover_text("Mining difficulty (1=dirt, 5=obsidian)").changed() {
+            if ui
+                .add(egui::Slider::new(&mut ore.hardness, 0.5..=10.0))
+                .on_hover_text("Mining difficulty (1=dirt, 5=obsidian)")
+                .changed()
+            {
                 *dirty = true;
             }
             ui.end_row();
 
             ui.label("Tool Required:");
-            if ui.add(egui::TextEdit::singleline(&mut ore.tool_required).hint_text("pickaxe")).changed() {
+            if ui
+                .add(egui::TextEdit::singleline(&mut ore.tool_required).hint_text("pickaxe"))
+                .changed()
+            {
                 *dirty = true;
             }
             ui.end_row();
@@ -529,29 +595,41 @@ fn draw_ore_editor(ui: &mut egui::Ui, ore: &mut OreDefinition, dirty: &mut bool)
         .show(ui, |ui| {
             ui.label("Y Range:");
             ui.horizontal(|ui| {
-                if ui.add(egui::DragValue::new(&mut ore.generation.min_y).range(-64..=320)).changed() {
+                if ui
+                    .add(egui::DragValue::new(&mut ore.generation.min_y).range(-64..=320))
+                    .changed()
+                {
                     *dirty = true;
                 }
                 ui.label("to");
-                if ui.add(egui::DragValue::new(&mut ore.generation.max_y).range(-64..=320)).changed() {
+                if ui
+                    .add(egui::DragValue::new(&mut ore.generation.max_y).range(-64..=320))
+                    .changed()
+                {
                     *dirty = true;
                 }
             });
             ui.end_row();
 
             ui.label("Vein Size:");
-            if ui.add(
-                egui::Slider::new(&mut ore.generation.vein_size, 1..=32)
-            ).on_hover_text("Average blocks per vein").changed() {
+            if ui
+                .add(egui::Slider::new(&mut ore.generation.vein_size, 1..=32))
+                .on_hover_text("Average blocks per vein")
+                .changed()
+            {
                 *dirty = true;
             }
             ui.end_row();
 
             ui.label("Frequency:");
-            if ui.add(
-                egui::Slider::new(&mut ore.generation.frequency, 0.0001..=0.1)
-                    .logarithmic(true)
-            ).on_hover_text("Spawn rate (0.001=rare, 0.05=common)").changed() {
+            if ui
+                .add(
+                    egui::Slider::new(&mut ore.generation.frequency, 0.0001..=0.1)
+                        .logarithmic(true),
+                )
+                .on_hover_text("Spawn rate (0.001=rare, 0.05=common)")
+                .changed()
+            {
                 *dirty = true;
             }
             ui.end_row();
@@ -569,18 +647,27 @@ fn draw_ore_editor(ui: &mut egui::Ui, ore: &mut OreDefinition, dirty: &mut bool)
         .spacing([10.0, 6.0])
         .show(ui, |ui| {
             ui.label("Item:");
-            if ui.add(egui::TextEdit::singleline(&mut ore.drop.item).hint_text("item_id")).changed() {
+            if ui
+                .add(egui::TextEdit::singleline(&mut ore.drop.item).hint_text("item_id"))
+                .changed()
+            {
                 *dirty = true;
             }
             ui.end_row();
 
             ui.label("Count:");
             ui.horizontal(|ui| {
-                if ui.add(egui::DragValue::new(&mut ore.drop.min_count).range(1..=64)).changed() {
+                if ui
+                    .add(egui::DragValue::new(&mut ore.drop.min_count).range(1..=64))
+                    .changed()
+                {
                     *dirty = true;
                 }
                 ui.label("to");
-                if ui.add(egui::DragValue::new(&mut ore.drop.max_count).range(1..=64)).changed() {
+                if ui
+                    .add(egui::DragValue::new(&mut ore.drop.max_count).range(1..=64))
+                    .changed()
+                {
                     *dirty = true;
                 }
             });
@@ -604,15 +691,24 @@ fn draw_biome_filter_editor(ui: &mut egui::Ui, filter: &mut BiomeFilter, dirty: 
             _ => "Unknown",
         })
         .show_ui(ui, |ui| {
-            if ui.selectable_value(&mut filter_type, 0, "All Biomes").changed() {
+            if ui
+                .selectable_value(&mut filter_type, 0, "All Biomes")
+                .changed()
+            {
                 *filter = BiomeFilter::All;
                 *dirty = true;
             }
-            if ui.selectable_value(&mut filter_type, 1, "Only Specific").changed() {
+            if ui
+                .selectable_value(&mut filter_type, 1, "Only Specific")
+                .changed()
+            {
                 *filter = BiomeFilter::Only(vec!["mountains".to_string()]);
                 *dirty = true;
             }
-            if ui.selectable_value(&mut filter_type, 2, "Except Specific").changed() {
+            if ui
+                .selectable_value(&mut filter_type, 2, "Except Specific")
+                .changed()
+            {
                 *filter = BiomeFilter::Except(vec!["desert".to_string()]);
                 *dirty = true;
             }
@@ -622,11 +718,14 @@ fn draw_biome_filter_editor(ui: &mut egui::Ui, filter: &mut BiomeFilter, dirty: 
     match filter {
         BiomeFilter::Only(biomes) | BiomeFilter::Except(biomes) => {
             let mut biomes_text = biomes.join(", ");
-            if ui.add(
-                egui::TextEdit::singleline(&mut biomes_text)
-                    .hint_text("biome1, biome2, ...")
-                    .desired_width(150.0)
-            ).changed() {
+            if ui
+                .add(
+                    egui::TextEdit::singleline(&mut biomes_text)
+                        .hint_text("biome1, biome2, ...")
+                        .desired_width(150.0),
+                )
+                .changed()
+            {
                 *biomes = biomes_text
                     .split(',')
                     .map(|s| s.trim().to_string())

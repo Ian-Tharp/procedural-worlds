@@ -29,9 +29,11 @@ use std::time::Instant;
 
 use super::persistence::{self, ChunkStorage};
 use super::{
-    world_to_chunk_pos, Chunk, ChunkLoadResult, ChunkManager, ChunkLoadMetrics, PendingChunk,
+    Chunk, ChunkLoadMetrics, ChunkLoadResult, ChunkManager, PendingChunk, world_to_chunk_pos,
 };
-use crate::generation::{generate_cacti, generate_caves, generate_chunk_terrain, generate_trees, TerrainConfig};
+use crate::generation::{
+    TerrainConfig, generate_cacti, generate_caves, generate_chunk_terrain, generate_trees,
+};
 
 // ============================================================================
 // CONFIGURATION
@@ -238,7 +240,10 @@ pub fn predictive_chunk_streaming_system(
                 let task = task_pool.spawn(async move {
                     // Try loading from disk first
                     if let Ok(chunk) = persistence::load_chunk(chunk_pos, &storage) {
-                        return ChunkLoadResult { chunk, from_cache: true };
+                        return ChunkLoadResult {
+                            chunk,
+                            from_cache: true,
+                        };
                     }
                     // Generate new terrain
                     let mut chunk = Chunk::new(chunk_pos);
@@ -246,7 +251,10 @@ pub fn predictive_chunk_streaming_system(
                     generate_caves(&mut chunk, &config);
                     generate_trees(&mut chunk, &config);
                     generate_cacti(&mut chunk, &config);
-                    ChunkLoadResult { chunk, from_cache: false }
+                    ChunkLoadResult {
+                        chunk,
+                        from_cache: false,
+                    }
                 });
 
                 commands.spawn(PendingChunk {
@@ -256,7 +264,9 @@ pub fn predictive_chunk_streaming_system(
 
                 chunk_manager.pending.insert(chunk_pos);
                 spawned += 1;
-                load_metrics.pending_start_times.insert(chunk_pos, Instant::now());
+                load_metrics
+                    .pending_start_times
+                    .insert(chunk_pos, Instant::now());
             }
         }
     }
@@ -406,10 +416,10 @@ mod tests {
         let positions = compute_predicted_positions(
             IVec3::ZERO,
             Vec3::new(1.0, 0.0, 0.0), // moving +X
-            4,  // load_dist
-            2,  // lookahead
-            0,  // vert_down
-            0,  // vert_up
+            4,                        // load_dist
+            2,                        // lookahead
+            0,                        // vert_down
+            0,                        // vert_up
         );
 
         // 2 steps * 3 lateral * 1 vertical = 6 positions
@@ -427,7 +437,7 @@ mod tests {
             IVec3::new(5, 0, 5),
             Vec3::new(0.0, 0.0, -1.0), // moving -Z
             4,
-            1,  // 1 step lookahead
+            1, // 1 step lookahead
             0,
             0,
         );
@@ -448,8 +458,8 @@ mod tests {
             Vec3::new(1.0, 0.0, 0.0),
             4,
             1,
-            2,  // vert_down
-            4,  // vert_up
+            2, // vert_down
+            4, // vert_up
         );
 
         // 1 step * 3 lateral * 7 vertical (-2..=4) = 21 positions
@@ -462,7 +472,7 @@ mod tests {
             IVec3::ZERO,
             Vec3::new(1.0, 0.0, 0.0),
             4,
-            0,  // no lookahead
+            0, // no lookahead
             0,
             0,
         );
@@ -472,33 +482,24 @@ mod tests {
     #[test]
     fn test_predicted_positions_diagonal() {
         let dir = Vec3::new(1.0, 0.0, 1.0).normalize();
-        let positions = compute_predicted_positions(
-            IVec3::ZERO,
-            dir,
-            4,
-            1,
-            0,
-            0,
-        );
+        let positions = compute_predicted_positions(IVec3::ZERO, dir, 4, 1, 0, 0);
 
         // 1 step * 3 lateral * 1 vertical = 3
         assert_eq!(positions.len(), 3);
 
         // At least one should be ahead in both X and Z
         let any_ahead = positions.iter().any(|p| p.x > 0 && p.z > 0);
-        assert!(any_ahead, "Should have positions ahead in diagonal: {:?}", positions);
+        assert!(
+            any_ahead,
+            "Should have positions ahead in diagonal: {:?}",
+            positions
+        );
     }
 
     #[test]
     fn test_predicted_positions_no_duplicates() {
-        let positions = compute_predicted_positions(
-            IVec3::ZERO,
-            Vec3::new(1.0, 0.0, 0.0),
-            4,
-            3,
-            1,
-            1,
-        );
+        let positions =
+            compute_predicted_positions(IVec3::ZERO, Vec3::new(1.0, 0.0, 0.0), 4, 3, 1, 1);
 
         let unique: std::collections::HashSet<_> = positions.iter().collect();
         // Note: duplicates CAN occur when rounding overlaps (e.g., perpendicular

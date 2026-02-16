@@ -12,6 +12,9 @@ use procedural_worlds::config;
 use procedural_worlds::content;
 use procedural_worlds::editor;
 use procedural_worlds::engine;
+use procedural_worlds::health;
+use procedural_worlds::inventory;
+use procedural_worlds::inventory_health;
 use procedural_worlds::physics;
 use procedural_worlds::world;
 
@@ -66,6 +69,12 @@ fn main() {
         .add_plugins(config::audio::AudioConfigPlugin)
         // Content system (ores, blocks, etc. - data-driven definitions)
         .add_plugins(content::ContentPlugin)
+        // Health & hunger system
+        .add_plugins(health::HealthPlugin)
+        // Inventory system (slots, hotbar, item stacks)
+        .add_plugins(inventory::InventoryPlugin)
+        // Inventory ↔ Health bridge (food consumption, death drops, HUD)
+        .add_plugins(inventory_health::InventoryHealthPlugin)
         // Startup systems
         .add_systems(Startup, setup_scene)
         .run();
@@ -80,10 +89,7 @@ fn setup_scene(mut commands: Commands) {
     // Position is FEET position, camera is offset by eye height (1.62)
     // Start in walking mode with gravity
     let player_feet_y = 64.0 - actors::CapsuleCollider::EYE_HEIGHT; // Eyes at 64
-    let player_id = actors::spawn_player(
-        &mut commands,
-        Vec3::new(32.0, player_feet_y, 32.0),
-    );
+    let player_id = actors::spawn_player(&mut commands, Vec3::new(32.0, player_feet_y, 32.0));
     info!("Spawned player entity: {:?}", player_id);
 
     // NOTE: DirectionalLight (sun) and AmbientLight are now managed by

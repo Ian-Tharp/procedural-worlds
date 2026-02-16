@@ -42,8 +42,8 @@ use std::time::{Duration, Instant};
 
 use bevy::prelude::*;
 
-use super::persistence::{self, ChunkStorage, SaveFormat};
 use super::Chunk;
+use super::persistence::{self, ChunkStorage, SaveFormat};
 
 // ============================================================================
 // CONFIGURATION

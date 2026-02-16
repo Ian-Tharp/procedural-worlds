@@ -6,15 +6,15 @@
 
 use bevy::math::IVec3;
 use bevy::prelude::Mesh;
-use bevy::tasks::{block_on, AsyncComputeTaskPool};
+use bevy::tasks::{AsyncComputeTaskPool, block_on};
 
 use procedural_worlds::generation::{
-    generate_cacti, generate_caves, generate_chunk_terrain, generate_trees, TerrainConfig,
+    TerrainConfig, generate_cacti, generate_caves, generate_chunk_terrain, generate_trees,
 };
 use procedural_worlds::world::meshing::{
-    build_chunk_mesh, build_chunk_mesh_with_neighbors, ChunkNeighbors,
+    ChunkNeighbors, build_chunk_mesh, build_chunk_mesh_with_neighbors,
 };
-use procedural_worlds::world::{BlockType, Chunk, CHUNK_SIZE, CHUNK_VOLUME};
+use procedural_worlds::world::{BlockType, CHUNK_SIZE, CHUNK_VOLUME, Chunk};
 
 // ============================================================================
 // Helpers
@@ -116,7 +116,10 @@ fn water_only_chunk_splits_correctly() {
 
     // Opaque mesh should be empty (water is transparent)
     let opaque_verts = mesh_vertex_count(&opaque);
-    assert_eq!(opaque_verts, 0, "Opaque mesh should be empty for water-only chunk");
+    assert_eq!(
+        opaque_verts, 0,
+        "Opaque mesh should be empty for water-only chunk"
+    );
 }
 
 /// A chunk with only solid blocks should produce no water mesh.
@@ -128,8 +131,14 @@ fn solid_only_chunk_no_water_mesh() {
     let neighbors = ChunkNeighbors::empty();
     let (opaque, water) = build_chunk_mesh_with_neighbors(&chunk, None, &neighbors);
 
-    assert!(water.is_none(), "Solid-only chunk should not produce water mesh");
-    assert!(mesh_vertex_count(&opaque) > 0, "Solid chunk should have opaque vertices");
+    assert!(
+        water.is_none(),
+        "Solid-only chunk should not produce water mesh"
+    );
+    assert!(
+        mesh_vertex_count(&opaque) > 0,
+        "Solid chunk should have opaque vertices"
+    );
 }
 
 /// A chunk with both solid and water blocks should produce both meshes.
@@ -193,7 +202,8 @@ fn neighbor_culling_reduces_face_count() {
     assert!(
         verts_with < verts_alone,
         "Solid neighbor should cull boundary faces: {} < {}",
-        verts_with, verts_alone
+        verts_with,
+        verts_alone
     );
 }
 
@@ -217,7 +227,8 @@ fn fully_surrounded_chunk_has_no_faces() {
     let (opaque, water) = build_chunk_mesh_with_neighbors(&chunk, None, &all_solid);
 
     assert_eq!(
-        mesh_vertex_count(&opaque), 0,
+        mesh_vertex_count(&opaque),
+        0,
         "Fully surrounded solid chunk should have no visible faces"
     );
     assert!(water.is_none());
@@ -244,9 +255,7 @@ fn async_meshing_matches_sync() {
 
     // Async
     let chunk_clone = chunk.clone();
-    let task = AsyncComputeTaskPool::get().spawn(async move {
-        build_chunk_mesh(&chunk_clone)
-    });
+    let task = AsyncComputeTaskPool::get().spawn(async move { build_chunk_mesh(&chunk_clone) });
     let async_mesh = block_on(task);
 
     assert_eq!(
@@ -299,7 +308,12 @@ fn concurrent_mesh_generation_all_valid() {
 
         // Surface chunks should always have some geometry
         assert!(verts > 0, "Chunk at {:?} should have vertices", pos);
-        assert_eq!(indices % 3, 0, "Chunk at {:?} should have triangle indices", pos);
+        assert_eq!(
+            indices % 3,
+            0,
+            "Chunk at {:?} should have triangle indices",
+            pos
+        );
     }
 }
 
@@ -316,14 +330,32 @@ fn mesh_attributes_consistent_lengths() {
 
     let mesh = build_chunk_mesh(&chunk);
 
-    let pos_count = mesh.attribute(Mesh::ATTRIBUTE_POSITION).map(|a| a.len()).unwrap_or(0);
-    let normal_count = mesh.attribute(Mesh::ATTRIBUTE_NORMAL).map(|a| a.len()).unwrap_or(0);
-    let color_count = mesh.attribute(Mesh::ATTRIBUTE_COLOR).map(|a| a.len()).unwrap_or(0);
-    let uv_count = mesh.attribute(Mesh::ATTRIBUTE_UV_0).map(|a| a.len()).unwrap_or(0);
+    let pos_count = mesh
+        .attribute(Mesh::ATTRIBUTE_POSITION)
+        .map(|a| a.len())
+        .unwrap_or(0);
+    let normal_count = mesh
+        .attribute(Mesh::ATTRIBUTE_NORMAL)
+        .map(|a| a.len())
+        .unwrap_or(0);
+    let color_count = mesh
+        .attribute(Mesh::ATTRIBUTE_COLOR)
+        .map(|a| a.len())
+        .unwrap_or(0);
+    let uv_count = mesh
+        .attribute(Mesh::ATTRIBUTE_UV_0)
+        .map(|a| a.len())
+        .unwrap_or(0);
 
     assert!(pos_count > 0, "Should have position data");
-    assert_eq!(pos_count, normal_count, "Position and normal counts must match");
-    assert_eq!(pos_count, color_count, "Position and color counts must match");
+    assert_eq!(
+        pos_count, normal_count,
+        "Position and normal counts must match"
+    );
+    assert_eq!(
+        pos_count, color_count,
+        "Position and color counts must match"
+    );
     assert_eq!(pos_count, uv_count, "Position and UV counts must match");
 }
 
@@ -346,7 +378,8 @@ fn greedy_more_efficient_than_naive_for_terrain() {
     assert!(
         greedy_verts <= naive_verts,
         "Greedy ({}) should produce <= naive ({}) vertices for terrain",
-        greedy_verts, naive_verts
+        greedy_verts,
+        naive_verts
     );
 
     // For realistic terrain, greedy should be significantly better
@@ -354,7 +387,8 @@ fn greedy_more_efficient_than_naive_for_terrain() {
         assert!(
             greedy_verts < naive_verts * 9 / 10,
             "Greedy ({}) should be at least 10% better than naive ({}) for terrain",
-            greedy_verts, naive_verts
+            greedy_verts,
+            naive_verts
         );
     }
 }

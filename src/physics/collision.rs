@@ -26,7 +26,7 @@ use bevy::prelude::*;
 // Re-export Resource for the derive macro
 
 use crate::actors::CapsuleCollider;
-use crate::world::{BlockType, Chunk, ChunkManager, CHUNK_SIZE};
+use crate::world::{BlockType, CHUNK_SIZE, Chunk, ChunkManager};
 
 /// Result of a collision check
 #[derive(Debug, Clone, Default)]
@@ -114,12 +114,9 @@ pub fn check_capsule_world_collision(
                 }
 
                 // Test capsule-block collision
-                if let Some(penetration) = capsule_aabb_penetration(
-                    feet_pos,
-                    collider,
-                    block_pos,
-                    params.epsilon,
-                ) {
+                if let Some(penetration) =
+                    capsule_aabb_penetration(feet_pos, collider, block_pos, params.epsilon)
+                {
                     result.hit = true;
                     result.block_count += 1;
 
@@ -136,7 +133,9 @@ pub fn check_capsule_world_collision(
 
                     // Check if this is a ground collision (block below feet)
                     let block_top = by as f32 + 1.0;
-                    if penetration.y > 0.0 && (feet_pos.y - block_top).abs() < params.ground_tolerance {
+                    if penetration.y > 0.0
+                        && (feet_pos.y - block_top).abs() < params.ground_tolerance
+                    {
                         result.grounded = true;
                         result.ground_normal = Vec3::Y;
                     }
@@ -144,7 +143,9 @@ pub fn check_capsule_world_collision(
                     // Check if this is a ceiling collision (block above head)
                     let head_y = feet_pos.y + collider.height;
                     let block_bottom = by as f32;
-                    if penetration.y < 0.0 && (head_y - block_bottom).abs() < params.ground_tolerance {
+                    if penetration.y < 0.0
+                        && (head_y - block_bottom).abs() < params.ground_tolerance
+                    {
                         result.head_hit = true;
                     }
                 }
@@ -180,11 +181,7 @@ pub fn check_ground(
     ];
 
     for pos in check_positions {
-        let block_pos = IVec3::new(
-            pos.x.floor() as i32,
-            check_y,
-            pos.z.floor() as i32,
-        );
+        let block_pos = IVec3::new(pos.x.floor() as i32, check_y, pos.z.floor() as i32);
 
         let block = get_block_at(block_pos, chunk_manager, chunks);
         if block.is_solid() {
@@ -211,10 +208,26 @@ pub fn check_ceiling(
 
     // Check blocks at head level
     let check_positions = [
-        IVec3::new(feet_pos.x.floor() as i32, head_block_y, feet_pos.z.floor() as i32),
-        IVec3::new(feet_pos.x.ceil() as i32, head_block_y, feet_pos.z.floor() as i32),
-        IVec3::new(feet_pos.x.floor() as i32, head_block_y, feet_pos.z.ceil() as i32),
-        IVec3::new(feet_pos.x.ceil() as i32, head_block_y, feet_pos.z.ceil() as i32),
+        IVec3::new(
+            feet_pos.x.floor() as i32,
+            head_block_y,
+            feet_pos.z.floor() as i32,
+        ),
+        IVec3::new(
+            feet_pos.x.ceil() as i32,
+            head_block_y,
+            feet_pos.z.floor() as i32,
+        ),
+        IVec3::new(
+            feet_pos.x.floor() as i32,
+            head_block_y,
+            feet_pos.z.ceil() as i32,
+        ),
+        IVec3::new(
+            feet_pos.x.ceil() as i32,
+            head_block_y,
+            feet_pos.z.ceil() as i32,
+        ),
     ];
 
     for block_pos in check_positions {
@@ -240,13 +253,8 @@ pub fn check_step(
     params: &CollisionParams,
 ) -> Option<f32> {
     // Check if target position is blocked
-    let collision = check_capsule_world_collision(
-        target_pos,
-        collider,
-        chunk_manager,
-        chunks,
-        params,
-    );
+    let collision =
+        check_capsule_world_collision(target_pos, collider, chunk_manager, chunks, params);
 
     if !collision.hit {
         // No collision, can move freely
@@ -259,23 +267,13 @@ pub fn check_step(
         let stepped_pos = Vec3::new(target_pos.x, current_pos.y + step_height, target_pos.z);
 
         // Check if stepped position is clear
-        let step_collision = check_capsule_world_collision(
-            stepped_pos,
-            collider,
-            chunk_manager,
-            chunks,
-            params,
-        );
+        let step_collision =
+            check_capsule_world_collision(stepped_pos, collider, chunk_manager, chunks, params);
 
         if !step_collision.hit {
             // Check there's ground to stand on
-            let (has_ground, ground_y) = check_ground(
-                stepped_pos,
-                collider,
-                chunk_manager,
-                chunks,
-                params,
-            );
+            let (has_ground, ground_y) =
+                check_ground(stepped_pos, collider, chunk_manager, chunks, params);
 
             if has_ground && ground_y >= current_pos.y {
                 return Some(ground_y);
@@ -305,13 +303,8 @@ pub fn resolve_collision(
     let mut final_result = CollisionResult::default();
 
     for _ in 0..MAX_ITERATIONS {
-        let result = check_capsule_world_collision(
-            feet_pos,
-            collider,
-            chunk_manager,
-            chunks,
-            params,
-        );
+        let result =
+            check_capsule_world_collision(feet_pos, collider, chunk_manager, chunks, params);
 
         if !result.hit {
             final_result.grounded = result.grounded;

@@ -20,13 +20,11 @@ use bevy::prelude::*;
 
 use crate::actors::{CapsuleCollider, Grounded, Movement, Player, Velocity};
 use crate::generation::TerrainConfig;
-use crate::world::{Chunk, ChunkManager, CHUNK_SIZE};
+use crate::world::{CHUNK_SIZE, Chunk, ChunkManager};
 
 pub mod collision;
 
-pub use collision::{
-    check_ceiling, check_ground, resolve_collision, CollisionParams,
-};
+pub use collision::{CollisionParams, check_ceiling, check_ground, resolve_collision};
 
 // ============================================================================
 // CONSTANTS
@@ -199,7 +197,16 @@ fn handle_jump(
     config: Res<PhysicsConfig>,
     chunk_manager: Option<Res<ChunkManager>>,
     chunks: Query<&Chunk>,
-    mut player_query: Query<(&Transform, &CapsuleCollider, &Movement, &mut Velocity, &mut Grounded), With<Player>>,
+    mut player_query: Query<
+        (
+            &Transform,
+            &CapsuleCollider,
+            &Movement,
+            &mut Velocity,
+            &mut Grounded,
+        ),
+        With<Player>,
+    >,
 ) {
     for (transform, collider, movement, mut velocity, mut grounded) in &mut player_query {
         // Only jump if not flying/noclip
@@ -301,7 +308,16 @@ fn apply_collision(
     chunk_manager: Option<Res<ChunkManager>>,
     chunks: Query<&Chunk>,
     terrain_config: Option<Res<TerrainConfig>>,
-    mut player_query: Query<(&mut Transform, &CapsuleCollider, &Movement, &mut Velocity, &mut Grounded), With<Player>>,
+    mut player_query: Query<
+        (
+            &mut Transform,
+            &CapsuleCollider,
+            &Movement,
+            &mut Velocity,
+            &mut Grounded,
+        ),
+        With<Player>,
+    >,
 ) {
     for (mut transform, collider, movement, mut velocity, mut grounded) in &mut player_query {
         // Skip if noclip (no collision at all)
@@ -381,7 +397,16 @@ fn sync_grounded_state(
     chunk_manager: Option<Res<ChunkManager>>,
     chunks: Query<&Chunk>,
     terrain_config: Option<Res<TerrainConfig>>,
-    mut player_query: Query<(&Transform, &CapsuleCollider, &Movement, &mut Velocity, &mut Grounded), With<Player>>,
+    mut player_query: Query<
+        (
+            &Transform,
+            &CapsuleCollider,
+            &Movement,
+            &mut Velocity,
+            &mut Grounded,
+        ),
+        With<Player>,
+    >,
 ) {
     for (transform, collider, movement, mut velocity, mut grounded) in &mut player_query {
         if movement.flying || movement.noclip {
@@ -392,13 +417,8 @@ fn sync_grounded_state(
 
         // Try block-level ground check
         if let Some(ref cm) = chunk_manager {
-            let (is_grounded, ground_y) = check_ground(
-                feet_pos,
-                collider,
-                cm,
-                &chunks,
-                collision_params.as_ref(),
-            );
+            let (is_grounded, ground_y) =
+                check_ground(feet_pos, collider, cm, &chunks, collision_params.as_ref());
 
             if is_grounded {
                 let distance = feet_pos.y - ground_y;

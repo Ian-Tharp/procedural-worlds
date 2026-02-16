@@ -42,44 +42,24 @@ pub mod raycast;
 // These re-exports maintain the public API even if not used internally
 #[allow(unused_imports)]
 pub use controller::{
-    CameraController,
-    ControllerInputSet as CameraInputSet,
-    ControllerSyncSet as CameraSyncSet,
+    CameraController, ControllerInputSet as CameraInputSet, ControllerSyncSet as CameraSyncSet,
     CursorState,
 };
 
 #[allow(unused_imports)]
-pub use input::{
-    ActionStates,
-    ActionState,
-    InputAction,
-    InputBinding,
-    InputMap,
-};
+pub use input::{ActionState, ActionStates, InputAction, InputBinding, InputMap};
 
 #[allow(unused_imports)]
-pub use profiler::{
-    ChunkMetricsSnapshot,
-    ProfilerPlugin,
-    ProfilerState,
-};
+pub use profiler::{ChunkMetricsSnapshot, ProfilerPlugin, ProfilerState};
 
 #[allow(unused_imports)]
 pub use metrics::{
-    MetricsPlugin,
-    MetricWarnings,
-    PerformanceMetrics,
-    PerformanceOverlay,
-    PerformanceThresholds,
+    MetricWarnings, MetricsPlugin, PerformanceMetrics, PerformanceOverlay, PerformanceThresholds,
     WarningLevel,
 };
 
 #[allow(unused_imports)]
-pub use raycast::{
-    CurrentTarget,
-    RaycastPlugin,
-    RaycastResult,
-};
+pub use raycast::{CurrentTarget, RaycastPlugin, RaycastResult};
 
 // ============================================================================
 // PLUGIN
@@ -93,9 +73,6 @@ pub struct CameraPlugin;
 impl Plugin for CameraPlugin {
     fn build(&self, app: &mut App) {
         // Add both input and controller plugins
-        app.add_plugins((
-            input::InputPlugin,
-            controller::ControllerPlugin,
-        ));
+        app.add_plugins((input::InputPlugin, controller::ControllerPlugin));
     }
 }

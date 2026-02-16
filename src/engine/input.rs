@@ -33,18 +33,18 @@ pub enum InputAction {
     MoveBackward,
     MoveLeft,
     MoveRight,
-    
+
     // Vertical movement
     Jump,
     Crouch,
-    
+
     // Modifiers
     Sprint,
-    
+
     // Mode toggles
     ToggleFly,
     ToggleNoclip,
-    
+
     // Camera/UI
     ReleaseCursor,
     #[allow(dead_code)]
@@ -66,12 +66,12 @@ impl ActionState {
     pub fn is_active(&self) -> bool {
         matches!(self, ActionState::JustPressed | ActionState::Pressed)
     }
-    
+
     /// Was the action just triggered this frame?
     pub fn just_pressed(&self) -> bool {
         matches!(self, ActionState::JustPressed)
     }
-    
+
     /// Was the action just released this frame?
     #[allow(dead_code)]
     pub fn just_released(&self) -> bool {
@@ -129,23 +129,23 @@ impl Default for InputMap {
             bindings: HashMap::new(),
             reverse_map: HashMap::new(),
         };
-        
+
         // Default bindings (Minecraft-style)
         map.bind(InputAction::MoveForward, KeyCode::KeyW);
         map.bind(InputAction::MoveBackward, KeyCode::KeyS);
         map.bind(InputAction::MoveLeft, KeyCode::KeyA);
         map.bind(InputAction::MoveRight, KeyCode::KeyD);
-        
+
         map.bind(InputAction::Jump, KeyCode::Space);
         map.bind(InputAction::Crouch, KeyCode::ControlLeft);
         map.bind(InputAction::Sprint, KeyCode::ShiftLeft);
-        
+
         map.bind(InputAction::ToggleFly, KeyCode::KeyF);
         map.bind(InputAction::ToggleNoclip, KeyCode::KeyN);
-        
+
         map.bind(InputAction::ReleaseCursor, KeyCode::Escape);
         // Mouse click to grab is handled separately (requires special logic)
-        
+
         map
     }
 }
@@ -154,17 +154,17 @@ impl InputMap {
     /// Bind an input to an action
     pub fn bind(&mut self, action: InputAction, binding: impl Into<InputBinding>) {
         let binding = binding.into();
-        
+
         // Add to forward map
         self.bindings
             .entry(action)
             .or_insert_with(Vec::new)
             .push(binding.clone());
-        
+
         // Add to reverse map
         self.reverse_map.insert(binding, action);
     }
-    
+
     /// Unbind all inputs from an action
     #[allow(dead_code)]
     pub fn unbind_action(&mut self, action: InputAction) {
@@ -174,7 +174,7 @@ impl InputMap {
             }
         }
     }
-    
+
     /// Clear all bindings (used by config system to rebuild from scratch)
     pub fn clear(&mut self) {
         self.bindings.clear();
@@ -191,16 +191,19 @@ impl InputMap {
             }
         }
     }
-    
+
     /// Get the action for a binding (if any)
     pub fn get_action(&self, binding: &InputBinding) -> Option<InputAction> {
         self.reverse_map.get(binding).copied()
     }
-    
+
     /// Get all bindings for an action
     #[allow(dead_code)]
     pub fn get_bindings(&self, action: InputAction) -> &[InputBinding] {
-        self.bindings.get(&action).map(|v| v.as_slice()).unwrap_or(&[])
+        self.bindings
+            .get(&action)
+            .map(|v| v.as_slice())
+            .unwrap_or(&[])
     }
 }
 
@@ -221,28 +224,28 @@ impl ActionStates {
     pub fn get(&self, action: InputAction) -> ActionState {
         self.states.get(&action).copied().unwrap_or_default()
     }
-    
+
     /// Check if an action is currently active (pressed)
     pub fn is_active(&self, action: InputAction) -> bool {
         self.get(action).is_active()
     }
-    
+
     /// Check if an action was just pressed this frame
     pub fn just_pressed(&self, action: InputAction) -> bool {
         self.get(action).just_pressed()
     }
-    
+
     /// Check if an action was just released this frame
     #[allow(dead_code)]
     pub fn just_released(&self, action: InputAction) -> bool {
         self.get(action).just_released()
     }
-    
+
     /// Update the state of an action
     pub fn set(&mut self, action: InputAction, state: ActionState) {
         self.states.insert(action, state);
     }
-    
+
     /// Transition states between frames (JustPressed -> Pressed, JustReleased -> Released)
     pub fn tick(&mut self) {
         for state in self.states.values_mut() {
@@ -287,11 +290,11 @@ fn process_input_system(
 ) {
     // Transition existing states
     action_states.tick();
-    
+
     // Check if egui wants keyboard input (user is typing in a text field)
     let ctx = egui_contexts.ctx_mut();
     let egui_wants_keyboard = ctx.wants_keyboard_input();
-    
+
     // When egui takes keyboard focus, clear all pressed keyboard states
     // to prevent "stuck keys" when user releases while typing
     if egui_wants_keyboard {
@@ -312,21 +315,21 @@ fn process_input_system(
                 action_states.set(action, ActionState::JustPressed);
             }
         }
-        
+
         for key in keyboard.get_just_released() {
             if let Some(action) = input_map.get_action(&InputBinding::Key(*key)) {
                 action_states.set(action, ActionState::JustReleased);
             }
         }
     }
-    
+
     // Process mouse buttons (always, even when typing)
     for button in mouse_buttons.get_just_pressed() {
         if let Some(action) = input_map.get_action(&InputBinding::MouseButton(*button)) {
             action_states.set(action, ActionState::JustPressed);
         }
     }
-    
+
     for button in mouse_buttons.get_just_released() {
         if let Some(action) = input_map.get_action(&InputBinding::MouseButton(*button)) {
             action_states.set(action, ActionState::JustReleased);
@@ -341,7 +344,7 @@ fn process_input_system(
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_action_state_active() {
         assert!(!ActionState::Released.is_active());
@@ -349,11 +352,11 @@ mod tests {
         assert!(ActionState::Pressed.is_active());
         assert!(!ActionState::JustReleased.is_active());
     }
-    
+
     #[test]
     fn test_input_map_default_bindings() {
         let map = InputMap::default();
-        
+
         assert_eq!(
             map.get_action(&InputBinding::Key(KeyCode::KeyW)),
             Some(InputAction::MoveForward)
@@ -367,14 +370,14 @@ mod tests {
             Some(InputAction::ToggleFly)
         );
     }
-    
+
     #[test]
     fn test_input_map_custom_binding() {
         let mut map = InputMap::default();
-        
+
         // Add arrow key bindings
         map.bind(InputAction::MoveForward, KeyCode::ArrowUp);
-        
+
         assert_eq!(
             map.get_action(&InputBinding::Key(KeyCode::ArrowUp)),
             Some(InputAction::MoveForward)
@@ -385,14 +388,14 @@ mod tests {
             Some(InputAction::MoveForward)
         );
     }
-    
+
     #[test]
     fn test_action_states_tick() {
         let mut states = ActionStates::default();
-        
+
         states.set(InputAction::Jump, ActionState::JustPressed);
         assert!(states.just_pressed(InputAction::Jump));
-        
+
         states.tick();
         assert!(!states.just_pressed(InputAction::Jump));
         assert!(states.is_active(InputAction::Jump));

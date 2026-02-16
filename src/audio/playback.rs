@@ -253,7 +253,9 @@ fn update_ambient_biome_sound(
 
     // Use the same biome noise as terrain generation
     let biome_noise = noise::Simplex::new(
-        terrain_config.seed.wrapping_add(terrain_config.biome_seed_offset),
+        terrain_config
+            .seed
+            .wrapping_add(terrain_config.biome_seed_offset),
     );
     let current_biome = crate::generation::biome::biome_at(
         world_x,

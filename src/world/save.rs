@@ -39,9 +39,9 @@ use std::path::{Path, PathBuf};
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 
+use super::Chunk;
 use super::chunk_streaming::ChunkWriteQueue;
 use super::persistence::{self, ChunkStorage, SaveFormat};
-use super::Chunk;
 use crate::actors::{Movement, Player};
 use crate::config::EngineConfig;
 
@@ -187,7 +187,14 @@ pub fn save_world(
     player_movement: &Movement,
     engine_config: &EngineConfig,
 ) -> Result<usize, io::Error> {
-    save_world_fmt(save_dir, chunks, player_pos, player_movement, engine_config, SaveFormat::Json)
+    save_world_fmt(
+        save_dir,
+        chunks,
+        player_pos,
+        player_movement,
+        engine_config,
+        SaveFormat::Json,
+    )
 }
 
 /// Save the entire world state to disk using a specific chunk format.
@@ -388,7 +395,10 @@ pub fn perform_save_system(
     // Try async streaming path if the queue resource exists and isn't busy
     if let Some(ref mut queue) = write_queue {
         if queue.has_pending() {
-            info!("Save deferred: chunk streaming still in progress ({} pending)", queue.pending_count());
+            info!(
+                "Save deferred: chunk streaming still in progress ({} pending)",
+                queue.pending_count()
+            );
             // Re-request so we try again next frame
             save_system.save_requested = true;
             return;
@@ -477,7 +487,14 @@ pub fn perform_save_system(
     }
 
     // Fallback: synchronous save (no ChunkWriteQueue resource)
-    match save_world_fmt(&save_dir, &chunks, player_pos, player_movement, &engine_config, chunk_format) {
+    match save_world_fmt(
+        &save_dir,
+        &chunks,
+        player_pos,
+        player_movement,
+        &engine_config,
+        chunk_format,
+    ) {
         Ok(count) => {
             save_system.last_save_chunk_count = count;
             info!(
@@ -564,19 +581,17 @@ pub struct SavePlugin;
 
 impl Plugin for SavePlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<SaveSystem>().add_systems(
-            PostStartup,
-            load_world_on_startup_system,
-        )
-        .add_systems(
-            Update,
-            (
-                auto_save_timer_system,
-                manual_save_trigger_system,
-                perform_save_system,
-            )
-                .chain(),
-        );
+        app.init_resource::<SaveSystem>()
+            .add_systems(PostStartup, load_world_on_startup_system)
+            .add_systems(
+                Update,
+                (
+                    auto_save_timer_system,
+                    manual_save_trigger_system,
+                    perform_save_system,
+                )
+                    .chain(),
+            );
     }
 }
 
@@ -739,13 +754,7 @@ mod tests {
             (IVec3::new(2, 0, 2), &unmodified_chunk),
         ];
 
-        let result = save_world(
-            &dir,
-            &chunks,
-            Vec3::ZERO,
-            &movement,
-            &config,
-        );
+        let result = save_world(&dir, &chunks, Vec3::ZERO, &movement, &config);
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), 1); // Only 1 chunk saved
 
@@ -959,7 +968,14 @@ mod tests {
         chunk.set_block(0, 0, 0, BlockType::Stone);
         chunk.modified = true;
         let chunks: Vec<(IVec3, &Chunk)> = vec![(IVec3::ZERO, &chunk)];
-        save_world(&dir, &chunks, Vec3::new(10.0, 20.0, 30.0), &movement, &config).unwrap();
+        save_world(
+            &dir,
+            &chunks,
+            Vec3::new(10.0, 20.0, 30.0),
+            &movement,
+            &config,
+        )
+        .unwrap();
 
         // Second save with different player position
         save_world(
@@ -1116,16 +1132,37 @@ mod tests {
 
         let chunks: Vec<(IVec3, &Chunk)> = vec![(IVec3::ZERO, &chunk)];
 
-        save_world_fmt(&dir_json, &chunks, Vec3::ZERO, &movement, &config, SaveFormat::Json).unwrap();
-        save_world_fmt(&dir_bin, &chunks, Vec3::ZERO, &movement, &config, SaveFormat::Binary).unwrap();
+        save_world_fmt(
+            &dir_json,
+            &chunks,
+            Vec3::ZERO,
+            &movement,
+            &config,
+            SaveFormat::Json,
+        )
+        .unwrap();
+        save_world_fmt(
+            &dir_bin,
+            &chunks,
+            Vec3::ZERO,
+            &movement,
+            &config,
+            SaveFormat::Binary,
+        )
+        .unwrap();
 
-        let json_size = fs::metadata(dir_json.join("chunks/chunk_0_0_0.json")).unwrap().len();
-        let bin_size = fs::metadata(dir_bin.join("chunks/chunk_0_0_0.bin")).unwrap().len();
+        let json_size = fs::metadata(dir_json.join("chunks/chunk_0_0_0.json"))
+            .unwrap()
+            .len();
+        let bin_size = fs::metadata(dir_bin.join("chunks/chunk_0_0_0.bin"))
+            .unwrap()
+            .len();
 
         assert!(
             bin_size < json_size,
             "Binary ({} bytes) should be smaller than JSON ({} bytes)",
-            bin_size, json_size
+            bin_size,
+            json_size
         );
 
         cleanup(&dir_json);
@@ -1146,10 +1183,7 @@ mod tests {
             chunks_data.push(chunk);
         }
 
-        let chunks: Vec<(IVec3, &Chunk)> = chunks_data
-            .iter()
-            .map(|c| (c.position, c))
-            .collect();
+        let chunks: Vec<(IVec3, &Chunk)> = chunks_data.iter().map(|c| (c.position, c)).collect();
 
         let result = save_world(&dir, &chunks, Vec3::ZERO, &movement, &config);
         assert!(result.is_ok());

@@ -51,7 +51,7 @@ pub struct DayNightCycle {
 impl Default for DayNightCycle {
     fn default() -> Self {
         Self {
-            time_of_day: 0.35, // Start mid-morning
+            time_of_day: 0.35,     // Start mid-morning
             cycle_duration: 600.0, // 10 minutes
             paused: false,
         }
@@ -107,7 +107,12 @@ impl Plugin for DayNightPlugin {
             .add_systems(PostStartup, init_cycle_from_config)
             .add_systems(
                 Update,
-                (update_day_night_cycle, apply_lighting, update_shadow_casters).chain(),
+                (
+                    update_day_night_cycle,
+                    apply_lighting,
+                    update_shadow_casters,
+                )
+                    .chain(),
             );
     }
 }
@@ -158,10 +163,9 @@ fn spawn_sun(mut commands: Commands, config: Res<EngineConfig>) {
     // Sky color — will be updated dynamically by apply_lighting
     commands.insert_resource(ClearColor(Color::srgb(0.53, 0.71, 0.92)));
 
-    info!("Day/night cycle: sun and ambient light spawned (shadow map {}px, {} cascades, max dist {:.0})",
-        config.render.shadow_map_resolution,
-        config.render.shadow_cascade_count,
-        shadow_max,
+    info!(
+        "Day/night cycle: sun and ambient light spawned (shadow map {}px, {} cascades, max dist {:.0})",
+        config.render.shadow_map_resolution, config.render.shadow_cascade_count, shadow_max,
     );
 }
 
@@ -325,19 +329,11 @@ fn sky_color(elevation: f32) -> Color {
     } else if elevation < 0.0 {
         // Twilight — warm orange-pink
         let t = (elevation + 0.1) / 0.1; // 0 at deep night edge → 1 at horizon
-        Color::srgb(
-            lerp(0.02, 0.8, t),
-            lerp(0.02, 0.45, t),
-            lerp(0.08, 0.35, t),
-        )
+        Color::srgb(lerp(0.02, 0.8, t), lerp(0.02, 0.45, t), lerp(0.08, 0.35, t))
     } else if elevation < 0.3 {
         // Dawn/dusk above horizon — transition from warm to blue
         let t = elevation / 0.3; // 0 at horizon → 1 at 0.3 elevation
-        Color::srgb(
-            lerp(0.8, 0.53, t),
-            lerp(0.45, 0.71, t),
-            lerp(0.35, 0.92, t),
-        )
+        Color::srgb(lerp(0.8, 0.53, t), lerp(0.45, 0.71, t), lerp(0.35, 0.92, t))
     } else {
         // Full day — light sky blue
         Color::srgb(0.53, 0.71, 0.92)
@@ -467,7 +463,11 @@ mod tests {
     fn test_sun_overhead_at_noon() {
         let dir = sun_direction(0.5);
         // At noon the light should point mostly downward (negative Y)
-        assert!(dir.y < -0.9, "Noon light should point down, got y={}", dir.y);
+        assert!(
+            dir.y < -0.9,
+            "Noon light should point down, got y={}",
+            dir.y
+        );
     }
 
     #[test]
@@ -487,7 +487,11 @@ mod tests {
         assert!(noon > 0.9, "Noon elevation should be ~1.0, got {}", noon);
         // Midnight should be lowest
         let midnight = sun_elevation(0.0);
-        assert!(midnight < -0.9, "Midnight elevation should be ~-1.0, got {}", midnight);
+        assert!(
+            midnight < -0.9,
+            "Midnight elevation should be ~-1.0, got {}",
+            midnight
+        );
     }
 
     #[test]
@@ -509,13 +513,21 @@ mod tests {
     #[test]
     fn test_ambient_dim_at_night() {
         let (_color, brightness) = ambient_settings(0.0);
-        assert!(brightness <= 150.0, "Night ambient should be dim, got {}", brightness);
+        assert!(
+            brightness <= 150.0,
+            "Night ambient should be dim, got {}",
+            brightness
+        );
     }
 
     #[test]
     fn test_ambient_bright_at_noon() {
         let (_color, brightness) = ambient_settings(0.5);
-        assert!(brightness > 800.0, "Noon ambient should be bright, got {}", brightness);
+        assert!(
+            brightness > 800.0,
+            "Noon ambient should be bright, got {}",
+            brightness
+        );
     }
 
     #[test]
