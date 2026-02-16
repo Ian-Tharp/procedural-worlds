@@ -1,0 +1,43 @@
+# Branch Audit Report
+# Generated: 2026-02-16
+# Base branch: develop
+# Total branches analyzed: 27
+
+Branch Name                                      | Last Commit Date         | Commits Ahead | Status
+-------------------------------------------------|--------------------------|---------------|---------------
+feature/inventory-health-bridge                  | 2026-02-16 06:08:56      | 1             | MERGE-READY
+feature/f2-minimal-perf-overlay                  | 2026-02-15 15:03:57      | 1             | MERGE-READY
+feature/block-render-batching                    | 2026-02-15 12:10:31      | 1             | MERGE-READY
+feature/block-content-validation                 | 2026-02-15 00:07:05      | 1             | MERGE-READY
+feature/editor-validation-feedback               | 2026-02-15 06:06:57      | 1             | MERGE-READY
+fix/clippy-ore-warnings                          | 2026-02-14 15:02:47      | 1             | MERGE-READY
+feature/chunk-lifecycle-events                   | 2026-02-14 12:01:36      | 2             | MERGE-READY
+feature/minimap-chunk-performance-tooltips       | 2026-02-13 15:06:40      | 1             | MERGE-READY
+feature/chunk-memory-profiler                    | 2026-02-13 18:06:23      | 1             | MERGE-READY
+feature/shader-hot-reload-caching                | 2026-02-13 12:06:16      | 2             | MERGE-READY
+feature/chunk-mesh-caching                       | 2026-02-13 06:08:59      | 1             | MERGE-READY
+feature/chunk-preload-hint-system                | 2026-02-12 18:04:04      | 1             | REVIVAL
+feature/perf-metrics-overlay                     | 2026-02-12 12:09:13      | 1             | ABANDON (duplicate)
+fix/use-proper-math-constants                    | 2026-02-12 15:02:13      | 1             | MERGE-READY
+feature/shader-hot-reload                        | 2026-02-12 06:05:50      | 1             | ABANDON (superseded by shader-hot-reload-caching)
+feature/debug-console-unified                    | 2026-02-11 18:10:22      | 1             | REVIVAL
+feature/debug-console-command-validation         | 2026-02-07 10:27:55      | 1             | ABANDON (fragment)
+feature/performance-metrics-overlay              | 2026-02-07 06:24:11      | 1             | ABANDON (duplicate of perf-metrics-overlay)
+feature/performance-baseline-recording           | 2026-02-07 04:24:29      | 1             | REVIVAL
+feature/debug-console-categories                 | 2026-02-07 02:22:01      | 1             | ABANDON (fragment)
+feature/debug-console-validation                 | 2026-02-07 00:23:47      | 1             | ABANDON (fragment)
+feature/performance-metrics-export               | 2026-02-06 15:03:39      | 1             | REVIVAL
+feature/debug-console-autocomplete               | 2026-02-06 14:26:44      | 1             | ABANDON (fragment)
+feature/resource-monitor-panel                   | 2026-02-06 10:23:07      | 1             | REVIVAL
+feature/debug-console-weather-time               | 2026-02-05 22:29:11      | 2             | ABANDON (fragment)
+feature/debug-console                            | 2026-02-05 20:29:46      | 1             | ABANDON (superseded by debug-console-unified)
+feature/performance-profiler                     | 2026-02-05 18:23:02      | 1             | ABANDON (superseded by perf-metrics-overlay)
+
+# NOTES:
+# - All branches are <2 weeks old (project appears recently active)
+# - Most branches have only 1 commit — likely single-feature PRs
+# - Several debug-console-* branches appear to be incremental fragments that were
+#   consolidated into debug-console-unified
+# - Multiple performance overlay variants exist (perf-metrics-overlay,
+#   performance-metrics-overlay, performance-profiler) — likely iteration
+# - shader-hot-reload superseded by shader-hot-reload-caching

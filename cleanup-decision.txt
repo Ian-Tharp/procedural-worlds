@@ -1,0 +1,122 @@
+# Branch Cleanup Decisions
+# Generated: 2026-02-16
+# Policy: Document only — NO deletions or merges performed
+
+## ============================================================
+## DELETE — Abandoned / Superseded / Duplicate (10 branches)
+## ============================================================
+
+1. feature/debug-console
+   Reason: Superseded by feature/debug-console-unified
+
+2. feature/debug-console-autocomplete
+   Reason: Fragment; 1 commit, likely folded into debug-console-unified
+
+3. feature/debug-console-categories
+   Reason: Fragment; 1 commit, likely folded into debug-console-unified
+
+4. feature/debug-console-command-validation
+   Reason: Fragment; 1 commit, likely folded into debug-console-unified
+
+5. feature/debug-console-validation
+   Reason: Fragment; 1 commit, likely folded into debug-console-unified
+
+6. feature/debug-console-weather-time
+   Reason: Fragment; 2 commits, likely folded into debug-console-unified
+
+7. feature/shader-hot-reload
+   Reason: Superseded by feature/shader-hot-reload-caching
+
+8. feature/performance-metrics-overlay
+   Reason: Duplicate of feature/perf-metrics-overlay (same concept, different name)
+
+9. feature/performance-profiler
+   Reason: Superseded by feature/perf-metrics-overlay (more complete)
+
+10. feature/perf-metrics-overlay
+    Reason: Duplicate variant; feature/f2-minimal-perf-overlay appears to be the final version
+
+## ============================================================
+## MERGE — Ready for integration (12 branches)
+## ============================================================
+
+These branches are recent (<4 days old), appear complete, and should be reviewed for merge:
+
+1. feature/inventory-health-bridge (2026-02-16, 1 commit)
+   Rationale: Most recent, cross-system bridge feature
+
+2. feature/f2-minimal-perf-overlay (2026-02-15, 1 commit)
+   Rationale: Final iteration of perf overlay work
+
+3. feature/block-render-batching (2026-02-15, 1 commit)
+   Rationale: Performance optimization, recent
+
+4. feature/block-content-validation (2026-02-15, 1 commit)
+   Rationale: Validation feature, recent
+
+5. feature/editor-validation-feedback (2026-02-15, 1 commit)
+   Rationale: Editor UX improvement, recent
+
+6. fix/clippy-ore-warnings (2026-02-14, 1 commit)
+   Rationale: Fix branch — quick win, likely clean
+
+7. fix/use-proper-math-constants (2026-02-12, 1 commit)
+   Rationale: Fix branch — quick win, likely clean
+
+8. feature/chunk-lifecycle-events (2026-02-14, 2 commits)
+   Rationale: Chunk system feature, recent
+
+9. feature/minimap-chunk-performance-tooltips (2026-02-13, 1 commit)
+   Rationale: UI feature, recent
+
+10. feature/chunk-memory-profiler (2026-02-13, 1 commit)
+    Rationale: Profiling tool, recent
+
+11. feature/shader-hot-reload-caching (2026-02-13, 2 commits)
+    Rationale: Final iteration of shader reload work
+
+12. feature/chunk-mesh-caching (2026-02-13, 1 commit)
+    Rationale: Performance feature, recent
+
+## ============================================================
+## REVIVE — Worth future work (5 branches)
+## ============================================================
+
+1. feature/debug-console-unified (2026-02-11, 1 commit)
+   Next steps: Review if it consolidates all debug-console-* fragments.
+   If complete, promote to MERGE. If not, use as starting point for
+   a fresh debug console PR that incorporates autocomplete, categories,
+   validation, and weather/time commands.
+
+2. feature/chunk-preload-hint-system (2026-02-12, 1 commit)
+   Next steps: Evaluate preload hint API design. Could significantly
+   improve chunk loading performance. Needs integration testing with
+   chunk-lifecycle-events.
+
+3. feature/performance-baseline-recording (2026-02-07, 1 commit)
+   Next steps: Useful for regression testing. Define baseline metrics
+   format, integrate with CI pipeline for automated perf tracking.
+
+4. feature/performance-metrics-export (2026-02-06, 1 commit)
+   Next steps: Export functionality for perf data. Pair with
+   performance-baseline-recording for a complete perf analysis pipeline.
+
+5. feature/resource-monitor-panel (2026-02-06, 1 commit)
+   Next steps: UI panel for resource monitoring. Evaluate overlap with
+   f2-minimal-perf-overlay. May be complementary (detailed panel vs
+   lightweight overlay).
+
+## ============================================================
+## SUMMARY
+## ============================================================
+
+Total branches analyzed:  27
+Recommended for DELETE:   10  (superseded/duplicate/fragment)
+Recommended for MERGE:    12  (recent, appear complete)
+Recommended for REVIVE:    5  (good ideas, need more work)
+
+## NEXT STEPS
+1. Review MERGE candidates — create PRs or merge directly
+2. Delete the 10 ABANDON branches after team confirmation
+3. For REVIVE branches, create tracking issues with the noted next steps
+4. Consider consolidating debug-console-unified with remaining fragments
