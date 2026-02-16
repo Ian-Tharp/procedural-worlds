@@ -13,6 +13,7 @@ use procedural_worlds::content;
 use procedural_worlds::editor;
 use procedural_worlds::engine;
 use procedural_worlds::health;
+use procedural_worlds::inventory;
 use procedural_worlds::physics;
 use procedural_worlds::world;
 
@@ -67,6 +68,8 @@ fn main() {
         .add_plugins(config::audio::AudioConfigPlugin)
         // Content system (ores, blocks, etc. - data-driven definitions)
         .add_plugins(content::ContentPlugin)
+        // Inventory system
+        .add_plugins(inventory::InventoryPlugin)
         // Health & hunger system
         .add_plugins(health::HealthPlugin)
         // Startup systems
