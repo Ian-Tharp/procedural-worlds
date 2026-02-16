@@ -1,4 +1,4 @@
-//! Audio playback — positional sound effects and ambient biome sounds
+﻿//! Audio playback — positional sound effects and ambient biome sounds
 //!
 //! Provides an event-driven audio system for:
 //! - **Block interaction sounds** (place / break) with positional attenuation
@@ -96,6 +96,12 @@ impl BiomeAmbientAssets {
             BiomeType::Mountains => self.mountains.as_ref(),
             BiomeType::Tundra => self.tundra.as_ref(),
             BiomeType::Volcanic => self.volcanic.as_ref(),
+            BiomeType::Swamp => self.forest.as_ref(),
+            BiomeType::Savanna => self.plains.as_ref(),
+            BiomeType::Taiga => self.forest.as_ref(),
+            BiomeType::Jungle => self.forest.as_ref(),
+            BiomeType::Badlands => self.desert.as_ref(),
+            BiomeType::Mushroom => self.forest.as_ref(),
         }
     }
 }

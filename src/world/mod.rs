@@ -1,4 +1,4 @@
-//! World systems - chunks, blocks, voxel data structures
+﻿//! World systems - chunks, blocks, voxel data structures
 //!
 //! This module contains:
 //! - Chunk data structure (16x16x16 blocks)
@@ -69,6 +69,12 @@ pub enum BlockType {
     IronOre = 16,
     SilverOre = 17,
     GoldOre = 18,
+    Mud = 19,
+    Clay = 20,
+    Mycelium = 21,
+    TerracottaRed = 22,
+    TerracottaOrange = 23,
+    PackedDirt = 24,
 }
 
 impl From<BlockType> for u16 {
@@ -99,6 +105,12 @@ impl From<u16> for BlockType {
             16 => BlockType::IronOre,
             17 => BlockType::SilverOre,
             18 => BlockType::GoldOre,
+            19 => BlockType::Mud,
+            20 => BlockType::Clay,
+            21 => BlockType::Mycelium,
+            22 => BlockType::TerracottaRed,
+            23 => BlockType::TerracottaOrange,
+            24 => BlockType::PackedDirt,
             _ => BlockType::Air, // Unknown block types default to Air
         }
     }
@@ -137,6 +149,12 @@ impl BlockType {
             BlockType::IronOre => "Iron Ore",
             BlockType::SilverOre => "Silver Ore",
             BlockType::GoldOre => "Gold Ore",
+            BlockType::Mud => "Mud",
+            BlockType::Clay => "Clay",
+            BlockType::Mycelium => "Mycelium",
+            BlockType::TerracottaRed => "Red Terracotta",
+            BlockType::TerracottaOrange => "Orange Terracotta",
+            BlockType::PackedDirt => "Packed Dirt",
         }
     }
 }

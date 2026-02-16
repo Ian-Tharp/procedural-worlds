@@ -1,4 +1,4 @@
-//! Texture atlas system for block face textures.
+﻿//! Texture atlas system for block face textures.
 //!
 //! Generates a procedural texture atlas at startup where each block type has
 //! per-face textures (e.g., grass top differs from grass sides). The atlas is
@@ -98,6 +98,12 @@ pub fn block_textures(block: BlockType) -> BlockTextures {
         BlockType::IronOre => BlockTextures { top: 18, bottom: 18, side: 18 },
         BlockType::SilverOre => BlockTextures { top: 19, bottom: 19, side: 19 },
         BlockType::GoldOre => BlockTextures { top: 20, bottom: 20, side: 20 },
+        BlockType::Mud => BlockTextures { top: 1, bottom: 1, side: 1 },
+        BlockType::Clay => BlockTextures { top: 1, bottom: 1, side: 1 },
+        BlockType::Mycelium => BlockTextures { top: 2, bottom: 1, side: 3 },
+        BlockType::TerracottaRed => BlockTextures { top: 0, bottom: 0, side: 0 },
+        BlockType::TerracottaOrange => BlockTextures { top: 0, bottom: 0, side: 0 },
+        BlockType::PackedDirt => BlockTextures { top: 1, bottom: 1, side: 1 },
     }
 }
 
