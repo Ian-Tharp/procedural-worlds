@@ -114,12 +114,18 @@ fn pickup_system(
 ) {
     const PICKUP_RADIUS: f32 = 1.5;
     const PICKUP_RADIUS_SQ: f32 = PICKUP_RADIUS * PICKUP_RADIUS;
+    // Quick rejection: skip items more than 32 blocks away (cheap check)
+    const CULL_RADIUS_SQ: f32 = 32.0 * 32.0;
 
     for (player_transform, mut inventory) in player_query.iter_mut() {
         let player_pos = player_transform.translation;
 
         for (entity, dropped, item_transform) in dropped_query.iter() {
-            let distance_sq = player_pos.distance_squared(item_transform.translation);
+            let diff = player_pos - item_transform.translation;
+            // Cheap axis-aligned check first
+            if diff.x.abs() > 32.0 || diff.z.abs() > 32.0 { continue; }
+            let distance_sq = diff.length_squared();
+            if distance_sq > CULL_RADIUS_SQ { continue; }
             if distance_sq <= PICKUP_RADIUS_SQ {
                 let leftover = inventory.add_item(dropped.item, 1);
                 if leftover == 0 {

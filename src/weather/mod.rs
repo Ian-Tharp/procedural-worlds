@@ -7,7 +7,8 @@ use bevy::prelude::*;
 use bevy_egui::{egui, EguiContexts, EguiSet};
 use noise::Simplex;
 
-use crate::actors::Player;
+#[allow(unused_imports)]
+use crate::actors::Player; // Will be used when particle spawning is re-enabled
 use crate::engine::lighting::DayNightCycle;
 use crate::generation::biome::{biome_at, BiomeType};
 use crate::generation::TerrainConfig;
@@ -173,14 +174,16 @@ pub struct WeatherParticle {
 // ============================================================================
 
 const INTENSITY_RAMP_SPEED: f32 = 0.5;
-const MAX_PARTICLES_PER_FRAME: usize = 20;
-const SPAWN_RADIUS: f32 = 30.0;
-const SPAWN_HEIGHT: f32 = 25.0;
+// Particle constants — currently unused while particle spawning is disabled for performance.
+// Will be used when GPU instanced particles are implemented.
+#[allow(dead_code)] const MAX_PARTICLES_PER_FRAME: usize = 20;
+#[allow(dead_code)] const SPAWN_RADIUS: f32 = 30.0;
+#[allow(dead_code)] const SPAWN_HEIGHT: f32 = 25.0;
 const DESPAWN_Y: f32 = 0.0;
-const RAIN_SPEED: f32 = 20.0;
-const SNOW_SPEED: f32 = 4.0;
-const SNOW_DRIFT: f32 = 1.5;
-const PARTICLE_LIFETIME: f32 = 5.0;
+#[allow(dead_code)] const RAIN_SPEED: f32 = 20.0;
+#[allow(dead_code)] const SNOW_SPEED: f32 = 4.0;
+#[allow(dead_code)] const SNOW_DRIFT: f32 = 1.5;
+#[allow(dead_code)] const PARTICLE_LIFETIME: f32 = 5.0;
 
 // ============================================================================
 // SYSTEMS
@@ -238,85 +241,17 @@ pub fn weather_transition_system(
 
 /// Spawns rain/snow particle entities around the player.
 pub fn spawn_weather_particles_system(
-    mut commands: Commands,
-    weather: Res<WeatherState>,
-    time: Res<Time>,
-    player_query: Query<&GlobalTransform, With<Player>>,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
+    // Weather particle spawning is currently disabled for performance.
+    // The original implementation created unique Mesh + Material assets per particle per frame,
+    // causing massive GPU upload overhead. A proper implementation should use:
+    // - Shared mesh/material handles (created once, reused)
+    // - GPU instancing or Bevy's particle system (when available)
+    // - Much lower spawn rates (2-5 per frame, not 40)
+    //
+    // For now, weather state still transitions (for the HUD indicator),
+    // but no visual particles are spawned.
 ) {
-    if weather.intensity <= 0.0 {
-        return;
-    }
-
-    let weather_type = weather.current;
-    if weather_type == WeatherType::Clear {
-        return;
-    }
-
-    let Ok(player_transform) = player_query.get_single() else {
-        return;
-    };
-    let player_pos = player_transform.translation();
-
-    let storm_multiplier = if weather_type == WeatherType::Storm { 2.0 } else { 1.0 };
-    let count = ((MAX_PARTICLES_PER_FRAME as f32) * weather.intensity * storm_multiplier) as usize;
-    let count = count.min(MAX_PARTICLES_PER_FRAME * 2);
-
-    let t = time.elapsed_secs();
-
-    for i in 0..count {
-        let seed = t * 1000.0 + i as f32;
-        let angle = (seed * 2.3283) % std::f32::consts::TAU;
-        let dist = (seed * 0.7235) % 1.0 * SPAWN_RADIUS;
-
-        let x = player_pos.x + angle.cos() * dist;
-        let z = player_pos.z + angle.sin() * dist;
-        let y = player_pos.y + SPAWN_HEIGHT;
-
-        let (velocity, color, scale) = match weather_type {
-            WeatherType::Rain | WeatherType::Storm => {
-                let speed = if weather_type == WeatherType::Storm {
-                    RAIN_SPEED * 1.5
-                } else {
-                    RAIN_SPEED
-                };
-                (
-                    Vec3::new(0.0, -speed, 0.0),
-                    Color::srgba(0.6, 0.7, 0.9, 0.5),
-                    Vec3::new(0.02, 0.3, 0.02),
-                )
-            }
-            WeatherType::Snow => {
-                let drift_x = ((seed * 1.337) % 2.0 - 1.0) * SNOW_DRIFT;
-                let drift_z = ((seed * 0.931) % 2.0 - 1.0) * SNOW_DRIFT;
-                (
-                    Vec3::new(drift_x, -SNOW_SPEED, drift_z),
-                    Color::srgba(0.95, 0.95, 1.0, 0.8),
-                    Vec3::splat(0.08),
-                )
-            }
-            WeatherType::Clear => unreachable!(),
-        };
-
-        let mesh = meshes.add(Cuboid::new(1.0, 1.0, 1.0));
-        let material = materials.add(StandardMaterial {
-            base_color: color,
-            unlit: true,
-            alpha_mode: AlphaMode::Blend,
-            ..default()
-        });
-
-        commands.spawn((
-            Mesh3d(mesh),
-            MeshMaterial3d(material),
-            Transform::from_translation(Vec3::new(x, y, z)).with_scale(scale),
-            WeatherParticle {
-                velocity,
-                lifetime: PARTICLE_LIFETIME,
-            },
-        ));
-    }
+    // Intentionally empty — particles disabled until optimized
 }
 
 /// Moves weather particles and despawns them when they expire or hit ground.

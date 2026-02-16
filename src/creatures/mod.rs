@@ -288,13 +288,27 @@ pub fn creature_spawning_system(
     ));
 }
 
-/// AI state machine - decides creature behavior each frame.
+/// Timer for rate-limiting creature AI updates (not every frame).
+#[derive(Resource)]
+pub struct CreatureAITimer(pub Timer);
+
+impl Default for CreatureAITimer {
+    fn default() -> Self {
+        Self(Timer::from_seconds(0.25, TimerMode::Repeating))
+    }
+}
+
+/// AI state machine - decides creature behavior (rate-limited to 4x/sec).
 pub fn creature_ai_system(
     time: Res<Time>,
+    mut ai_timer: ResMut<CreatureAITimer>,
     mut creature_query: Query<(Entity, &Creature, &mut CreatureAI, &Transform)>,
     player_query: Query<(Entity, &Transform), With<Player>>,
 ) {
-    let dt = time.delta_secs();
+    ai_timer.0.tick(time.delta());
+    if !ai_timer.0.just_finished() { return; }
+
+    let dt = 0.25; // fixed timestep for AI
     let Ok((player_entity, player_transform)) = player_query.get_single() else {
         return;
     };
@@ -503,6 +517,7 @@ impl Plugin for CreaturePlugin {
             .add_event::<CreatureLootEvent>()
             .init_resource::<CreatureCount>()
             .init_resource::<SpawnTimer>()
+            .init_resource::<CreatureAITimer>()
             .add_systems(
                 Update,
                 (
