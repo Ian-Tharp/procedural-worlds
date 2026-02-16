@@ -4,7 +4,7 @@
 //! starvation, regeneration, and a HUD overlay.
 
 use bevy::prelude::*;
-use bevy_egui::{egui, EguiContexts};
+use bevy_egui::{egui, EguiContexts, EguiSet};
 
 use crate::actors::{Grounded, Player, Velocity};
 
@@ -149,8 +149,10 @@ fn attach_health_to_player(
     query: Query<Entity, (With<Player>, Without<Health>)>,
 ) {
     for entity in &query {
+        let mut health = Health::new(20.0);
+        health.invulnerable_timer = 3.0; // 3s spawn protection
         commands.entity(entity).insert((
-            Health::new(20.0),
+            health,
             Hunger::new(20.0),
             PreviousVelocityY(0.0),
         ));
@@ -223,10 +225,19 @@ fn starvation_damage(
     }
 }
 
+/// Tracks the death screen state — prevents immediate respawn loop.
+#[derive(Resource, Default)]
+pub struct DeathScreen {
+    pub active: bool,
+    pub timer: f32,
+}
+
 fn check_death(
     query: Query<(Entity, &Health), With<Player>>,
     mut death_events: EventWriter<DeathEvent>,
+    death_screen: Res<DeathScreen>,
 ) {
+    if death_screen.active { return; }
     for (entity, health) in &query {
         if health.is_dead() {
             death_events.send(DeathEvent {
@@ -239,15 +250,69 @@ fn check_death(
 
 fn handle_player_death(
     mut events: EventReader<DeathEvent>,
-    mut query: Query<(&mut Health, &mut Hunger, &mut Transform), With<Player>>,
+    mut death_screen: ResMut<DeathScreen>,
 ) {
-    for event in events.read() {
-        if let Ok((mut health, mut hunger, mut transform)) = query.get_mut(event.entity) {
+    for _event in events.read() {
+        if !death_screen.active {
+            death_screen.active = true;
+            death_screen.timer = 0.0;
+        }
+    }
+}
+
+fn death_screen_system(
+    mut contexts: EguiContexts,
+    mut death_screen: ResMut<DeathScreen>,
+    mut query: Query<(&mut Health, &mut Hunger, &mut Transform), With<Player>>,
+    keys: Res<ButtonInput<KeyCode>>,
+    time: Res<Time>,
+) {
+    if !death_screen.active { return; }
+    death_screen.timer += time.delta_secs();
+
+    let ctx = contexts.ctx_mut();
+    egui::Area::new(egui::Id::new("death_screen"))
+        .fixed_pos(egui::pos2(0.0, 0.0))
+        .order(egui::Order::Foreground)
+        .interactable(true)
+        .show(ctx, |ui| {
+            let screen = ui.available_size();
+            ui.allocate_ui_at_rect(
+                egui::Rect::from_min_size(egui::pos2(0.0, 0.0), screen),
+                |ui| {
+                    ui.painter().rect_filled(
+                        egui::Rect::from_min_size(egui::pos2(0.0, 0.0), screen),
+                        0.0,
+                        egui::Color32::from_rgba_unmultiplied(80, 0, 0, 180),
+                    );
+                    ui.vertical_centered(|ui| {
+                        ui.add_space(screen.y * 0.35);
+                        ui.label(
+                            egui::RichText::new("YOU DIED")
+                                .size(48.0)
+                                .color(egui::Color32::from_rgb(255, 60, 60))
+                                .strong(),
+                        );
+                        ui.add_space(20.0);
+                        ui.label(
+                            egui::RichText::new("Press ENTER to respawn")
+                                .size(18.0)
+                                .color(egui::Color32::from_rgb(200, 200, 200)),
+                        );
+                    });
+                },
+            );
+        });
+
+    // Allow respawn after 1 second
+    if death_screen.timer > 1.0 && keys.just_pressed(KeyCode::Enter) {
+        for (mut health, mut hunger, mut transform) in &mut query {
             health.current = health.max;
-            health.invulnerable_timer = 1.0;
+            health.invulnerable_timer = 3.0; // 3s invulnerability after respawn
             hunger.current = hunger.max;
             transform.translation = Vec3::new(32.0, 80.0, 32.0);
         }
+        death_screen.active = false;
     }
 }
 
@@ -354,6 +419,7 @@ impl Plugin for HealthPlugin {
         app.add_event::<DamageEvent>()
             .add_event::<DeathEvent>()
             .init_resource::<DamageFlash>()
+            .init_resource::<DeathScreen>()
             .add_systems(Update, attach_health_to_player)
             .add_systems(
                 Update,
@@ -367,10 +433,15 @@ impl Plugin for HealthPlugin {
                     handle_player_death,
                     regenerate_health,
                     update_damage_flash,
-                    health_hud_system,
                 )
                     .chain()
                     .after(attach_health_to_player),
+            )
+            // HUD systems must run after egui context is initialized
+            .add_systems(
+                Update,
+                (health_hud_system, death_screen_system)
+                    .after(EguiSet::InitContexts),
             );
     }
 }

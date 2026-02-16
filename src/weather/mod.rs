@@ -4,7 +4,7 @@
 //! with smooth transitions between weather states and particle effects.
 
 use bevy::prelude::*;
-use bevy_egui::{egui, EguiContexts};
+use bevy_egui::{egui, EguiContexts, EguiSet};
 use noise::Simplex;
 
 use crate::actors::Player;
@@ -436,9 +436,12 @@ impl Plugin for WeatherPlugin {
                     weather_transition_system,
                     spawn_weather_particles_system,
                     update_weather_particles_system,
-                    weather_hud_system,
                 )
                     .chain(),
+            )
+            .add_systems(
+                Update,
+                weather_hud_system.after(EguiSet::InitContexts),
             );
     }
 }

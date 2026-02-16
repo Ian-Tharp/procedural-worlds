@@ -5,7 +5,7 @@
 
 use bevy::prelude::*;
 use bevy::input::mouse::MouseWheel;
-use bevy_egui::{egui, EguiContexts};
+use bevy_egui::{egui, EguiContexts, EguiSet};
 
 use crate::actors::Player;
 use crate::world::BlockType;
@@ -468,11 +468,11 @@ pub struct InventoryPlugin;
 
 impl Plugin for InventoryPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Update, (
-            attach_inventory_to_player,
-            hotbar_input,
-            hotbar_hud,
-        ));
+        app.add_systems(Update, attach_inventory_to_player)
+            .add_systems(
+                Update,
+                (hotbar_input, hotbar_hud).after(EguiSet::InitContexts),
+            );
     }
 }
 

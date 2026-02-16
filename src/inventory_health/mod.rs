@@ -6,7 +6,7 @@
 //! - HUD indicators: show available food items and their restoration amounts
 
 use bevy::prelude::*;
-use bevy_egui::{EguiContexts, egui};
+use bevy_egui::{EguiContexts, EguiSet, egui};
 
 use crate::actors::Player;
 use crate::health::{DeathEvent, Health, Hunger};
@@ -393,14 +393,18 @@ impl Plugin for InventoryHealthPlugin {
                 (
                     attach_food_prompt,
                     update_food_prompt,
-                    food_consumption_input,
                     apply_food_consumption,
                     handle_death_drop_inventory,
                     spawn_dropped_loot,
                     despawn_loot_timer,
-                    food_hud_system,
                 )
                     .chain(),
+            )
+            // Systems using EguiContexts must run after egui init
+            .add_systems(
+                Update,
+                (food_consumption_input, food_hud_system)
+                    .after(EguiSet::InitContexts),
             );
     }
 }

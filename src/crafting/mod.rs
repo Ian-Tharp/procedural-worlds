@@ -4,7 +4,7 @@
 //! and craft items when they have the required materials in their inventory.
 
 use bevy::prelude::*;
-use bevy_egui::{egui, EguiContexts};
+use bevy_egui::{egui, EguiContexts, EguiSet};
 
 use crate::actors::Player;
 use crate::inventory::{Inventory, ItemId, MaterialType, ToolType};
@@ -319,11 +319,11 @@ impl Plugin for CraftingPlugin {
         app.insert_resource(registry)
             .init_resource::<CraftingState>()
             .add_event::<CraftEvent>()
-            .add_systems(Update, (
-                toggle_crafting_system,
-                crafting_ui_system,
-                craft_item_system,
-            ));
+            .add_systems(
+                Update,
+                (toggle_crafting_system, crafting_ui_system, craft_item_system)
+                    .after(EguiSet::InitContexts),
+            );
     }
 }
 
