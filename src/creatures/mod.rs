@@ -519,7 +519,7 @@ impl Plugin for CreaturePlugin {
             .init_resource::<SpawnTimer>()
             .init_resource::<CreatureAITimer>()
             .add_systems(
-                Update,
+                FixedUpdate,
                 (
                     creature_spawning_system,
                     creature_ai_system,

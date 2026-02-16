@@ -161,7 +161,7 @@ pub struct BlockDropPlugin;
 impl Plugin for BlockDropPlugin {
     fn build(&self, app: &mut App) {
         app.add_event::<BlockDropEvent>()
-            .add_systems(Update, (
+            .add_systems(FixedUpdate, (
                 spawn_drops_system,
                 pickup_system,
                 despawn_system,

@@ -468,7 +468,7 @@ impl Plugin for HealthPlugin {
             .init_resource::<GameMode>()
             .add_systems(Update, attach_health_to_player)
             .add_systems(
-                Update,
+                FixedUpdate,
                 (
                     update_invulnerability,
                     deplete_hunger,
@@ -480,8 +480,7 @@ impl Plugin for HealthPlugin {
                     regenerate_health,
                     update_damage_flash,
                 )
-                    .chain()
-                    .after(attach_health_to_player),
+                    .chain(),
             )
             // HUD systems must run after egui context is initialized
             .add_systems(

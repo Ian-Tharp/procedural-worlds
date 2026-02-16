@@ -7,6 +7,7 @@
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 use std::collections::hash_map::DefaultHasher;
+use std::sync::LazyLock;
 
 use bevy::prelude::*;
 
@@ -199,7 +200,8 @@ pub fn generate_structures(chunk: &mut Chunk, config: &TerrainConfig) {
 
     if structure_hash(cx, cz, config.seed) > 0.12 { return; }
 
-    let templates = build_templates();
+    static TEMPLATES: LazyLock<HashMap<StructureType, StructureTemplate>> = LazyLock::new(build_templates);
+    let templates = &*TEMPLATES;
     let biome_noise = noise::Simplex::new(config.seed.wrapping_add(config.biome_seed_offset));
     let biome = biome_at(world_pos.x + CHUNK_SIZE as i32 / 2, world_pos.z + CHUNK_SIZE as i32 / 2, &biome_noise, config.biome_scale);
 

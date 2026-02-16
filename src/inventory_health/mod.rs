@@ -389,7 +389,7 @@ impl Plugin for InventoryHealthPlugin {
         app.add_event::<ConsumeFoodEvent>()
             .add_event::<InventoryDropEvent>()
             .add_systems(
-                Update,
+                FixedUpdate,
                 (
                     attach_food_prompt,
                     update_food_prompt,

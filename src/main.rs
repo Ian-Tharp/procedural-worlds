@@ -73,19 +73,13 @@ fn main() {
         .add_plugins(config::audio::AudioConfigPlugin)
         // Content system (ores, blocks, etc. - data-driven definitions)
         .add_plugins(content::ContentPlugin)
-        // Block drops system
+        // Gameplay plugins
         .add_plugins(drops::BlockDropPlugin)
-        // Inventory system
         .add_plugins(inventory::InventoryPlugin)
-        // Health & hunger system
         .add_plugins(health::HealthPlugin)
-        // Crafting system
         .add_plugins(crafting::CraftingPlugin)
-        // Creature system
         .add_plugins(creatures::CreaturePlugin)
-        // Inventory-health bridge (food consumption, death drops)
         .add_plugins(inventory_health::InventoryHealthPlugin)
-        // Weather system
         .add_plugins(weather::WeatherPlugin)
         // Startup systems
         .add_systems(Startup, setup_scene)
