@@ -39,3 +39,7 @@ Thumbs.db
 # Runtime save/world data
 /saves/
 /world/
+
+run_output.txt
+run_stderr.txt
+run_stdout.txt
