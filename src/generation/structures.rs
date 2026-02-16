@@ -231,6 +231,7 @@ pub fn generate_structures(chunk: &mut Chunk, config: &TerrainConfig) {
         }
     }
 
+    if min_h == i32::MAX || max_h == i32::MIN { return; }
     if max_h - min_h > 2 { return; }
     let base_y = match surf_y { Some(y) => y, None => return };
     if base_y + sy >= CHUNK_SIZE { return; }
