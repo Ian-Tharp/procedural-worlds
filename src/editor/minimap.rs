@@ -147,8 +147,8 @@ fn minimap_update_system(
     let needs_regen = texture.dirty
         || texture.texture_size != size
         || texture.generated_zoom != config.blocks_per_pixel
-        || (texture.center_x - center_x).abs() > 4
-        || (texture.center_z - center_z).abs() > 4;
+        || (texture.center_x - center_x).abs() > 16
+        || (texture.center_z - center_z).abs() > 16;
     
     if !needs_regen {
         return;
