@@ -12,5 +12,6 @@ pub mod content;
 pub mod editor;
 pub mod engine;
 pub mod generation;
+pub mod health;
 pub mod physics;
 pub mod world;
