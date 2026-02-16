@@ -192,7 +192,7 @@ const MIN_SPAWN_DISTANCE: f32 = 20.0;
 const ATTACK_RANGE: f32 = 2.0;
 
 /// Flee range - how far passive mobs run when hit.
-const FLEE_DISTANCE: f32 = 10.0;
+const _FLEE_DISTANCE: f32 = 10.0;
 
 /// Spawn check interval in seconds.
 #[derive(Resource)]
@@ -234,7 +234,10 @@ pub fn creature_spawning_system(
     creature_query: Query<&Creature>,
     player_query: Query<&Transform, With<Player>>,
     mut creature_count: ResMut<CreatureCount>,
+    game_mode: Res<crate::health::GameMode>,
 ) {
+    // Don't spawn hostile creatures in creative mode
+    let creative = *game_mode == crate::health::GameMode::Creative;
     spawn_timer.0.tick(time.delta());
     if !spawn_timer.0.just_finished() {
         return;
@@ -254,17 +257,17 @@ pub fn creature_spawning_system(
     let player_pos = player_transform.translation;
     let mut rng = rand::thread_rng();
 
-    // Pick a random creature type
-    let creature_types = [
-        CreatureType::Cow,
-        CreatureType::Sheep,
-        CreatureType::Chicken,
-        CreatureType::Zombie,
-        CreatureType::Skeleton,
-        CreatureType::Spider,
-    ];
-
-    let creature_type = creature_types[rng.gen_range(0..creature_types.len())];
+    // Pick a random creature type (no hostiles in creative)
+    let creature_type = if creative {
+        let passive = [CreatureType::Cow, CreatureType::Sheep, CreatureType::Chicken];
+        passive[rng.gen_range(0..passive.len())]
+    } else {
+        let all = [
+            CreatureType::Cow, CreatureType::Sheep, CreatureType::Chicken,
+            CreatureType::Zombie, CreatureType::Skeleton, CreatureType::Spider,
+        ];
+        all[rng.gen_range(0..all.len())]
+    };
 
     // Pick a random spawn position around the player
     let angle: f32 = rng.gen_range(0.0..std::f32::consts::TAU);

@@ -6,7 +6,24 @@
 use bevy::prelude::*;
 use bevy_egui::{egui, EguiContexts, EguiSet};
 
-use crate::actors::{Grounded, Player, Velocity};
+use crate::actors::{Grounded, Movement, Player, Velocity};
+
+// ============================================================================
+// GAME MODE
+// ============================================================================
+
+/// Game mode — controls whether damage, hunger, etc. are active.
+#[derive(Resource, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GameMode {
+    Creative,
+    Survival,
+}
+
+impl Default for GameMode {
+    fn default() -> Self {
+        GameMode::Creative // Default to creative for development
+    }
+}
 
 // ============================================================================
 // COMPONENTS
@@ -164,7 +181,13 @@ fn apply_damage(
     mut query: Query<&mut Health>,
     mut death_events: EventWriter<DeathEvent>,
     mut flash: ResMut<DamageFlash>,
+    game_mode: Res<GameMode>,
 ) {
+    // No damage in creative mode
+    if *game_mode == GameMode::Creative {
+        events.clear();
+        return;
+    }
     for event in events.read() {
         if let Ok(mut health) = query.get_mut(event.target) {
             let died = health.damage(event.amount);
@@ -200,7 +223,8 @@ fn regenerate_health(time: Res<Time>, mut query: Query<(&mut Health, &Hunger)>) 
     }
 }
 
-fn deplete_hunger(time: Res<Time>, mut query: Query<&mut Hunger>) {
+fn deplete_hunger(time: Res<Time>, mut query: Query<&mut Hunger>, game_mode: Res<GameMode>) {
+    if *game_mode == GameMode::Creative { return; }
     let dt = time.delta_secs();
     for mut hunger in &mut query {
         let amount = hunger.depletion_rate * dt;
@@ -263,54 +287,56 @@ fn handle_player_death(
 fn death_screen_system(
     mut contexts: EguiContexts,
     mut death_screen: ResMut<DeathScreen>,
-    mut query: Query<(&mut Health, &mut Hunger, &mut Transform), With<Player>>,
+    mut query: Query<(&mut Health, &mut Hunger, &mut Transform, &mut Movement), With<Player>>,
     keys: Res<ButtonInput<KeyCode>>,
     time: Res<Time>,
 ) {
     if !death_screen.active { return; }
     death_screen.timer += time.delta_secs();
 
+    // Freeze player movement while dead
+    for (_, _, _, mut movement) in &mut query {
+        movement.flying = true; // prevent falling
+    }
+
     let ctx = contexts.ctx_mut();
-    egui::Area::new(egui::Id::new("death_screen"))
+
+    // Full-screen death overlay using egui::Window
+    egui::Window::new("death_overlay")
         .fixed_pos(egui::pos2(0.0, 0.0))
-        .order(egui::Order::Foreground)
-        .interactable(true)
+        .fixed_size(ctx.screen_rect().size())
+        .title_bar(false)
+        .resizable(false)
+        .frame(egui::Frame::none().fill(egui::Color32::from_rgba_unmultiplied(80, 0, 0, 200)))
         .show(ctx, |ui| {
-            let screen = ui.available_size();
-            ui.allocate_ui_at_rect(
-                egui::Rect::from_min_size(egui::pos2(0.0, 0.0), screen),
-                |ui| {
-                    ui.painter().rect_filled(
-                        egui::Rect::from_min_size(egui::pos2(0.0, 0.0), screen),
-                        0.0,
-                        egui::Color32::from_rgba_unmultiplied(80, 0, 0, 180),
+            let h = ui.available_height();
+            ui.add_space(h * 0.35);
+            ui.vertical_centered(|ui| {
+                ui.label(
+                    egui::RichText::new("YOU DIED")
+                        .size(64.0)
+                        .color(egui::Color32::from_rgb(255, 60, 60))
+                        .strong(),
+                );
+                ui.add_space(30.0);
+                if death_screen.timer > 1.0 {
+                    ui.label(
+                        egui::RichText::new("Press ENTER to respawn")
+                            .size(20.0)
+                            .color(egui::Color32::from_rgb(200, 200, 200)),
                     );
-                    ui.vertical_centered(|ui| {
-                        ui.add_space(screen.y * 0.35);
-                        ui.label(
-                            egui::RichText::new("YOU DIED")
-                                .size(48.0)
-                                .color(egui::Color32::from_rgb(255, 60, 60))
-                                .strong(),
-                        );
-                        ui.add_space(20.0);
-                        ui.label(
-                            egui::RichText::new("Press ENTER to respawn")
-                                .size(18.0)
-                                .color(egui::Color32::from_rgb(200, 200, 200)),
-                        );
-                    });
-                },
-            );
+                }
+            });
         });
 
     // Allow respawn after 1 second
     if death_screen.timer > 1.0 && keys.just_pressed(KeyCode::Enter) {
-        for (mut health, mut hunger, mut transform) in &mut query {
+        for (mut health, mut hunger, mut transform, mut movement) in &mut query {
             health.current = health.max;
-            health.invulnerable_timer = 3.0; // 3s invulnerability after respawn
+            health.invulnerable_timer = 3.0;
             hunger.current = hunger.max;
-            transform.translation = Vec3::new(32.0, 80.0, 32.0);
+            transform.translation = Vec3::new(32.0, 100.0, 32.0);
+            movement.flying = true; // respawn in creative/fly mode
         }
         death_screen.active = false;
     }
@@ -348,7 +374,10 @@ fn health_hud_system(
     mut contexts: EguiContexts,
     query: Query<(&Health, &Hunger), With<Player>>,
     flash: Res<DamageFlash>,
+    game_mode: Res<GameMode>,
 ) {
+    // Don't show health/hunger bars in creative mode
+    if *game_mode == GameMode::Creative { return; }
     let Ok((health, hunger)) = query.get_single() else {
         return;
     };
@@ -412,6 +441,22 @@ fn health_hud_system(
 // PLUGIN
 // ============================================================================
 
+/// System to toggle game mode via debug console (G key)
+fn toggle_game_mode(
+    keys: Res<ButtonInput<KeyCode>>,
+    mut game_mode: ResMut<GameMode>,
+    mut egui_ctx: EguiContexts,
+) {
+    if egui_ctx.ctx_mut().wants_keyboard_input() { return; }
+    if keys.just_pressed(KeyCode::KeyG) {
+        *game_mode = match *game_mode {
+            GameMode::Creative => GameMode::Survival,
+            GameMode::Survival => GameMode::Creative,
+        };
+        info!("Game mode switched to: {:?}", *game_mode);
+    }
+}
+
 pub struct HealthPlugin;
 
 impl Plugin for HealthPlugin {
@@ -420,6 +465,7 @@ impl Plugin for HealthPlugin {
             .add_event::<DeathEvent>()
             .init_resource::<DamageFlash>()
             .init_resource::<DeathScreen>()
+            .init_resource::<GameMode>()
             .add_systems(Update, attach_health_to_player)
             .add_systems(
                 Update,
@@ -440,7 +486,7 @@ impl Plugin for HealthPlugin {
             // HUD systems must run after egui context is initialized
             .add_systems(
                 Update,
-                (health_hud_system, death_screen_system)
+                (health_hud_system, death_screen_system, toggle_game_mode)
                     .after(EguiSet::InitContexts),
             );
     }

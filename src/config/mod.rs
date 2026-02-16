@@ -431,8 +431,8 @@ impl Default for TerrainSettings {
     fn default() -> Self {
         Self {
             seed: 12345,
-            base_height: 32.0,
-            height_scale: 16.0,
+            base_height: 64.0,
+            height_scale: 24.0,
             frequency: 0.02,
             octaves: 4,
             biome_scale: 0.005,
@@ -1233,8 +1233,8 @@ mod tests {
 
         // Terrain defaults should match TerrainConfig::default()
         assert_eq!(config.terrain.seed, 12345);
-        assert_eq!(config.terrain.base_height, 32.0);
-        assert_eq!(config.terrain.height_scale, 16.0);
+        assert_eq!(config.terrain.base_height, 64.0);
+        assert_eq!(config.terrain.height_scale, 24.0);
         assert_eq!(config.terrain.frequency, 0.02);
         assert_eq!(config.terrain.octaves, 4);
 

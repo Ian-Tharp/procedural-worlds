@@ -100,8 +100,8 @@ fn setup_scene(mut commands: Commands) {
     // Spawn player entity with camera as child
     // Position is FEET position, camera is offset by eye height (1.62)
     // Start in walking mode with gravity
-    let player_feet_y = 64.0 - actors::CapsuleCollider::EYE_HEIGHT; // Eyes at 64
-    let player_id = actors::spawn_player(
+    let player_feet_y = 100.0 - actors::CapsuleCollider::EYE_HEIGHT; // Eyes at 100 (above base_height=64)
+    let player_id = actors::spawn_player_flying(
         &mut commands,
         Vec3::new(32.0, player_feet_y, 32.0),
     );
