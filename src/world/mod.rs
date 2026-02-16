@@ -20,6 +20,7 @@ use crate::engine::memory::ChunkMeshPool;
 use crate::generation::{
     generate_cacti, generate_caves, generate_chunk_terrain, generate_ores, generate_trees,
     default_ore_configs, ore_configs_from_definitions, OreSpawnConfig, TerrainConfig,
+    structures::generate_structures,
 };
 
 pub mod atlas_material;
@@ -891,6 +892,7 @@ fn chunk_streaming_system(
             generate_chunk_terrain(&mut chunk, &config);
             generate_caves(&mut chunk, &config);
             generate_ores(&mut chunk, &config, &ores);  // Use registry-derived configs
+            generate_structures(&mut chunk, &config);
             generate_trees(&mut chunk, &config);
             generate_cacti(&mut chunk, &config);
             ChunkLoadResult { chunk, from_cache: false }

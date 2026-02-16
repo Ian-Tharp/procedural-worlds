@@ -7,6 +7,7 @@
 //! - Structure generation
 
 pub mod biome;
+pub mod structures;
 
 use std::hash::{Hash, Hasher};
 use std::collections::hash_map::DefaultHasher;
