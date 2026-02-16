@@ -14,5 +14,6 @@ pub mod engine;
 pub mod generation;
 pub mod health;
 pub mod inventory;
+pub mod inventory_health;
 pub mod physics;
 pub mod world;

@@ -14,6 +14,7 @@ use procedural_worlds::editor;
 use procedural_worlds::engine;
 use procedural_worlds::health;
 use procedural_worlds::inventory;
+use procedural_worlds::inventory_health;
 use procedural_worlds::physics;
 use procedural_worlds::world;
 
@@ -72,6 +73,8 @@ fn main() {
         .add_plugins(inventory::InventoryPlugin)
         // Health & hunger system
         .add_plugins(health::HealthPlugin)
+        // Inventory-health bridge (food consumption, death drops)
+        .add_plugins(inventory_health::InventoryHealthPlugin)
         // Startup systems
         .add_systems(Startup, setup_scene)
         .run();
