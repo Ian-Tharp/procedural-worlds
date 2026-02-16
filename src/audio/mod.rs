@@ -45,6 +45,7 @@
 //! separation of concerns.
 
 pub mod ambient;
+pub mod block_sounds;
 pub mod playback;
 pub mod validation;
 
@@ -57,6 +58,11 @@ pub use playback::{
 pub use validation::{
     AudioValidationPlugin, AudioDeviceStatus, DeviceState,
     ValidationResult, validate_audio_config, resolve_device_state,
+};
+pub use block_sounds::{
+    BlockSoundPlugin, BlockSoundCategory, BlockAction,
+    BlockInteractionSoundEvent, FootstepTimer, BlockSoundPlayer,
+    sound_category,
 };
 pub use ambient::{
     AmbientAudioPlugin, PlayerActivityState, PlayerAudioState,
@@ -75,6 +81,7 @@ use bevy::prelude::*;
 /// This is the recommended way to add audio to the engine. It includes:
 /// - [`AudioPlaybackPlugin`] — sound effects and ambient biome sounds
 /// - [`AudioValidationPlugin`] — device validation and fallback
+/// - [`BlockSoundPlugin`] — block interaction sounds and footsteps
 ///
 /// Note: [`AudioConfigPlugin`](crate::config::audio::AudioConfigPlugin)
 /// should be added separately alongside the engine's config system.
@@ -84,6 +91,7 @@ impl Plugin for AudioPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins(AudioPlaybackPlugin)
             .add_plugins(AudioValidationPlugin)
-            .add_plugins(AmbientAudioPlugin);
+            .add_plugins(AmbientAudioPlugin)
+            .add_plugins(BlockSoundPlugin);
     }
 }
