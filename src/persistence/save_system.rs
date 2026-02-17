@@ -5,6 +5,19 @@
 //! - Serialize to bincode (fast, compact) or JSON (human-readable)
 //! - Write/read save files from the `saves/` directory
 //! - Manage multiple save slots (one file per session)
+//!
+//! ## Binary Save Format (v2+)
+//!
+//! Bincode `.bin` files are prefixed with an 8-byte version header:
+//!
+//! | Offset | Size | Contents              |
+//! |--------|------|-----------------------|
+//! | 0      | 4    | Magic: `PWLD` (ASCII) |
+//! | 4      | 4    | Version: u32 LE       |
+//! | 8      | …    | Bincode payload       |
+//!
+//! Files **without** the magic header are treated as legacy v1 (unversioned
+//! bincode written before the versioning system was added).
 
 use std::fs;
 use std::io;
@@ -17,6 +30,122 @@ use crate::creatures::{Creature, CreatureType};
 use crate::drops::DroppedItem;
 use crate::health::Health;
 use crate::inventory::{Hotbar, Inventory, ItemId};
+
+// ============================================================================
+// SAVE FORMAT VERSIONING
+// ============================================================================
+
+/// Magic bytes identifying a versioned Procedural Worlds save file.
+pub const SAVE_MAGIC: &[u8; 4] = b"PWLD";
+
+/// Size of the version header (magic + version u32).
+pub const VERSION_HEADER_SIZE: usize = 8;
+
+/// Known save format versions.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[repr(u32)]
+pub enum SaveVersion {
+    /// Legacy unversioned format (no header). Produced before versioning was added.
+    V1 = 1,
+    /// First versioned format. Identical payload to V1, but with the 8-byte header.
+    V2 = 2,
+}
+
+impl SaveVersion {
+    /// The version that the engine currently writes.
+    pub const CURRENT: SaveVersion = SaveVersion::V2;
+
+    /// Try to convert a raw u32 to a known version.
+    pub fn from_u32(v: u32) -> Option<Self> {
+        match v {
+            1 => Some(Self::V1),
+            2 => Some(Self::V2),
+            _ => None,
+        }
+    }
+
+    /// Raw u32 value.
+    pub fn as_u32(self) -> u32 {
+        self as u32
+    }
+}
+
+/// Write the version header (magic + version) into a byte buffer.
+pub fn write_version_header(version: SaveVersion) -> Vec<u8> {
+    let mut header = Vec::with_capacity(VERSION_HEADER_SIZE);
+    header.extend_from_slice(SAVE_MAGIC);
+    header.extend_from_slice(&version.as_u32().to_le_bytes());
+    header
+}
+
+/// Detect the save version from raw file bytes.
+///
+/// Returns `(version, payload_offset)`:
+/// - If the file starts with `PWLD`, reads the version and returns offset 8.
+/// - Otherwise assumes legacy V1 with offset 0 (entire file is payload).
+pub fn detect_save_version(bytes: &[u8]) -> Result<(SaveVersion, usize), io::Error> {
+    if bytes.len() >= VERSION_HEADER_SIZE && &bytes[0..4] == SAVE_MAGIC {
+        let version_raw = u32::from_le_bytes([bytes[4], bytes[5], bytes[6], bytes[7]]);
+        match SaveVersion::from_u32(version_raw) {
+            Some(v) => Ok((v, VERSION_HEADER_SIZE)),
+            None => Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("Unknown save version: {version_raw}"),
+            )),
+        }
+    } else {
+        // No magic header — legacy V1
+        Ok((SaveVersion::V1, 0))
+    }
+}
+
+/// Migrate save data from one version to the next.
+///
+/// Returns the (possibly transformed) payload bytes ready for the target version.
+/// Currently V1 and V2 share the same bincode schema, so migration is a no-op.
+pub fn migrate(from: SaveVersion, to: SaveVersion, payload: &[u8]) -> Result<Vec<u8>, io::Error> {
+    if from == to {
+        return Ok(payload.to_vec());
+    }
+    if from > to {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("Cannot downgrade save from v{} to v{}", from.as_u32(), to.as_u32()),
+        ));
+    }
+
+    let mut data = payload.to_vec();
+    let mut current = from;
+
+    while current < to {
+        data = match current {
+            SaveVersion::V1 => migrate_v1_to_v2(&data)?,
+            SaveVersion::V2 => {
+                // V2 is current; nothing to migrate *from* V2 yet.
+                // When V3 is added, handle it here.
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "No migration path beyond V2",
+                ));
+            }
+        };
+        current = SaveVersion::from_u32(current.as_u32() + 1)
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "Migration version gap"))?;
+    }
+
+    Ok(data)
+}
+
+/// Migrate V1 payload to V2.
+///
+/// V1 and V2 share the same bincode serialization schema — the only difference
+/// is the presence of the file-level version header. The payload bytes are
+/// returned unchanged.
+fn migrate_v1_to_v2(payload: &[u8]) -> Result<Vec<u8>, io::Error> {
+    // Schema is identical; payload passes through unchanged.
+    // Future structural migrations would deserialize → transform → reserialize here.
+    Ok(payload.to_vec())
+}
 
 // ============================================================================
 // SERIALIZATION FORMAT
@@ -79,19 +208,44 @@ pub fn list_saves() -> io::Result<Vec<String>> {
 // ============================================================================
 
 /// Serialize a [`WorldState`] to bytes using the specified format.
+///
+/// For [`StateFormat::Bincode`], the output includes the 8-byte version header
+/// followed by the bincode payload.
 pub fn serialize_world_state(state: &WorldState, format: StateFormat) -> Result<Vec<u8>, io::Error> {
     match format {
-        StateFormat::Bincode => bincode::serialize(state)
-            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string())),
+        StateFormat::Bincode => {
+            let payload = bincode::serialize(state)
+                .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))?;
+            let mut out = write_version_header(SaveVersion::CURRENT);
+            out.extend_from_slice(&payload);
+            Ok(out)
+        }
         StateFormat::Json => serde_json::to_vec_pretty(state).map_err(io::Error::other),
     }
 }
 
 /// Deserialize a [`WorldState`] from bytes using the specified format.
+///
+/// For [`StateFormat::Bincode`], this detects the version header, runs any
+/// necessary migrations, then deserializes the payload.
 pub fn deserialize_world_state(bytes: &[u8], format: StateFormat) -> Result<WorldState, io::Error> {
     match format {
-        StateFormat::Bincode => bincode::deserialize(bytes)
-            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string())),
+        StateFormat::Bincode => {
+            let (version, offset) = detect_save_version(bytes)?;
+            let payload = &bytes[offset..];
+
+            // Migrate if needed
+            let migrated;
+            let final_payload = if version < SaveVersion::CURRENT {
+                migrated = migrate(version, SaveVersion::CURRENT, payload)?;
+                &migrated
+            } else {
+                payload
+            };
+
+            bincode::deserialize(final_payload)
+                .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))
+        }
         StateFormat::Json => {
             serde_json::from_slice(bytes).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
         }
