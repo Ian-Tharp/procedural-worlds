@@ -7,6 +7,7 @@ pub mod debug_console;
 pub mod debug_overlay;
 pub mod hud;
 pub mod minimap;
+pub mod perf_overlay;
 pub mod performance;
 pub mod worldgen_panel;
 
@@ -17,6 +18,7 @@ pub use debug_console::DebugConsolePlugin;
 pub use debug_overlay::DebugOverlayPlugin;
 pub use hud::HudPlugin;
 pub use minimap::MinimapPlugin;
+pub use perf_overlay::UnifiedPerfOverlayPlugin;
 pub use performance::PerformanceDashboardPlugin;
 pub use worldgen_panel::WorldGenPanelPlugin;
 

@@ -49,7 +49,9 @@ fn main() {
         // Insert engine config as a resource (before plugins that read it)
         .insert_resource(engine_config)
         // Our custom plugins
+        .add_plugins(engine::metrics::MetricsPlugin)
         .add_plugins(editor::EditorPlugin)
+        .add_plugins(editor::UnifiedPerfOverlayPlugin)
         .add_plugins(editor::DebugOverlayPlugin)
         .add_plugins(editor::DebugConsolePlugin)
         .add_plugins(editor::ChunkDebugPlugin)
