@@ -204,6 +204,169 @@ pub fn list_saves() -> io::Result<Vec<String>> {
 }
 
 // ============================================================================
+// SAVE MANAGEMENT UTILITIES
+// ============================================================================
+
+/// Check if a save session exists (has a save directory).
+pub fn save_exists(session_name: &str) -> bool {
+    let session_dir = PathBuf::from(SAVES_ROOT).join(session_name);
+    session_dir.exists() && session_dir.is_dir()
+}
+
+/// Summary information about a save file (without loading full state).
+#[derive(Debug, Clone)]
+pub struct SaveInfo {
+    /// Session/save name.
+    pub name: String,
+    /// File size in bytes (0 if not found).
+    pub size_bytes: u64,
+    /// Serialization format detected.
+    pub format: StateFormat,
+    /// Last modified timestamp (Unix epoch seconds, 0 if unavailable).
+    pub modified_timestamp: u64,
+    /// Whether the save file exists and is readable.
+    pub is_valid: bool,
+}
+
+/// Get summary information about a save without loading the full state.
+///
+/// Useful for save selection UI to display file size and modification time.
+pub fn get_save_info(session_name: &str) -> SaveInfo {
+    // Try bincode first, then JSON
+    for format in [StateFormat::Bincode, StateFormat::Json] {
+        let path = save_file_path(session_name, format);
+        if let Ok(metadata) = fs::metadata(&path) {
+            let modified_timestamp = metadata
+                .modified()
+                .ok()
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|d| d.as_secs())
+                .unwrap_or(0);
+
+            return SaveInfo {
+                name: session_name.to_string(),
+                size_bytes: metadata.len(),
+                format,
+                modified_timestamp,
+                is_valid: true,
+            };
+        }
+    }
+
+    // No save file found
+    SaveInfo {
+        name: session_name.to_string(),
+        size_bytes: 0,
+        format: StateFormat::Bincode,
+        modified_timestamp: 0,
+        is_valid: false,
+    }
+}
+
+/// List all saves with their summary information.
+pub fn list_saves_with_info() -> io::Result<Vec<SaveInfo>> {
+    let saves = list_saves()?;
+    Ok(saves.iter().map(|name| get_save_info(name)).collect())
+}
+
+/// Delete a save session and all its associated files.
+///
+/// This removes the entire session directory under `saves/`.
+/// Returns `Ok(())` if deleted successfully, or if the save doesn't exist.
+pub fn delete_save(session_name: &str) -> io::Result<()> {
+    let session_dir = PathBuf::from(SAVES_ROOT).join(session_name);
+    
+    if !session_dir.exists() {
+        // Already deleted or never existed — success
+        return Ok(());
+    }
+
+    if !session_dir.is_dir() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("Save path exists but is not a directory: {:?}", session_dir),
+        ));
+    }
+
+    // Remove the entire session directory
+    fs::remove_dir_all(&session_dir)?;
+    info!("Deleted save session: {}", session_name);
+    Ok(())
+}
+
+/// Rename a save session.
+///
+/// Moves the session directory from `old_name` to `new_name`.
+pub fn rename_save(old_name: &str, new_name: &str) -> io::Result<()> {
+    if old_name == new_name {
+        return Ok(());
+    }
+
+    let old_dir = PathBuf::from(SAVES_ROOT).join(old_name);
+    let new_dir = PathBuf::from(SAVES_ROOT).join(new_name);
+
+    if !old_dir.exists() {
+        return Err(io::Error::new(
+            io::ErrorKind::NotFound,
+            format!("Save session '{}' not found", old_name),
+        ));
+    }
+
+    if new_dir.exists() {
+        return Err(io::Error::new(
+            io::ErrorKind::AlreadyExists,
+            format!("Save session '{}' already exists", new_name),
+        ));
+    }
+
+    fs::rename(&old_dir, &new_dir)?;
+    info!("Renamed save session: {} -> {}", old_name, new_name);
+    Ok(())
+}
+
+/// Duplicate a save session.
+///
+/// Creates a copy of the session directory with a new name.
+pub fn duplicate_save(source_name: &str, dest_name: &str) -> io::Result<()> {
+    let source_dir = PathBuf::from(SAVES_ROOT).join(source_name);
+    let dest_dir = PathBuf::from(SAVES_ROOT).join(dest_name);
+
+    if !source_dir.exists() {
+        return Err(io::Error::new(
+            io::ErrorKind::NotFound,
+            format!("Save session '{}' not found", source_name),
+        ));
+    }
+
+    if dest_dir.exists() {
+        return Err(io::Error::new(
+            io::ErrorKind::AlreadyExists,
+            format!("Save session '{}' already exists", dest_name),
+        ));
+    }
+
+    // Create destination directory
+    fs::create_dir_all(&dest_dir)?;
+
+    // Copy all files from source to destination
+    for entry in fs::read_dir(&source_dir)? {
+        let entry = entry?;
+        let file_type = entry.file_type()?;
+        let src_path = entry.path();
+        let dest_path = dest_dir.join(entry.file_name());
+
+        if file_type.is_file() {
+            fs::copy(&src_path, &dest_path)?;
+        }
+        // Note: We don't recursively copy subdirectories for now.
+        // If chunk data lives in subdirs, this would need to be extended.
+    }
+
+    info!("Duplicated save session: {} -> {}", source_name, dest_name);
+    Ok(())
+}
+
+// ============================================================================
 // SERIALIZE / DESERIALIZE
 // ============================================================================
 
