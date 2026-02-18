@@ -12,6 +12,7 @@
 //! that wraps around it.
 
 pub mod save_system;
+pub mod scenario;
 pub mod world_state;
 
 #[cfg(test)]
