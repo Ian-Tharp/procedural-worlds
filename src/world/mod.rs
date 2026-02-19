@@ -30,6 +30,7 @@ pub mod interaction;
 pub mod mesh_cache;
 pub mod meshing;
 pub mod persistence;
+pub mod render_batching;
 pub mod save;
 pub mod streaming;
 pub mod texture_atlas;
@@ -662,6 +663,8 @@ impl Plugin for WorldPlugin {
             .add_plugins(chunk_streaming::ChunkStreamingPlugin)
             // Block interaction (place, break, selected block cycling)
             .add_plugins(interaction::BlockInteractionPlugin)
+            // Render batching — merge stable chunk meshes to reduce draw calls
+            .add_plugins(render_batching::RenderBatchingPlugin)
             .configure_sets(
                 Update,
                 (
