@@ -27,6 +27,7 @@ pub mod atlas_material;
 pub mod chunk_priority;
 pub mod chunk_streaming;
 pub mod interaction;
+pub mod mesh_cache;
 pub mod meshing;
 pub mod persistence;
 pub mod save;
@@ -35,6 +36,7 @@ pub mod texture_atlas;
 pub mod texture_variation;
 pub mod unloading;
 
+use mesh_cache::ChunkMeshCache;
 use persistence::ChunkStorage;
 
 /// Size of a chunk in blocks (16x16x16)
@@ -608,6 +610,7 @@ impl Plugin for WorldPlugin {
             .init_resource::<ChunkStorage>()
             .init_resource::<unloading::UnloadConfig>()
             .init_resource::<ChunkLoadMetrics>()
+            .init_resource::<ChunkMeshCache>()
             // Pre-allocated mesh buffer pool for reduced allocation overhead
             .init_resource::<ChunkMeshPool>()
             // Register chunk diagnostics with Bevy's DiagnosticsStore
@@ -1021,6 +1024,9 @@ fn mesh_dirty_chunks(
         Query<&Chunk>,
     )>,
     config: Res<crate::config::EngineConfig>,
+    mesh_cache: Res<ChunkMeshCache>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    chunk_material: Res<ChunkMaterial>,
 ) {
     let player_chunk = chunk_manager.player_chunk;
 
@@ -1059,8 +1065,62 @@ fn mesh_dirty_chunks(
     let task_pool = AsyncComputeTaskPool::get();
     let mut tasks_spawned = 0;
     let mut to_mesh: Vec<Entity> = Vec::new();
+    // Entities that got an instant cache hit — need dirty flag cleared but no PendingMesh
+    let mut cache_hits: Vec<Entity> = Vec::new();
+
+    let mat = chunk_material.handle.as_ref();
 
     for (entity, pos) in dirty_chunks {
+        if tasks_spawned >= MAX_MESH_TASKS_PER_FRAME && !mesh_cache.enabled {
+            break;
+        }
+
+        // Try mesh cache first (synchronous disk read — fast for cache hits)
+        if let Some((opaque_mesh, water_mesh)) =
+            mesh_cache.load_cached_mesh(pos, mesh_cache::BLOCK_TYPE_COUNT)
+        {
+            let mesh_handle = meshes.add(opaque_mesh);
+            let world_pos = chunk_to_world_pos(pos);
+
+            commands.entity(entity).insert((
+                Mesh3d(mesh_handle),
+                Transform::from_translation(world_pos),
+                ChunkMesh,
+            ));
+
+            if let Some(mat) = mat {
+                match mat {
+                    ChunkMaterialHandle::Atlas { opaque, .. } => {
+                        commands.entity(entity).insert(MeshMaterial3d(opaque.clone()));
+                    }
+                    ChunkMaterialHandle::Standard { opaque, .. } => {
+                        commands.entity(entity).insert(MeshMaterial3d(opaque.clone()));
+                    }
+                }
+
+                if let Some(wm) = water_mesh {
+                    let water_mesh_handle = meshes.add(wm);
+                    let water_child = commands.spawn((
+                        Mesh3d(water_mesh_handle),
+                        Transform::default(),
+                        WaterMesh,
+                    )).id();
+                    match mat {
+                        ChunkMaterialHandle::Atlas { water, .. } => {
+                            commands.entity(water_child).insert(MeshMaterial3d(water.clone()));
+                        }
+                        ChunkMaterialHandle::Standard { water, .. } => {
+                            commands.entity(water_child).insert(MeshMaterial3d(water.clone()));
+                        }
+                    }
+                    commands.entity(entity).add_child(water_child);
+                }
+            }
+
+            cache_hits.push(entity);
+            continue;
+        }
+
         if tasks_spawned >= MAX_MESH_TASKS_PER_FRAME {
             break;
         }
@@ -1092,9 +1152,10 @@ fn mesh_dirty_chunks(
     }
 
     // Phase 3: Clear dirty flags.
-    if !to_mesh.is_empty() {
+    let all_done: Vec<Entity> = to_mesh.into_iter().chain(cache_hits).collect();
+    if !all_done.is_empty() {
         let mut p0 = param_set.p0();
-        for entity in to_mesh {
+        for entity in all_done {
             if let Ok((_, mut chunk)) = p0.get_mut(entity) {
                 chunk.dirty = false;
             }
@@ -1114,6 +1175,7 @@ fn poll_pending_meshes(
     mut meshes: ResMut<Assets<Mesh>>,
     chunk_material: Res<ChunkMaterial>,
     mut pending_query: Query<(Entity, &Chunk, &mut PendingMesh)>,
+    mesh_cache: Res<ChunkMeshCache>,
 ) {
     let Some(mat) = &chunk_material.handle else {
         return;
@@ -1121,6 +1183,18 @@ fn poll_pending_meshes(
 
     for (entity, chunk, mut pending) in &mut pending_query {
         if let Some((opaque_mesh, water_mesh)) = block_on(future::poll_once(&mut pending.task)) {
+            // Write to mesh cache if enabled (fire-and-forget, don't block on errors)
+            if mesh_cache.enabled {
+                if let Err(e) = mesh_cache.cache_mesh(
+                    chunk.position,
+                    &opaque_mesh,
+                    water_mesh.as_ref(),
+                    mesh_cache::BLOCK_TYPE_COUNT,
+                ) {
+                    warn!("Failed to cache mesh for {:?}: {}", chunk.position, e);
+                }
+            }
+
             let mesh_handle = meshes.add(opaque_mesh);
             let world_pos = chunk_to_world_pos(chunk.position);
 
