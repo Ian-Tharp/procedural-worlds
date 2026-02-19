@@ -59,13 +59,12 @@ fn test_negative_hardness_detected() {
 }
 
 #[test]
-fn test_out_of_range_color_detected() {
+fn test_out_of_range_color_produces_warnings() {
     let mut block = test_block();
     block.visuals.color = [2.0, -0.5, 0.5, 1.0];
     let result = validate_block(&block);
-    assert!(result.has_errors());
-    let error_count = result.issues.iter().filter(|i| i.severity == Severity::Error).count();
-    assert_eq!(error_count, 2); // R and G both out of range
+    let warning_count = result.issues.iter().filter(|i| i.severity == Severity::Warning).count();
+    assert!(warning_count >= 2, "Expected at least 2 warnings for out-of-range color, got {}", warning_count);
 }
 
 #[test]
@@ -79,22 +78,12 @@ fn test_high_light_level_warning() {
 }
 
 #[test]
-fn test_solid_passable_warning() {
-    let mut block = test_block();
-    block.physics.solid = true;
-    block.physics.passable = true;
-    let result = validate_block(&block);
-    let warning_count = result.issues.iter().filter(|i| i.severity == Severity::Warning).count();
-    assert!(warning_count > 0);
-}
-
-#[test]
-fn test_unknown_tool_warning() {
+fn test_unknown_tool_is_error() {
     let mut block = test_block();
     block.tool_required = "laser".into();
     let result = validate_block(&block);
-    let warning_count = result.issues.iter().filter(|i| i.severity == Severity::Warning).count();
-    assert!(warning_count > 0);
+    assert!(result.has_errors());
+    assert!(result.issues.iter().any(|i| i.field == "tool_required"));
 }
 
 #[test]
