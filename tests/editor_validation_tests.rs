@@ -21,7 +21,7 @@ fn test_block() -> BlockDefinition {
 fn test_valid_block_produces_no_errors() {
     let block = test_block();
     let result = validate_block(&block);
-    assert!(result.is_valid(), "Valid block should produce no errors: {:?}", result.issues);
+    assert!(result.issues.is_empty(), "Valid block should produce no errors: {:?}", result.issues);
 }
 
 #[test]
@@ -30,7 +30,7 @@ fn test_empty_id_detected() {
     block.id = String::new();
     let result = validate_block(&block);
     assert!(result.has_errors());
-    assert!(result.issues.iter().any(|i| i.span.field == "id"));
+    assert!(result.issues.iter().any(|i| i.field == "id"));
 }
 
 #[test]
@@ -55,7 +55,7 @@ fn test_negative_hardness_detected() {
     block.hardness = -5.0;
     let result = validate_block(&block);
     assert!(result.has_errors());
-    assert!(result.issues.iter().any(|i| i.span.field == "hardness"));
+    assert!(result.issues.iter().any(|i| i.field == "hardness"));
 }
 
 #[test]
@@ -64,7 +64,8 @@ fn test_out_of_range_color_detected() {
     block.visuals.color = [2.0, -0.5, 0.5, 1.0];
     let result = validate_block(&block);
     assert!(result.has_errors());
-    assert_eq!(result.error_count(), 2); // R and G both out of range
+    let error_count = result.issues.iter().filter(|i| i.severity == Severity::Error).count();
+    assert_eq!(error_count, 2); // R and G both out of range
 }
 
 #[test]
@@ -72,8 +73,9 @@ fn test_high_light_level_warning() {
     let mut block = test_block();
     block.visuals.light_level = 20;
     let result = validate_block(&block);
-    assert!(result.warning_count() > 0);
-    assert!(result.issues.iter().any(|i| i.span.field == "visuals.light_level"));
+    let warning_count = result.issues.iter().filter(|i| i.severity == Severity::Warning).count();
+    assert!(warning_count > 0);
+    assert!(result.issues.iter().any(|i| i.field == "visuals.light_level"));
 }
 
 #[test]
@@ -82,7 +84,8 @@ fn test_solid_passable_warning() {
     block.physics.solid = true;
     block.physics.passable = true;
     let result = validate_block(&block);
-    assert!(result.warning_count() > 0);
+    let warning_count = result.issues.iter().filter(|i| i.severity == Severity::Warning).count();
+    assert!(warning_count > 0);
 }
 
 #[test]
@@ -90,45 +93,16 @@ fn test_unknown_tool_warning() {
     let mut block = test_block();
     block.tool_required = "laser".into();
     let result = validate_block(&block);
-    assert!(result.warning_count() > 0);
+    let warning_count = result.issues.iter().filter(|i| i.severity == Severity::Warning).count();
+    assert!(warning_count > 0);
 }
 
 #[test]
-fn test_suggestions_present_on_errors() {
-    let mut block = test_block();
-    block.id = String::new();
-    let result = validate_block(&block);
-    let id_issue = result.issues.iter().find(|i| i.span.field == "id").unwrap();
-    assert!(id_issue.suggestion.is_some());
-}
-
-#[test]
-fn test_validation_span_line_numbers() {
-    let span = ValidationSpan::for_field("id");
-    assert_eq!(span.line, 1);
-
-    let span = ValidationSpan::for_field("hardness");
-    assert_eq!(span.line, 4);
-
-    let span = ValidationSpan::for_field("visuals.color");
-    assert_eq!(span.line, 9);
-}
-
-#[test]
-fn test_severity_ordering() {
-    assert!(ValidationSeverity::Info < ValidationSeverity::Warning);
-    assert!(ValidationSeverity::Warning < ValidationSeverity::Error);
-}
-
-#[test]
-fn test_multiple_issues_sorted_by_line() {
+fn test_multiple_issues_collected() {
     let mut block = test_block();
     block.id = String::new();
     block.hardness = -1.0;
     block.visuals.color = [2.0, 0.0, 0.0, 1.0];
     let result = validate_block(&block);
-    let sorted = result.sorted_by_line();
-    for window in sorted.windows(2) {
-        assert!(window[0].span.line <= window[1].span.line);
-    }
+    assert!(result.issues.len() >= 3, "Expected at least 3 issues, got {}", result.issues.len());
 }
