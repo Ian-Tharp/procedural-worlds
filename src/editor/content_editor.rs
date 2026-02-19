@@ -9,7 +9,9 @@
 use bevy::prelude::*;
 use bevy_egui::{egui, EguiContexts};
 
-use crate::content::{OreDefinition, OreRegistry, BiomeFilter};
+use crate::content::{OreDefinition, OreRegistry, BiomeFilter, BlockDefinition, BlockRegistry};
+use crate::content::block_validator::{validate_block, BlockValidationResult};
+use super::validation_display;
 
 // ============================================================================
 // STATE
@@ -20,7 +22,8 @@ use crate::content::{OreDefinition, OreRegistry, BiomeFilter};
 pub enum ContentTab {
     #[default]
     Ores,
-    // Future: Blocks, Biomes, Structures
+    Blocks,
+    // Future: Biomes, Structures
 }
 
 /// Current editing state
@@ -30,6 +33,12 @@ pub struct EditingState {
     pub selected_ore: Option<String>,
     /// Working copy of the ore being edited
     pub editing_ore: Option<OreDefinition>,
+    /// Currently selected block ID (if any)
+    pub selected_block: Option<String>,
+    /// Working copy of the block being edited
+    pub editing_block: Option<BlockDefinition>,
+    /// Live validation result for the block being edited
+    pub block_validation: BlockValidationResult,
     /// Has unsaved changes
     pub dirty: bool,
     /// Error message to display
@@ -144,6 +153,7 @@ fn content_editor_ui_system(
     mut contexts: EguiContexts,
     mut state: ResMut<ContentEditorState>,
     mut ore_registry: Option<ResMut<OreRegistry>>,
+    block_registry: Option<Res<BlockRegistry>>,
 ) {
     if !state.visible {
         return;
@@ -158,9 +168,9 @@ fn content_editor_ui_system(
 
     // Draw the main editor window
     if state.fullscreen {
-        draw_fullscreen_editor(ctx, &mut state, ore_registry.as_deref_mut());
+        draw_fullscreen_editor(ctx, &mut state, ore_registry.as_deref_mut(), block_registry.as_deref());
     } else {
-        draw_floating_editor(ctx, &mut state, ore_registry.as_deref_mut());
+        draw_floating_editor(ctx, &mut state, ore_registry.as_deref_mut(), block_registry.as_deref());
     }
 }
 
@@ -185,6 +195,7 @@ fn draw_floating_editor(
     ctx: &egui::Context,
     state: &mut ContentEditorState,
     ore_registry: Option<&mut OreRegistry>,
+    block_registry: Option<&BlockRegistry>,
 ) {
     egui::Window::new("📦 Content Editor")
         .id(egui::Id::new("content_editor_window"))
@@ -193,7 +204,7 @@ fn draw_floating_editor(
         .resizable(true)
         .collapsible(true)
         .show(ctx, |ui| {
-            draw_editor_content(ui, state, ore_registry);
+            draw_editor_content(ui, state, ore_registry, block_registry);
         });
 }
 
@@ -202,6 +213,7 @@ fn draw_fullscreen_editor(
     ctx: &egui::Context,
     state: &mut ContentEditorState,
     ore_registry: Option<&mut OreRegistry>,
+    block_registry: Option<&BlockRegistry>,
 ) {
     // Use CentralPanel for true fullscreen - covers entire screen
     egui::CentralPanel::default()
@@ -225,7 +237,7 @@ fn draw_fullscreen_editor(
             ui.separator();
             
             // Main content
-            draw_editor_content(ui, state, ore_registry);
+            draw_editor_content(ui, state, ore_registry, block_registry);
         });
 }
 
@@ -234,13 +246,14 @@ fn draw_editor_content(
     ui: &mut egui::Ui,
     state: &mut ContentEditorState,
     ore_registry: Option<&mut OreRegistry>,
+    block_registry: Option<&BlockRegistry>,
 ) {
     // Toolbar
     ui.horizontal(|ui| {
         // Tab buttons
         ui.selectable_value(&mut state.current_tab, ContentTab::Ores, "📦 Ores");
+        ui.selectable_value(&mut state.current_tab, ContentTab::Blocks, "🧱 Blocks");
         // Future tabs:
-        // ui.selectable_value(&mut state.current_tab, ContentTab::Blocks, "🧱 Blocks");
         // ui.selectable_value(&mut state.current_tab, ContentTab::Biomes, "🌲 Biomes");
 
         ui.separator();
@@ -277,6 +290,7 @@ fn draw_editor_content(
 
     match state.current_tab {
         ContentTab::Ores => draw_ores_tab(ui, state, ore_registry),
+        ContentTab::Blocks => draw_blocks_tab(ui, state, block_registry),
     }
 }
 
@@ -636,5 +650,195 @@ fn draw_biome_filter_editor(ui: &mut egui::Ui, filter: &mut BiomeFilter, dirty: 
             }
         }
         BiomeFilter::All => {}
+    }
+}
+
+// ============================================================================
+// BLOCKS TAB WITH VALIDATION
+// ============================================================================
+
+/// Draw the blocks tab with real-time validation feedback
+fn draw_blocks_tab(
+    ui: &mut egui::Ui,
+    state: &mut ContentEditorState,
+    block_registry: Option<&BlockRegistry>,
+) {
+    let Some(registry) = block_registry else {
+        ui.colored_label(egui::Color32::from_rgb(255, 200, 100), "Block registry not loaded");
+        return;
+    };
+
+    ui.columns(2, |columns| {
+        // LEFT: Block list
+        let left = &mut columns[0];
+        left.heading("Registered Blocks");
+        left.separator();
+
+        egui::ScrollArea::vertical()
+            .id_salt("block_list")
+            .show(left, |ui| {
+                let block_ids = registry.ids_sorted();
+                for id in block_ids {
+                    if let Some(block) = registry.get(&id) {
+                        let is_selected = state.editing.selected_block.as_ref() == Some(&id);
+                        let label = format!("🧱 {}", block.display_name);
+                        let response = ui.selectable_label(is_selected, &label);
+
+                        if response.clicked() {
+                            state.editing.selected_block = Some(id.clone());
+                            state.editing.editing_block = Some(block.clone());
+                            state.editing.block_validation = validate_block(block);
+                            state.editing.dirty = false;
+                        }
+
+                        response.on_hover_text(format!(
+                            "ID: {}\nCategory: {:?}\nHardness: {:.1}",
+                            block.id, block.category, block.hardness
+                        ));
+                    }
+                }
+            });
+
+        // RIGHT: Block editor with validation
+        let right = &mut columns[1];
+
+        if let Some(ref mut block) = state.editing.editing_block {
+            draw_block_editor_with_validation(right, block, &mut state.editing.dirty, &mut state.editing.block_validation);
+        } else {
+            right.centered_and_justified(|ui| {
+                ui.label("Select a block to inspect and validate");
+            });
+        }
+    });
+}
+
+/// Draw the block editor form with inline validation markers
+fn draw_block_editor_with_validation(
+    ui: &mut egui::Ui,
+    block: &mut BlockDefinition,
+    dirty: &mut bool,
+    validation: &mut BlockValidationResult,
+) {
+    ui.heading(&block.display_name);
+
+    // Validation summary bar
+    validation_display::draw_validation_summary(ui, validation);
+    ui.separator();
+
+    egui::Grid::new("block_editor_grid")
+        .num_columns(3) // label, editor, validation marker
+        .spacing([10.0, 6.0])
+        .show(ui, |ui| {
+            // ID
+            ui.label("ID:");
+            if ui.add(egui::TextEdit::singleline(&mut block.id).hint_text("unique_id")).changed() {
+                *dirty = true;
+                *validation = validate_block(block);
+            }
+            validation_display::draw_field_marker(ui, validation, "id");
+            ui.end_row();
+
+            // Display Name
+            ui.label("Display Name:");
+            if ui.add(egui::TextEdit::singleline(&mut block.display_name).hint_text("Block Name")).changed() {
+                *dirty = true;
+                *validation = validate_block(block);
+            }
+            validation_display::draw_field_marker(ui, validation, "display_name");
+            ui.end_row();
+
+            // Hardness
+            ui.label("Hardness:");
+            if ui.add(egui::Slider::new(&mut block.hardness, 0.0..=15.0)).changed() {
+                *dirty = true;
+                *validation = validate_block(block);
+            }
+            validation_display::draw_field_marker(ui, validation, "hardness");
+            ui.end_row();
+
+            // Tool Required
+            ui.label("Tool Required:");
+            if ui.add(egui::TextEdit::singleline(&mut block.tool_required).hint_text("pickaxe")).changed() {
+                *dirty = true;
+                *validation = validate_block(block);
+            }
+            validation_display::draw_field_marker(ui, validation, "tool_required");
+            ui.end_row();
+        });
+
+    ui.separator();
+    ui.label(egui::RichText::new("Physics").strong());
+
+    egui::Grid::new("block_physics_grid")
+        .num_columns(3)
+        .spacing([10.0, 6.0])
+        .show(ui, |ui| {
+            ui.label("Solid:");
+            if ui.checkbox(&mut block.physics.solid, "").changed() {
+                *dirty = true;
+                *validation = validate_block(block);
+            }
+            validation_display::draw_field_marker(ui, validation, "physics.solid");
+            ui.end_row();
+
+            ui.label("Transparent:");
+            if ui.checkbox(&mut block.physics.transparent, "").changed() {
+                *dirty = true;
+                *validation = validate_block(block);
+            }
+            validation_display::draw_field_marker(ui, validation, "physics.transparent");
+            ui.end_row();
+
+            ui.label("Passable:");
+            if ui.checkbox(&mut block.physics.passable, "").changed() {
+                *dirty = true;
+                *validation = validate_block(block);
+            }
+            validation_display::draw_field_marker(ui, validation, "physics.passable");
+            ui.end_row();
+        });
+
+    ui.separator();
+    ui.label(egui::RichText::new("Visuals").strong());
+
+    egui::Grid::new("block_visuals_grid")
+        .num_columns(3)
+        .spacing([10.0, 6.0])
+        .show(ui, |ui| {
+            ui.label("Color RGBA:");
+            ui.horizontal(|ui| {
+                let mut changed = false;
+                for val in block.visuals.color.iter_mut() {
+                    if ui.add(egui::DragValue::new(val).range(0.0..=1.0).speed(0.01)).changed() {
+                        changed = true;
+                    }
+                }
+                if changed {
+                    *dirty = true;
+                    *validation = validate_block(block);
+                }
+            });
+            validation_display::draw_field_marker(ui, validation, "visuals.color");
+            ui.end_row();
+
+            ui.label("Light Level:");
+            if ui.add(egui::Slider::new(&mut block.visuals.light_level, 0..=15)).changed() {
+                *dirty = true;
+                *validation = validate_block(block);
+            }
+            validation_display::draw_field_marker(ui, validation, "visuals.light_level");
+            ui.end_row();
+        });
+
+    // Full validation panel at the bottom
+    validation_display::draw_validation_panel(ui, validation);
+
+    // Dirty indicator
+    if *dirty {
+        ui.separator();
+        ui.colored_label(
+            egui::Color32::from_rgb(255, 200, 100),
+            "⚠ Unsaved changes (read-only view — block editing coming in Phase 2)",
+        );
     }
 }

@@ -106,7 +106,7 @@ impl fmt::Display for ValidationError {
 impl std::error::Error for ValidationError {}
 
 /// Result of validating one or more block definitions.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct BlockValidationResult {
     /// All issues found during validation.
     pub issues: Vec<BlockValidationIssue>,
@@ -702,4 +702,23 @@ mod tests {
         let result = validator.validate(&block);
         assert!(result.issues.len() >= 4, "Expected at least 4 issues, got {}: {:?}", result.issues.len(), result.issues);
     }
+}
+
+// ============================================================================
+// COMPATIBILITY ALIASES (for editor integration)
+// ============================================================================
+
+/// Alias for [`BlockValidationResult`] used by the editor validation display.
+pub type ValidationResult = BlockValidationResult;
+
+/// Alias for [`Severity`] used by the editor validation display.
+pub type ValidationSeverity = Severity;
+
+/// Alias for [`BlockValidationIssue`] used by the editor validation display.
+pub type ValidationIssue = BlockValidationIssue;
+
+/// Convenience function: validate a single block definition using default settings.
+pub fn validate_block(block: &BlockDefinition) -> ValidationResult {
+    let validator = BlockDefinitionValidator::new();
+    validator.validate(block)
 }
