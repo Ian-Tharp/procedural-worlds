@@ -10,9 +10,16 @@ use procedural_worlds::actors;
 use procedural_worlds::audio;
 use procedural_worlds::config;
 use procedural_worlds::content;
+use procedural_worlds::crafting;
+use procedural_worlds::creatures;
+use procedural_worlds::drops;
 use procedural_worlds::editor;
 use procedural_worlds::engine;
+use procedural_worlds::health;
+use procedural_worlds::inventory;
+use procedural_worlds::inventory_health;
 use procedural_worlds::physics;
+use procedural_worlds::weather;
 use procedural_worlds::world;
 
 fn main() {
@@ -42,7 +49,9 @@ fn main() {
         // Insert engine config as a resource (before plugins that read it)
         .insert_resource(engine_config)
         // Our custom plugins
+        .add_plugins(engine::metrics::MetricsPlugin)
         .add_plugins(editor::EditorPlugin)
+        .add_plugins(editor::UnifiedPerfOverlayPlugin)
         .add_plugins(editor::DebugOverlayPlugin)
         .add_plugins(editor::DebugConsolePlugin)
         .add_plugins(editor::ChunkDebugPlugin)
@@ -66,6 +75,14 @@ fn main() {
         .add_plugins(config::audio::AudioConfigPlugin)
         // Content system (ores, blocks, etc. - data-driven definitions)
         .add_plugins(content::ContentPlugin)
+        // Gameplay plugins
+        .add_plugins(drops::BlockDropPlugin)
+        .add_plugins(inventory::InventoryPlugin)
+        .add_plugins(health::HealthPlugin)
+        .add_plugins(crafting::CraftingPlugin)
+        .add_plugins(creatures::CreaturePlugin)
+        .add_plugins(inventory_health::InventoryHealthPlugin)
+        .add_plugins(weather::WeatherPlugin)
         // Startup systems
         .add_systems(Startup, setup_scene)
         .run();
@@ -79,8 +96,8 @@ fn setup_scene(mut commands: Commands) {
     // Spawn player entity with camera as child
     // Position is FEET position, camera is offset by eye height (1.62)
     // Start in walking mode with gravity
-    let player_feet_y = 64.0 - actors::CapsuleCollider::EYE_HEIGHT; // Eyes at 64
-    let player_id = actors::spawn_player(
+    let player_feet_y = 100.0 - actors::CapsuleCollider::EYE_HEIGHT; // Eyes at 100 (above base_height=64)
+    let player_id = actors::spawn_player_flying(
         &mut commands,
         Vec3::new(32.0, player_feet_y, 32.0),
     );

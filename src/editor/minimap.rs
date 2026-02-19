@@ -1,4 +1,4 @@
-//! Minimap System - Real-time overhead terrain view
+﻿//! Minimap System - Real-time overhead terrain view
 //!
 //! Renders a top-down view of the terrain around the player,
 //! showing actual block colors from loaded chunks, with biome-based
@@ -147,8 +147,8 @@ fn minimap_update_system(
     let needs_regen = texture.dirty
         || texture.texture_size != size
         || texture.generated_zoom != config.blocks_per_pixel
-        || (texture.center_x - center_x).abs() > 4
-        || (texture.center_z - center_z).abs() > 4;
+        || (texture.center_x - center_x).abs() > 16
+        || (texture.center_z - center_z).abs() > 16;
     
     if !needs_regen {
         return;
@@ -164,7 +164,7 @@ fn minimap_update_system(
     let mut pixels = vec![0u8; size * size * 4];
     
     // Track biome counts for debugging
-    let mut biome_counts = [0u32; 6];
+    let mut biome_counts = [0u32; 12];
     
     for py in 0..size {
         for px in 0..size {
@@ -212,7 +212,13 @@ fn biome_to_color(biome: BiomeType) -> (u8, u8, u8) {
         BiomeType::Desert => (240, 220, 160),     // Bright sand
         BiomeType::Mountains => (150, 150, 160),  // Light gray
         BiomeType::Tundra => (255, 255, 255),     // Pure white
-        BiomeType::Volcanic => (180, 60, 40),     // Bright red-brown
+        BiomeType::Volcanic => (180, 60, 40),
+        BiomeType::Swamp => (85, 107, 47),
+        BiomeType::Savanna => (218, 190, 80),
+        BiomeType::Taiga => (30, 90, 80),
+        BiomeType::Jungle => (50, 200, 50),
+        BiomeType::Badlands => (170, 90, 50),
+        BiomeType::Mushroom => (140, 70, 160),     // Bright red-brown
     }
 }
 

@@ -1,4 +1,4 @@
-//! Biome system — noise-based biome selection and terrain parameterization
+﻿//! Biome system — noise-based biome selection and terrain parameterization
 //!
 //! Biomes control terrain shape, vegetation density, and block palettes.
 //! A separate 2D simplex noise instance (with a different seed from terrain
@@ -30,7 +30,7 @@ use crate::world::BlockType;
 // BIOME TYPE
 // ============================================================================
 
-/// The six foundation biome types.
+/// The twelve biome types.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum BiomeType {
     Plains,
@@ -39,6 +39,12 @@ pub enum BiomeType {
     Mountains,
     Tundra,
     Volcanic,
+    Swamp,
+    Savanna,
+    Taiga,
+    Jungle,
+    Badlands,
+    Mushroom,
 }
 
 impl BiomeType {
@@ -51,6 +57,12 @@ impl BiomeType {
             BiomeType::Mountains,
             BiomeType::Tundra,
             BiomeType::Volcanic,
+            BiomeType::Swamp,
+            BiomeType::Savanna,
+            BiomeType::Taiga,
+            BiomeType::Jungle,
+            BiomeType::Badlands,
+            BiomeType::Mushroom,
         ]
     }
 
@@ -63,6 +75,12 @@ impl BiomeType {
             BiomeType::Mountains => "Mountains",
             BiomeType::Tundra => "Tundra",
             BiomeType::Volcanic => "Volcanic Wastes",
+            BiomeType::Swamp => "Swamp",
+            BiomeType::Savanna => "Savanna",
+            BiomeType::Taiga => "Taiga",
+            BiomeType::Jungle => "Jungle",
+            BiomeType::Badlands => "Badlands",
+            BiomeType::Mushroom => "Mushroom Fields",
         }
     }
 
@@ -75,6 +93,12 @@ impl BiomeType {
             BiomeType::Mountains => "\u{26F0}\u{FE0F}",
             BiomeType::Tundra => "\u{2744}\u{FE0F}",
             BiomeType::Volcanic => "\u{1F30B}",
+            BiomeType::Swamp => "\u{1F344}",
+            BiomeType::Savanna => "\u{1F333}",
+            BiomeType::Taiga => "\u{1F384}",
+            BiomeType::Jungle => "\u{1F334}",
+            BiomeType::Badlands => "\u{1F3DC}\u{FE0F}",
+            BiomeType::Mushroom => "\u{1F344}",
         }
     }
 }
@@ -195,6 +219,12 @@ impl BiomeType {
                 deep_block: BlockType::Stone,
                 snow_cap_height: None,
             },
+            BiomeType::Swamp => BiomeParams { terrain_amplitude: 4.0, terrain_frequency: 0.015, tree_density: 0.03, cactus_density: 0.0, sea_level_offset: 3, surface_block: BlockType::Mud, subsurface_block: BlockType::Clay, deep_block: BlockType::Stone, snow_cap_height: None },
+            BiomeType::Savanna => BiomeParams { terrain_amplitude: 6.0, terrain_frequency: 0.018, tree_density: 0.01, cactus_density: 0.0, sea_level_offset: 0, surface_block: BlockType::PackedDirt, subsurface_block: BlockType::Dirt, deep_block: BlockType::Stone, snow_cap_height: None },
+            BiomeType::Taiga => BiomeParams { terrain_amplitude: 10.0, terrain_frequency: 0.022, tree_density: 0.07, cactus_density: 0.0, sea_level_offset: 0, surface_block: BlockType::Grass, subsurface_block: BlockType::Dirt, deep_block: BlockType::Stone, snow_cap_height: Some(42) },
+            BiomeType::Jungle => BiomeParams { terrain_amplitude: 14.0, terrain_frequency: 0.02, tree_density: 0.12, cactus_density: 0.0, sea_level_offset: 0, surface_block: BlockType::Grass, subsurface_block: BlockType::Dirt, deep_block: BlockType::Stone, snow_cap_height: None },
+            BiomeType::Badlands => BiomeParams { terrain_amplitude: 20.0, terrain_frequency: 0.025, tree_density: 0.0, cactus_density: 0.003, sea_level_offset: -2, surface_block: BlockType::TerracottaRed, subsurface_block: BlockType::TerracottaOrange, deep_block: BlockType::Stone, snow_cap_height: None },
+            BiomeType::Mushroom => BiomeParams { terrain_amplitude: 6.0, terrain_frequency: 0.018, tree_density: 0.0, cactus_density: 0.0, sea_level_offset: 0, surface_block: BlockType::Mycelium, subsurface_block: BlockType::Dirt, deep_block: BlockType::Stone, snow_cap_height: None },
         }
     }
 }
@@ -215,35 +245,15 @@ impl BiomeType {
 /// Given the same `noise` instance (same seed) and `biome_scale`, the
 /// result is perfectly deterministic for any (x, z).
 pub fn biome_at(x: i32, z: i32, noise: &Simplex, biome_scale: f64) -> BiomeType {
-    // Temperature channel
     let temp = noise.get([x as f64 * biome_scale, z as f64 * biome_scale]);
-
-    // Moisture channel (offset by 1000 to decorrelate from temperature)
-    let moisture = noise.get([
-        x as f64 * biome_scale + 1000.0,
-        z as f64 * biome_scale + 1000.0,
-    ]);
-
-    // Map (temp, moisture) → biome
-    //   temp:     cold (< -0.3)  ·  mild  ·  hot (> 0.4)  ·  v.hot (> 0.5)
-    //   moisture: dry  (< -0.3)  ·  mid   ·  wet (> 0.2)
-    if temp < -0.3 {
-        BiomeType::Tundra
-    } else if temp > 0.5 && moisture < -0.2 {
-        BiomeType::Volcanic
-    } else if temp > 0.4 {
-        if moisture < 0.0 {
-            BiomeType::Desert
-        } else {
-            BiomeType::Plains
-        }
-    } else if moisture > 0.2 {
-        BiomeType::Forest
-    } else if moisture < -0.3 {
-        BiomeType::Mountains
-    } else {
-        BiomeType::Plains
-    }
+    let moisture = noise.get([x as f64 * biome_scale + 1000.0, z as f64 * biome_scale + 1000.0]);
+    let weirdness = noise.get([x as f64 * biome_scale + 2000.0, z as f64 * biome_scale + 2000.0]);
+    if temp < -0.4 { if moisture > 0.15 { BiomeType::Taiga } else { BiomeType::Tundra } }
+    else if temp < -0.15 { if moisture < -0.15 { BiomeType::Mountains } else { BiomeType::Taiga } }
+    else if temp < 0.1 { if moisture < -0.15 { BiomeType::Badlands } else if moisture > 0.15 { BiomeType::Swamp } else { BiomeType::Plains } }
+    else if temp < 0.3 { if moisture < -0.15 { BiomeType::Savanna } else if moisture > 0.15 { BiomeType::Jungle } else { BiomeType::Forest } }
+    else if temp < 0.5 { if moisture < -0.15 { BiomeType::Desert } else if moisture > 0.15 { BiomeType::Jungle } else { BiomeType::Savanna } }
+    else { if moisture > 0.15 && weirdness > 0.8 { BiomeType::Mushroom } else { BiomeType::Volcanic } }
 }
 
 // ============================================================================
@@ -309,8 +319,8 @@ mod tests {
         let scale = 0.005;
         let mut seen = std::collections::HashSet::new();
 
-        for x in (-500..500).step_by(3) {
-            for z in (-500..500).step_by(3) {
+        for x in (-2000..2000).step_by(3) {
+            for z in (-2000..2000).step_by(3) {
                 seen.insert(biome_at(x, z, &noise, scale));
                 if seen.len() == BiomeType::all().len() {
                     return; // All found — pass
@@ -468,8 +478,8 @@ mod tests {
     }
 
     #[test]
-    fn test_biome_type_all_returns_six() {
-        assert_eq!(BiomeType::all().len(), 6);
+    fn test_biome_type_all_returns_twelve() {
+        assert_eq!(BiomeType::all().len(), 12);
     }
 
     // ── display_name / icon ──
@@ -482,6 +492,12 @@ mod tests {
         assert_eq!(BiomeType::Mountains.display_name(), "Mountains");
         assert_eq!(BiomeType::Tundra.display_name(), "Tundra");
         assert_eq!(BiomeType::Volcanic.display_name(), "Volcanic Wastes");
+        assert_eq!(BiomeType::Swamp.display_name(), "Swamp");
+        assert_eq!(BiomeType::Savanna.display_name(), "Savanna");
+        assert_eq!(BiomeType::Taiga.display_name(), "Taiga");
+        assert_eq!(BiomeType::Jungle.display_name(), "Jungle");
+        assert_eq!(BiomeType::Badlands.display_name(), "Badlands");
+        assert_eq!(BiomeType::Mushroom.display_name(), "Mushroom Fields");
     }
 
     #[test]
@@ -505,4 +521,14 @@ mod tests {
             );
         }
     }
+
+
+    #[test]
+    fn test_all_biomes_have_params() { for biome in BiomeType::all() { let p = biome.params(); assert!(p.terrain_amplitude > 0.0); assert!(p.terrain_frequency > 0.0); } }
+
+    #[test]
+    fn test_biome_selection_coverage() { let noise = test_biome_noise(); let scale = 0.005; let mut seen = std::collections::HashSet::new(); for x in (-2000..2000).step_by(3) { for z in (-2000..2000).step_by(3) { seen.insert(biome_at(x, z, &noise, scale)); } } assert!(seen.len() >= 10, "got {}", seen.len()); }
+
+    #[test]
+    fn test_new_block_types_exist() { let blocks = [BlockType::Mud, BlockType::Clay, BlockType::Mycelium, BlockType::TerracottaRed, BlockType::TerracottaOrange, BlockType::PackedDirt]; for block in &blocks { let val: u16 = (*block).into(); let back: BlockType = val.into(); assert_eq!(*block, back); } }
 }

@@ -1,4 +1,4 @@
-//! Block Content Definitions
+﻿//! Block Content Definitions
 //!
 //! Defines block types for the world. Currently wraps the existing BlockType enum
 //! but provides data-driven properties and prepares for full dynamic blocks.
@@ -149,6 +149,12 @@ fn block_type_to_id(bt: BlockType) -> String {
         BlockType::IronOre => "iron_ore",
         BlockType::SilverOre => "silver_ore",
         BlockType::GoldOre => "gold_ore",
+        BlockType::Mud => "mud",
+        BlockType::Clay => "clay",
+        BlockType::Mycelium => "mycelium",
+        BlockType::TerracottaRed => "terracotta_red",
+        BlockType::TerracottaOrange => "terracotta_orange",
+        BlockType::PackedDirt => "packed_dirt",
     }.to_string()
 }
 
@@ -181,6 +187,7 @@ fn block_type_properties(bt: BlockType) -> (BlockPhysics, BlockVisuals, BlockCat
         BlockType::SandDunes | BlockType::VolcanicRock => BlockCategory::Natural,
         BlockType::Wood | BlockType::Leaves | BlockType::Cactus => BlockCategory::Natural,
         BlockType::Sandstone | BlockType::Obsidian => BlockCategory::Building,
+        BlockType::Mud | BlockType::Clay | BlockType::Mycelium | BlockType::TerracottaRed | BlockType::TerracottaOrange | BlockType::PackedDirt => BlockCategory::Natural,
     };
     
     (physics, visuals, category)
@@ -192,7 +199,7 @@ fn block_type_hardness(bt: BlockType) -> f32 {
         BlockType::Air => 0.0,
         BlockType::Leaves => 0.2,
         BlockType::Grass | BlockType::Dirt | BlockType::Sand | 
-        BlockType::Snow | BlockType::SandDunes => 0.5,
+        BlockType::Snow | BlockType::SandDunes | BlockType::Mud | BlockType::Clay | BlockType::Mycelium | BlockType::PackedDirt => 0.5,
         BlockType::Wood | BlockType::Cactus => 2.0,
         BlockType::Stone | BlockType::Sandstone | BlockType::Ice |
         BlockType::VolcanicRock => 3.0,
@@ -201,6 +208,7 @@ fn block_type_hardness(bt: BlockType) -> f32 {
         BlockType::SilverOre => 2.5,
         BlockType::GoldOre => 2.5,
         BlockType::Obsidian => 5.0,
+        BlockType::TerracottaRed | BlockType::TerracottaOrange => 3.0,
         BlockType::Water => 0.0,
     }
 }
@@ -212,7 +220,7 @@ fn block_type_tool(bt: BlockType) -> String {
         BlockType::CopperOre | BlockType::IronOre | BlockType::SilverOre |
         BlockType::GoldOre | BlockType::VolcanicRock | BlockType::Ice => "pickaxe",
         BlockType::Dirt | BlockType::Grass | BlockType::Sand |
-        BlockType::Snow | BlockType::SandDunes => "shovel",
+        BlockType::Snow | BlockType::SandDunes | BlockType::Mud | BlockType::Clay | BlockType::Mycelium | BlockType::PackedDirt => "shovel",
         BlockType::Wood | BlockType::Leaves | BlockType::Cactus => "axe",
         _ => "any",
     }.to_string()

@@ -60,7 +60,7 @@ harness = false
 
 # Faster compilation during development
 [profile.dev]
-opt-level = 1
+opt-level = 2
 
 # Optimize dependencies even in dev builds
 [profile.dev.package."*"]

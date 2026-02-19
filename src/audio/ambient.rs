@@ -1,4 +1,4 @@
-//! Context-aware ambient audio — dynamic adjustment based on biome and player activity
+﻿//! Context-aware ambient audio — dynamic adjustment based on biome and player activity
 //!
 //! Layers on top of the base biome ambient system in [`super::playback`],
 //! adding:
@@ -187,6 +187,12 @@ impl BiomeAudioProfile {
                 wind_responsive: false,
                 base_wind_intensity: 0.2,
             },
+            BiomeType::Swamp => Self { idle_volume_scale: 1.0, walking_volume_scale: 0.85, sprinting_volume_scale: 0.6, flying_volume_scale: 0.4, wind_responsive: false, base_wind_intensity: 0.1 },
+            BiomeType::Savanna => Self { idle_volume_scale: 1.0, walking_volume_scale: 0.85, sprinting_volume_scale: 0.6, flying_volume_scale: 0.4, wind_responsive: true, base_wind_intensity: 0.35 },
+            BiomeType::Taiga => Self { idle_volume_scale: 1.0, walking_volume_scale: 0.85, sprinting_volume_scale: 0.6, flying_volume_scale: 0.4, wind_responsive: false, base_wind_intensity: 0.2 },
+            BiomeType::Jungle => Self { idle_volume_scale: 1.0, walking_volume_scale: 0.8, sprinting_volume_scale: 0.5, flying_volume_scale: 0.35, wind_responsive: false, base_wind_intensity: 0.1 },
+            BiomeType::Badlands => Self { idle_volume_scale: 1.0, walking_volume_scale: 0.9, sprinting_volume_scale: 0.7, flying_volume_scale: 0.45, wind_responsive: true, base_wind_intensity: 0.55 },
+            BiomeType::Mushroom => Self { idle_volume_scale: 1.0, walking_volume_scale: 0.9, sprinting_volume_scale: 0.7, flying_volume_scale: 0.5, wind_responsive: false, base_wind_intensity: 0.05 },
         }
     }
 }

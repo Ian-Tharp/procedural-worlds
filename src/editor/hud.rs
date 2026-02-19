@@ -1,4 +1,4 @@
-//! Crosshair & Block Target HUD
+﻿//! Crosshair & Block Target HUD
 //!
 //! Renders a centered crosshair overlay and displays targeted block information
 //! near the crosshair when the raycast system has a target.
@@ -655,6 +655,12 @@ mod tests {
         assert_eq!(BiomeType::Mountains.display_name(), "Mountains");
         assert_eq!(BiomeType::Tundra.display_name(), "Tundra");
         assert_eq!(BiomeType::Volcanic.display_name(), "Volcanic Wastes");
+        assert_eq!(BiomeType::Swamp.display_name(), "Swamp");
+        assert_eq!(BiomeType::Savanna.display_name(), "Savanna");
+        assert_eq!(BiomeType::Taiga.display_name(), "Taiga");
+        assert_eq!(BiomeType::Jungle.display_name(), "Jungle");
+        assert_eq!(BiomeType::Badlands.display_name(), "Badlands");
+        assert_eq!(BiomeType::Mushroom.display_name(), "Mushroom Fields");
     }
 
     #[test]

@@ -1,4 +1,4 @@
-//! Chunk mesh generation - converts voxel data to renderable meshes
+﻿//! Chunk mesh generation - converts voxel data to renderable meshes
 //!
 //! Supports two strategies:
 //! - **Greedy meshing** (`build_chunk_mesh`): Merges adjacent coplanar faces of the same
@@ -72,7 +72,13 @@ pub fn block_color(block: BlockType) -> [f32; 4] {
         BlockType::CopperOre => [0.55, 0.42, 0.35, 1.0],  // Orange-brown tint
         BlockType::IronOre => [0.45, 0.40, 0.38, 1.0],    // Dark grey-brown tint
         BlockType::SilverOre => [0.65, 0.68, 0.72, 1.0],  // Silver-blue tint
-        BlockType::GoldOre => [0.65, 0.55, 0.30, 1.0],    // Golden tint
+        BlockType::GoldOre => [0.65, 0.55, 0.30, 1.0],
+        BlockType::Mud => [0.35, 0.28, 0.18, 1.0],
+        BlockType::Clay => [0.6, 0.5, 0.42, 1.0],
+        BlockType::Mycelium => [0.45, 0.3, 0.5, 1.0],
+        BlockType::TerracottaRed => [0.7, 0.3, 0.2, 1.0],
+        BlockType::TerracottaOrange => [0.8, 0.5, 0.25, 1.0],
+        BlockType::PackedDirt => [0.55, 0.42, 0.3, 1.0],    // Golden tint
     }
 }
 

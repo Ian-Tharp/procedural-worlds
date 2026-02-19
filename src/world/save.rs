@@ -39,6 +39,7 @@ use std::path::{Path, PathBuf};
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 
+use super::chunk_streaming::ChunkWriteQueue;
 use super::persistence::{self, ChunkStorage, SaveFormat};
 use super::Chunk;
 use crate::actors::{Movement, Player};
@@ -349,14 +350,20 @@ pub fn manual_save_trigger_system(
 
 /// System: perform the actual save when requested.
 ///
-/// Collects all loaded chunks, the player's current state, and the engine
-/// config, then writes everything to disk. Only runs when `save_requested`
-/// is `true`.
+/// When the `ChunkWriteQueue` resource is available, this system queues
+/// dirty chunks for async streaming instead of writing them synchronously.
+/// The world metadata (`world.json`) is still written immediately since
+/// it's small. The actual chunk data is streamed across frames by
+/// [`super::chunk_streaming::update_chunk_streaming`].
+///
+/// Falls back to synchronous save if the write queue is already busy
+/// (i.e., a previous save batch hasn't finished).
 pub fn perform_save_system(
     mut save_system: ResMut<SaveSystem>,
     chunk_query: Query<&Chunk>,
     player_query: Query<(&Transform, &Movement), With<Player>>,
     engine_config: Res<EngineConfig>,
+    mut write_queue: Option<ResMut<ChunkWriteQueue>>,
 ) {
     if !save_system.save_requested {
         return;
@@ -377,11 +384,104 @@ pub fn perform_save_system(
 
     let save_dir = save_system.save_dir.clone();
     let chunk_format = save_system.chunk_format;
+
+    // Try async streaming path if the queue resource exists and isn't busy
+    if let Some(ref mut queue) = write_queue {
+        if queue.has_pending() {
+            info!("Save deferred: chunk streaming still in progress ({} pending)", queue.pending_count());
+            // Re-request so we try again next frame
+            save_system.save_requested = true;
+            return;
+        }
+
+        // Ensure save directories exist
+        let chunk_dir = save_dir.join("chunks");
+        if let Err(e) = fs::create_dir_all(&chunk_dir) {
+            warn!("Save failed: could not create chunk directory: {}", e);
+            return;
+        }
+
+        // Begin a new streaming batch
+        queue.begin_batch(chunk_dir);
+
+        // Queue modified chunks for async writing
+        let mut queued_count = 0;
+        for chunk in chunk_query.iter() {
+            if chunk.modified {
+                queue.enqueue(chunk, chunk_format);
+                queued_count += 1;
+            }
+        }
+
+        // Write world.json immediately (it's small, ~1KB)
+        // We need to build the saved_chunks manifest including both
+        // newly queued chunks and previously saved ones.
+        let mut saved_positions: Vec<[i32; 3]> = Vec::new();
+        for chunk in chunk_query.iter() {
+            if chunk.modified {
+                let p = chunk.position;
+                saved_positions.push([p.x, p.y, p.z]);
+            }
+        }
+
+        // Merge with previously saved chunks from existing world.json
+        let world_file = save_dir.join("world.json");
+        if world_file.exists()
+            && let Ok(existing) = load_world_metadata(&world_file)
+        {
+            let storage = ChunkStorage::new(save_dir.join("chunks"));
+            for pos in &existing.saved_chunks {
+                if !saved_positions.contains(pos) {
+                    let ivec = IVec3::new(pos[0], pos[1], pos[2]);
+                    if persistence::chunk_exists(ivec, &storage) {
+                        saved_positions.push(*pos);
+                    }
+                }
+            }
+        }
+
+        let world_data = WorldSaveData {
+            version: SAVE_FORMAT_VERSION,
+            timestamp: chrono_timestamp(),
+            player: PlayerSaveData {
+                position: [player_pos.x, player_pos.y, player_pos.z],
+                flying: player_movement.flying,
+                noclip: player_movement.noclip,
+            },
+            terrain: TerrainSaveData {
+                seed: engine_config.terrain.seed,
+                base_height: engine_config.terrain.base_height,
+                height_scale: engine_config.terrain.height_scale,
+                frequency: engine_config.terrain.frequency,
+                octaves: engine_config.terrain.octaves,
+                biome_scale: engine_config.terrain.biome_scale,
+            },
+            saved_chunks: saved_positions,
+        };
+
+        match serde_json::to_string_pretty(&world_data).map_err(io::Error::other) {
+            Ok(json) => {
+                if let Err(e) = fs::write(save_dir.join("world.json"), json) {
+                    warn!("Failed to write world.json: {}", e);
+                }
+            }
+            Err(e) => warn!("Failed to serialize world metadata: {}", e),
+        }
+
+        save_system.last_save_chunk_count = queued_count;
+        info!(
+            "Save initiated: {} chunks queued for async streaming to {:?} (format: {})",
+            queued_count, save_dir, chunk_format
+        );
+        return;
+    }
+
+    // Fallback: synchronous save (no ChunkWriteQueue resource)
     match save_world_fmt(&save_dir, &chunks, player_pos, player_movement, &engine_config, chunk_format) {
         Ok(count) => {
             save_system.last_save_chunk_count = count;
             info!(
-                "Save complete: {} modified chunks written to {:?} (format: {})",
+                "Save complete (sync): {} modified chunks written to {:?} (format: {})",
                 count, save_dir, chunk_format
             );
         }

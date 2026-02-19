@@ -173,6 +173,7 @@ fn break_block(
     cursor_state: Res<CursorState>,
     mut chunks: Query<&mut Chunk, With<ChunkMesh>>,
     mut sound_events: EventWriter<BlockSoundEvent>,
+    mesh_cache: Res<super::mesh_cache::ChunkMeshCache>,
 ) {
     // Only interact when cursor is grabbed (FPS mode)
     if !cursor_state.grabbed {
@@ -210,6 +211,9 @@ fn break_block(
         chunk.dirty = true;
         chunk.modified = true;
 
+        // Invalidate cached mesh since block data changed
+        mesh_cache.invalidate_cache(chunk.position);
+
         // Emit sound event for the broken block
         sound_events.send(BlockSoundEvent {
             kind: BlockSoundKind::Break,
@@ -236,6 +240,7 @@ fn place_block(
     mut chunks: Query<&mut Chunk, With<ChunkMesh>>,
     player_query: Query<&GlobalTransform, With<Player>>,
     mut sound_events: EventWriter<BlockSoundEvent>,
+    mesh_cache: Res<super::mesh_cache::ChunkMeshCache>,
 ) {
     if !cursor_state.grabbed {
         return;
@@ -273,6 +278,9 @@ fn place_block(
         );
         chunk.dirty = true;
         chunk.modified = true;
+
+        // Invalidate cached mesh since block data changed
+        mesh_cache.invalidate_cache(chunk.position);
 
         // Emit sound event for the placed block
         sound_events.send(BlockSoundEvent {

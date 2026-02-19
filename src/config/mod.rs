@@ -368,6 +368,14 @@ pub struct SaveConfig {
     ///
     /// Default: `"binary"`.
     pub chunk_format: String,
+    /// Enable mesh caching to disk to avoid re-meshing chunks on restart.
+    ///
+    /// When enabled, generated chunk meshes are cached in `.mesh_cache/`
+    /// within the save directory. On subsequent loads, cached meshes are
+    /// used instead of regenerating from block data, reducing load time.
+    ///
+    /// Default: `false`.
+    pub mesh_cache_enabled: bool,
 }
 
 // ============================================================================
@@ -434,8 +442,8 @@ impl Default for TerrainSettings {
     fn default() -> Self {
         Self {
             seed: 12345,
-            base_height: 32.0,
-            height_scale: 16.0,
+            base_height: 64.0,
+            height_scale: 24.0,
             frequency: 0.02,
             octaves: 4,
             biome_scale: 0.005,
@@ -535,6 +543,7 @@ impl Default for SaveConfig {
             save_dir: "saves/default".into(),
             auto_save_interval: 300.0,
             chunk_format: "binary".into(),
+            mesh_cache_enabled: false,
         }
     }
 }
@@ -834,6 +843,7 @@ fn apply_config_to_resources(
     mut load_metrics: ResMut<crate::world::ChunkLoadMetrics>,
     mut save_system: ResMut<SaveSystem>,
     mut streaming_config: ResMut<StreamingConfig>,
+    mut mesh_cache: ResMut<crate::world::mesh_cache::ChunkMeshCache>,
 ) {
     info!("Applying engine configuration...");
 
@@ -913,6 +923,16 @@ fn apply_config_to_resources(
         config.save.save_dir,
         config.save.auto_save_interval,
         config.save.chunk_format,
+    );
+
+    // --- Mesh cache settings ---
+    *mesh_cache = crate::world::mesh_cache::ChunkMeshCache::new(
+        &std::path::PathBuf::from(&config.save.save_dir),
+        config.save.mesh_cache_enabled,
+    );
+    info!(
+        "Mesh cache: enabled={}, dir={:?}",
+        mesh_cache.enabled, mesh_cache.cache_dir,
     );
 
     // --- Streaming settings ---
@@ -1002,6 +1022,7 @@ fn poll_config_changes(
     mut load_metrics: ResMut<crate::world::ChunkLoadMetrics>,
     mut save_system: ResMut<SaveSystem>,
     mut streaming_config: ResMut<StreamingConfig>,
+    mut mesh_cache: ResMut<crate::world::mesh_cache::ChunkMeshCache>,
     mut camera_query: Query<(&mut CameraController, &mut Projection), With<Camera3d>>,
     mut player_query: Query<&mut Movement, With<Player>>,
     mut config_events: EventWriter<events::ConfigChanged>,
@@ -1151,6 +1172,10 @@ fn poll_config_changes(
         save_system.save_dir = std::path::PathBuf::from(&config.save.save_dir);
         save_system.auto_save_interval = config.save.auto_save_interval;
         save_system.set_chunk_format_from_str(&config.save.chunk_format);
+        *mesh_cache = crate::world::mesh_cache::ChunkMeshCache::new(
+            &std::path::PathBuf::from(&config.save.save_dir),
+            config.save.mesh_cache_enabled,
+        );
     }
 
     if reloadable.contains(&events::ConfigSection::Streaming) {
@@ -1236,8 +1261,8 @@ mod tests {
 
         // Terrain defaults should match TerrainConfig::default()
         assert_eq!(config.terrain.seed, 12345);
-        assert_eq!(config.terrain.base_height, 32.0);
-        assert_eq!(config.terrain.height_scale, 16.0);
+        assert_eq!(config.terrain.base_height, 64.0);
+        assert_eq!(config.terrain.height_scale, 24.0);
         assert_eq!(config.terrain.frequency, 0.02);
         assert_eq!(config.terrain.octaves, 4);
 

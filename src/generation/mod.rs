@@ -1,4 +1,4 @@
-//! Procedural generation systems - terrain, vegetation, structures
+﻿//! Procedural generation systems - terrain, vegetation, structures
 //!
 //! This module contains:
 //! - Terrain generation using noise functions
@@ -7,6 +7,7 @@
 //! - Structure generation
 
 pub mod biome;
+pub mod structures;
 
 use std::hash::{Hash, Hasher};
 use std::collections::hash_map::DefaultHasher;
@@ -1367,29 +1368,33 @@ mod tests {
 
     #[test]
     fn test_trees_appear_on_surface_chunks() {
-        // Use a higher density so we're very likely to get at least one tree
         let config = TerrainConfig {
             tree_density: 0.15,
             ..Default::default()
         };
-        let chunk = make_surface_chunk_with_trees(&config, IVec3::new(0, 2, 0));
-
         let mut has_wood = false;
         let mut has_leaves = false;
-        for x in 0..CHUNK_SIZE {
-            for y in 0..CHUNK_SIZE {
-                for z in 0..CHUNK_SIZE {
-                    match chunk.get_block(x, y, z) {
-                        BlockType::Wood => has_wood = true,
-                        BlockType::Leaves => has_leaves = true,
-                        _ => {}
+        // Try multiple chunk positions since biome selection affects tree density
+        for cx in -3i32..4 {
+            for cz in -3i32..4 {
+                let chunk = make_surface_chunk_with_trees(&config, IVec3::new(cx, 2, cz));
+                for x in 0..CHUNK_SIZE {
+                    for y in 0..CHUNK_SIZE {
+                        for z in 0..CHUNK_SIZE {
+                            match chunk.get_block(x, y, z) {
+                                BlockType::Wood => has_wood = true,
+                                BlockType::Leaves => has_leaves = true,
+                                _ => {}
+                            }
+                        }
                     }
                 }
+                if has_wood && has_leaves { break; }
             }
+            if has_wood && has_leaves { break; }
         }
-
-        assert!(has_wood, "Surface chunk with trees should have Wood blocks");
-        assert!(has_leaves, "Surface chunk with trees should have Leaves blocks");
+        assert!(has_wood, "Surface chunks should have Wood blocks");
+        assert!(has_leaves, "Surface chunks should have Leaves blocks");
     }
 
     #[test]
@@ -1441,61 +1446,53 @@ mod tests {
 
     #[test]
     fn test_tree_block_types_are_correct() {
-        // Generate with high density to guarantee trees
         let config = TerrainConfig {
             tree_density: 0.15,
             ..Default::default()
         };
-        let chunk = make_surface_chunk_with_trees(&config, IVec3::new(0, 2, 0));
-
-        // Find a Wood block — it should have either Wood or Leaves above it,
-        // and the column below should eventually reach Grass.
-        for x in 0..CHUNK_SIZE {
-            for z in 0..CHUNK_SIZE {
-                // Find lowest Wood in this column (trunk base)
-                let mut trunk_base: Option<usize> = None;
-                for y in 0..CHUNK_SIZE {
-                    if chunk.get_block(x, y, z) == BlockType::Wood {
-                        trunk_base = Some(y);
-                        break;
+        // Try multiple chunk positions since biome selection affects tree density
+        for cx in -3i32..4 {
+            for cz in -3i32..4 {
+                let chunk = make_surface_chunk_with_trees(&config, IVec3::new(cx, 2, cz));
+                for x in 0..CHUNK_SIZE {
+                    for z in 0..CHUNK_SIZE {
+                        let mut trunk_base: Option<usize> = None;
+                        for y in 0..CHUNK_SIZE {
+                            if chunk.get_block(x, y, z) == BlockType::Wood {
+                                trunk_base = Some(y);
+                                break;
+                            }
+                        }
+                        let trunk_base = match trunk_base {
+                            Some(y) => y,
+                            None => continue,
+                        };
+                        if trunk_base > 0 {
+                            let below = chunk.get_block(x, trunk_base - 1, z);
+                            // Surface block may vary by biome (Grass, Mud, PackedDirt, etc.)
+                            assert!(
+                                below != BlockType::Air && below != BlockType::Water,
+                                "Block below trunk at ({}, {}, {}) should be a surface block, found {:?}",
+                                x, trunk_base - 1, z, below
+                            );
+                        }
+                        let mut y = trunk_base;
+                        while y < CHUNK_SIZE && chunk.get_block(x, y, z) == BlockType::Wood {
+                            y += 1;
+                        }
+                        let trunk_top = y - 1;
+                        let trunk_height = trunk_top - trunk_base + 1;
+                        assert!(
+                            (4..=6).contains(&trunk_height),
+                            "Trunk height should be 4-6, got {} at column ({}, {})",
+                            trunk_height, x, z
+                        );
+                        return; // Verified one tree, that's enough
                     }
                 }
-
-                let trunk_base = match trunk_base {
-                    Some(y) => y,
-                    None => continue,
-                };
-
-                // Block directly below trunk base should be Grass (surface)
-                if trunk_base > 0 {
-                    let below = chunk.get_block(x, trunk_base - 1, z);
-                    assert_eq!(
-                        below,
-                        BlockType::Grass,
-                        "Block below trunk at ({}, {}, {}) should be Grass, found {:?}",
-                        x, trunk_base - 1, z, below
-                    );
-                }
-
-                // Walk up — expect continuous Wood then the column may end
-                let mut y = trunk_base;
-                while y < CHUNK_SIZE && chunk.get_block(x, y, z) == BlockType::Wood {
-                    y += 1;
-                }
-                let trunk_top = y - 1;
-                let trunk_height = trunk_top - trunk_base + 1;
-
-                assert!(
-                    (4..=6).contains(&trunk_height),
-                    "Trunk height should be 4-6, got {} at column ({}, {})",
-                    trunk_height, x, z
-                );
-
-                return; // Verified one tree, that's enough
             }
         }
-
-        panic!("Expected to find at least one tree trunk in the chunk");
+        panic!("Expected to find at least one tree trunk across tested chunks");
     }
 
     #[test]

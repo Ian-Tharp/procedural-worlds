@@ -8,14 +8,34 @@
   "render": {
     "render_distance": 4,
     "max_chunks_per_frame": 4,
-    "atlas_tile_size": 64
+    "camera_near": 0.1,
+    "camera_far": 0.0,
+    "camera_fov": 75.0,
+    "shadow_map_resolution": 2048,
+    "shadow_depth_bias": 0.02,
+    "shadow_normal_bias": 0.6,
+    "shadow_cascade_count": 4,
+    "shadow_max_distance": 0.0,
+    "bloom_enabled": true,
+    "bloom_intensity": 0.15,
+    "fog_enabled": true,
+    "fog_start": 100.0,
+    "fog_end": 250.0,
+    "atlas_tile_size": 64,
+    "atlas_grid_size": 16,
+    "use_textures": true
   },
   "terrain": {
     "seed": 12345,
-    "base_height": 32.0,
-    "height_scale": 16.0,
+    "base_height": 64.0,
+    "height_scale": 24.0,
     "frequency": 0.02,
-    "octaves": 4
+    "octaves": 4,
+    "biome_scale": 0.005,
+    "biome_blend_enabled": true,
+    "biome_blend_distance": 32.0,
+    "transition_noise_scale": 0.08,
+    "transition_noise_amplitude": 0.45
   },
   "player": {
     "walk_speed": 4.3,
@@ -39,7 +59,52 @@
   "debug": {
     "overlay_visible": true,
     "show_memory": true,
-    "show_input": false
+    "show_input": false,
+    "show_chunks": true,
+    "show_render": true,
+    "collect_chunk_metrics": true,
+    "dashboard_visible": false,
+    "perf_overlay_visible": false,
+    "profiler_visible": false,
+    "fps_warning_threshold": 60.0,
+    "fps_critical_threshold": 30.0,
+    "memory_warning_threshold_mb": 2048.0,
+    "memory_critical_threshold_mb": 4096.0
+  },
+  "unload": {
+    "unload_distance": null,
+    "save_on_unload": true,
+    "memory_threshold_mb": 2048,
+    "memory_pressure_reduction": 2,
+    "max_saves_per_frame": 4
+  },
+  "world": {
+    "load_distance": null,
+    "vertical_load_up": 4,
+    "vertical_load_down": 2
+  },
+  "audio": {
+    "master_volume": 0.8,
+    "ambience_intensity": 0.6,
+    "music_volume": 0.5,
+    "sfx_volume": 0.7,
+    "distance_falloff": 1.0,
+    "spatial_audio_enabled": true,
+    "enabled": true,
+    "preferred_device": null,
+    "sample_rate": null,
+    "buffer_size": null
+  },
+  "save": {
+    "save_dir": "saves/default",
+    "auto_save_interval": 300.0,
+    "chunk_format": "binary"
+  },
+  "streaming": {
+    "lookahead_chunks": 3,
+    "velocity_smoothing": 0.15,
+    "min_speed_threshold": 0.5,
+    "max_predictive_per_frame": 2
   },
   "cycle_duration_seconds": 600.0
 }

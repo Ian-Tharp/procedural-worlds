@@ -1,4 +1,4 @@
-//! World systems - chunks, blocks, voxel data structures
+﻿//! World systems - chunks, blocks, voxel data structures
 //!
 //! This module contains:
 //! - Chunk data structure (16x16x16 blocks)
@@ -20,19 +20,26 @@ use crate::engine::memory::ChunkMeshPool;
 use crate::generation::{
     generate_cacti, generate_caves, generate_chunk_terrain, generate_ores, generate_trees,
     default_ore_configs, ore_configs_from_definitions, OreSpawnConfig, TerrainConfig,
+    structures::generate_structures,
 };
 
 pub mod atlas_material;
+pub mod chunk_metrics;
 pub mod chunk_priority;
+pub mod chunk_streaming;
 pub mod interaction;
+pub mod mesh_cache;
 pub mod meshing;
 pub mod persistence;
+pub mod preload_hints;
+pub mod render_batching;
 pub mod save;
 pub mod streaming;
 pub mod texture_atlas;
 pub mod texture_variation;
 pub mod unloading;
 
+use mesh_cache::ChunkMeshCache;
 use persistence::ChunkStorage;
 
 /// Size of a chunk in blocks (16x16x16)
@@ -68,6 +75,12 @@ pub enum BlockType {
     IronOre = 16,
     SilverOre = 17,
     GoldOre = 18,
+    Mud = 19,
+    Clay = 20,
+    Mycelium = 21,
+    TerracottaRed = 22,
+    TerracottaOrange = 23,
+    PackedDirt = 24,
 }
 
 impl From<BlockType> for u16 {
@@ -98,6 +111,12 @@ impl From<u16> for BlockType {
             16 => BlockType::IronOre,
             17 => BlockType::SilverOre,
             18 => BlockType::GoldOre,
+            19 => BlockType::Mud,
+            20 => BlockType::Clay,
+            21 => BlockType::Mycelium,
+            22 => BlockType::TerracottaRed,
+            23 => BlockType::TerracottaOrange,
+            24 => BlockType::PackedDirt,
             _ => BlockType::Air, // Unknown block types default to Air
         }
     }
@@ -136,6 +155,12 @@ impl BlockType {
             BlockType::IronOre => "Iron Ore",
             BlockType::SilverOre => "Silver Ore",
             BlockType::GoldOre => "Gold Ore",
+            BlockType::Mud => "Mud",
+            BlockType::Clay => "Clay",
+            BlockType::Mycelium => "Mycelium",
+            BlockType::TerracottaRed => "Red Terracotta",
+            BlockType::TerracottaOrange => "Orange Terracotta",
+            BlockType::PackedDirt => "Packed Dirt",
         }
     }
 }
@@ -588,6 +613,8 @@ impl Plugin for WorldPlugin {
             .init_resource::<ChunkStorage>()
             .init_resource::<unloading::UnloadConfig>()
             .init_resource::<ChunkLoadMetrics>()
+            .init_resource::<ChunkMeshCache>()
+            .init_resource::<chunk_metrics::ChunkMemoryStats>()
             // Pre-allocated mesh buffer pool for reduced allocation overhead
             .init_resource::<ChunkMeshPool>()
             // Register chunk diagnostics with Bevy's DiagnosticsStore
@@ -631,12 +658,17 @@ impl Plugin for WorldPlugin {
             .init_resource::<streaming::StreamingConfig>()
             .init_resource::<streaming::PlayerChunkVelocity>()
             .init_resource::<chunk_priority::ChunkPriorityConfig>()
+            .init_resource::<preload_hints::PreloadHints>()
             // Custom atlas material pipeline (shader + material type registration)
             .add_plugins(atlas_material::BlockAtlasMaterialPlugin)
             // Save system plugin (auto-save, manual save, load on startup)
             .add_plugins(save::SavePlugin)
+            // Async chunk streaming (frame-budgeted I/O for saves)
+            .add_plugins(chunk_streaming::ChunkStreamingPlugin)
             // Block interaction (place, break, selected block cycling)
             .add_plugins(interaction::BlockInteractionPlugin)
+            // Render batching — merge stable chunk meshes to reduce draw calls
+            .add_plugins(render_batching::RenderBatchingPlugin)
             .configure_sets(
                 Update,
                 (
@@ -657,6 +689,7 @@ impl Plugin for WorldPlugin {
                     streaming::update_player_chunk_velocity,
                     chunk_streaming_system,
                     streaming::predictive_chunk_streaming_system,
+                    process_preload_hints,
                     poll_pending_chunks,
                     update_chunk_load_metrics,
                 )
@@ -677,6 +710,14 @@ impl Plugin for WorldPlugin {
                 )
                     .chain()
                     .in_set(WorldSystems::Cleanup),
+            )
+            .add_systems(
+                Update,
+                (
+                    chunk_metrics::toggle_memory_panel,
+                    chunk_metrics::cycle_memory_filter,
+                    chunk_metrics::update_chunk_memory_stats,
+                ),
             );
     }
 }
@@ -870,6 +911,7 @@ fn chunk_streaming_system(
             generate_chunk_terrain(&mut chunk, &config);
             generate_caves(&mut chunk, &config);
             generate_ores(&mut chunk, &config, &ores);  // Use registry-derived configs
+            generate_structures(&mut chunk, &config);
             generate_trees(&mut chunk, &config);
             generate_cacti(&mut chunk, &config);
             ChunkLoadResult { chunk, from_cache: false }
@@ -884,6 +926,84 @@ fn chunk_streaming_system(
         chunk_manager.pending.insert(chunk_pos);
         chunk_manager.tasks_spawned_this_frame += 1;
         load_metrics.pending_start_times.insert(chunk_pos, Instant::now());
+    }
+}
+
+/// Process preload hint requests — spawn async chunk-generation tasks for
+/// chunks requested by gameplay code via [`preload_hints::PreloadHints`].
+///
+/// Drains the hint queue each frame (in priority order), expands each request
+/// into chunk positions, and spawns generation tasks for any that aren't
+/// already loaded or pending. Respects its own per-frame task budget
+/// (`PreloadHints::max_tasks_per_frame`).
+fn process_preload_hints(
+    mut commands: Commands,
+    mut chunk_manager: ResMut<ChunkManager>,
+    mut load_metrics: ResMut<ChunkLoadMetrics>,
+    mut hints: ResMut<preload_hints::PreloadHints>,
+    terrain_config: Res<TerrainConfig>,
+    chunk_storage: Res<ChunkStorage>,
+    ore_registry: Option<Res<crate::content::OreRegistry>>,
+) {
+    if hints.is_empty() {
+        return;
+    }
+
+    let task_pool = AsyncComputeTaskPool::get();
+    let max_tasks = hints.max_tasks_per_frame;
+    let mut spawned: u32 = 0;
+
+    let ore_configs: Vec<OreSpawnConfig> = ore_registry
+        .as_ref()
+        .map(|registry| {
+            let definitions: Vec<_> = registry.iter().cloned().collect();
+            ore_configs_from_definitions(&definitions)
+        })
+        .unwrap_or_else(default_ore_configs);
+
+    let requests = hints.drain_sorted();
+
+    for request in &requests {
+        let positions = preload_hints::expand_request_to_chunks(request);
+
+        for chunk_pos in positions {
+            if spawned >= max_tasks {
+                return;
+            }
+
+            // Skip already loaded or pending
+            if chunk_manager.chunks.contains_key(&chunk_pos)
+                || chunk_manager.pending.contains(&chunk_pos)
+            {
+                continue;
+            }
+
+            let config = (*terrain_config).clone();
+            let storage = ChunkStorage::new(chunk_storage.save_dir.clone());
+            let ores = ore_configs.clone();
+
+            let task = task_pool.spawn(async move {
+                if let Ok(chunk) = persistence::load_chunk(chunk_pos, &storage) {
+                    return ChunkLoadResult { chunk, from_cache: true };
+                }
+                let mut chunk = Chunk::new(chunk_pos);
+                generate_chunk_terrain(&mut chunk, &config);
+                generate_caves(&mut chunk, &config);
+                generate_ores(&mut chunk, &config, &ores);
+                generate_trees(&mut chunk, &config);
+                generate_cacti(&mut chunk, &config);
+                ChunkLoadResult { chunk, from_cache: false }
+            });
+
+            commands.spawn(PendingChunk {
+                task,
+                position: chunk_pos,
+            });
+
+            chunk_manager.pending.insert(chunk_pos);
+            spawned += 1;
+            load_metrics.pending_start_times.insert(chunk_pos, std::time::Instant::now());
+        }
     }
 }
 
@@ -998,6 +1118,9 @@ fn mesh_dirty_chunks(
         Query<&Chunk>,
     )>,
     config: Res<crate::config::EngineConfig>,
+    mesh_cache: Res<ChunkMeshCache>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    chunk_material: Res<ChunkMaterial>,
 ) {
     let player_chunk = chunk_manager.player_chunk;
 
@@ -1036,8 +1159,62 @@ fn mesh_dirty_chunks(
     let task_pool = AsyncComputeTaskPool::get();
     let mut tasks_spawned = 0;
     let mut to_mesh: Vec<Entity> = Vec::new();
+    // Entities that got an instant cache hit — need dirty flag cleared but no PendingMesh
+    let mut cache_hits: Vec<Entity> = Vec::new();
+
+    let mat = chunk_material.handle.as_ref();
 
     for (entity, pos) in dirty_chunks {
+        if tasks_spawned >= MAX_MESH_TASKS_PER_FRAME && !mesh_cache.enabled {
+            break;
+        }
+
+        // Try mesh cache first (synchronous disk read — fast for cache hits)
+        if let Some((opaque_mesh, water_mesh)) =
+            mesh_cache.load_cached_mesh(pos, mesh_cache::BLOCK_TYPE_COUNT)
+        {
+            let mesh_handle = meshes.add(opaque_mesh);
+            let world_pos = chunk_to_world_pos(pos);
+
+            commands.entity(entity).insert((
+                Mesh3d(mesh_handle),
+                Transform::from_translation(world_pos),
+                ChunkMesh,
+            ));
+
+            if let Some(mat) = mat {
+                match mat {
+                    ChunkMaterialHandle::Atlas { opaque, .. } => {
+                        commands.entity(entity).insert(MeshMaterial3d(opaque.clone()));
+                    }
+                    ChunkMaterialHandle::Standard { opaque, .. } => {
+                        commands.entity(entity).insert(MeshMaterial3d(opaque.clone()));
+                    }
+                }
+
+                if let Some(wm) = water_mesh {
+                    let water_mesh_handle = meshes.add(wm);
+                    let water_child = commands.spawn((
+                        Mesh3d(water_mesh_handle),
+                        Transform::default(),
+                        WaterMesh,
+                    )).id();
+                    match mat {
+                        ChunkMaterialHandle::Atlas { water, .. } => {
+                            commands.entity(water_child).insert(MeshMaterial3d(water.clone()));
+                        }
+                        ChunkMaterialHandle::Standard { water, .. } => {
+                            commands.entity(water_child).insert(MeshMaterial3d(water.clone()));
+                        }
+                    }
+                    commands.entity(entity).add_child(water_child);
+                }
+            }
+
+            cache_hits.push(entity);
+            continue;
+        }
+
         if tasks_spawned >= MAX_MESH_TASKS_PER_FRAME {
             break;
         }
@@ -1069,9 +1246,10 @@ fn mesh_dirty_chunks(
     }
 
     // Phase 3: Clear dirty flags.
-    if !to_mesh.is_empty() {
+    let all_done: Vec<Entity> = to_mesh.into_iter().chain(cache_hits).collect();
+    if !all_done.is_empty() {
         let mut p0 = param_set.p0();
-        for entity in to_mesh {
+        for entity in all_done {
             if let Ok((_, mut chunk)) = p0.get_mut(entity) {
                 chunk.dirty = false;
             }
@@ -1091,6 +1269,7 @@ fn poll_pending_meshes(
     mut meshes: ResMut<Assets<Mesh>>,
     chunk_material: Res<ChunkMaterial>,
     mut pending_query: Query<(Entity, &Chunk, &mut PendingMesh)>,
+    mesh_cache: Res<ChunkMeshCache>,
 ) {
     let Some(mat) = &chunk_material.handle else {
         return;
@@ -1098,6 +1277,18 @@ fn poll_pending_meshes(
 
     for (entity, chunk, mut pending) in &mut pending_query {
         if let Some((opaque_mesh, water_mesh)) = block_on(future::poll_once(&mut pending.task)) {
+            // Write to mesh cache if enabled (fire-and-forget, don't block on errors)
+            if mesh_cache.enabled {
+                if let Err(e) = mesh_cache.cache_mesh(
+                    chunk.position,
+                    &opaque_mesh,
+                    water_mesh.as_ref(),
+                    mesh_cache::BLOCK_TYPE_COUNT,
+                ) {
+                    warn!("Failed to cache mesh for {:?}: {}", chunk.position, e);
+                }
+            }
+
             let mesh_handle = meshes.add(opaque_mesh);
             let world_pos = chunk_to_world_pos(chunk.position);
 

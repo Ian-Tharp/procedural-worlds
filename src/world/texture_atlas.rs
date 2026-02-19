@@ -1,4 +1,4 @@
-//! Texture atlas system for block face textures.
+﻿//! Texture atlas system for block face textures.
 //!
 //! Generates a procedural texture atlas at startup where each block type has
 //! per-face textures (e.g., grass top differs from grass sides). The atlas is
@@ -98,6 +98,12 @@ pub fn block_textures(block: BlockType) -> BlockTextures {
         BlockType::IronOre => BlockTextures { top: 18, bottom: 18, side: 18 },
         BlockType::SilverOre => BlockTextures { top: 19, bottom: 19, side: 19 },
         BlockType::GoldOre => BlockTextures { top: 20, bottom: 20, side: 20 },
+        BlockType::Mud => BlockTextures { top: 1, bottom: 1, side: 1 },
+        BlockType::Clay => BlockTextures { top: 1, bottom: 1, side: 1 },
+        BlockType::Mycelium => BlockTextures { top: 2, bottom: 1, side: 3 },
+        BlockType::TerracottaRed => BlockTextures { top: 0, bottom: 0, side: 0 },
+        BlockType::TerracottaOrange => BlockTextures { top: 0, bottom: 0, side: 0 },
+        BlockType::PackedDirt => BlockTextures { top: 1, bottom: 1, side: 1 },
     }
 }
 
@@ -480,7 +486,7 @@ fn generate_tile_rgba(tile_index: u32, tile_size: u32) -> Vec<u8> {
                     let mut b = 55.0 + variation * 0.6;
 
                     // Subtle horizontal layering
-                    let layer_val = ((y as f32 * 3.0 * 3.14159 / tsf).sin() * 0.3 + 0.5) * 5.0;
+                    let layer_val = ((y as f32 * 3.0 * std::f32::consts::PI / tsf).sin() * 0.3 + 0.5) * 5.0;
                     r += layer_val;
                     g += layer_val * 0.7;
                     b += layer_val * 0.4;
@@ -527,7 +533,7 @@ fn generate_tile_rgba(tile_index: u32, tile_size: u32) -> Vec<u8> {
             for i in 0..blade_count {
                 let bx = noise_hash(i as u32, 0, 130) as f32 / 255.0 * tsf;
                 let by = noise_hash(i as u32, 1, 130) as f32 / 255.0 * tsf;
-                let angle = noise_hash(i as u32, 2, 130) as f32 / 255.0 * 3.14159;
+                let angle = noise_hash(i as u32, 2, 130) as f32 / 255.0 * std::f32::consts::PI;
                 let len = 3.0 + (noise_hash(i as u32, 3, 130) as f32 / 255.0) * 2.0;
                 blades[i] = (bx, by, bx + angle.cos() * len, by + angle.sin() * len);
             }
@@ -687,7 +693,7 @@ fn generate_tile_rgba(tile_index: u32, tile_size: u32) -> Vec<u8> {
                     let mn = multi_noise(x, y, 210);
 
                     // Diagonal ripple pattern
-                    let ripple = ((x as f32 * 0.7 + y as f32 * 0.3) * 6.2832 / period).sin() * 0.5 + 0.5;
+                    let ripple = ((x as f32 * 0.7 + y as f32 * 0.3) * std::f32::consts::TAU / period).sin() * 0.5 + 0.5;
 
                     let mut r = 220.0 + (mn - 0.5) * 16.0 + ripple * 10.0;
                     let mut g = 210.0 + (mn - 0.5) * 14.0 + ripple * 8.0;
@@ -753,7 +759,7 @@ fn generate_tile_rgba(tile_index: u32, tile_size: u32) -> Vec<u8> {
                     let mn = multi_noise(x, y, 170);
 
                     // Concentric growth rings — alternate lighter/darker bands
-                    let ring_freq = num_rings * 3.14159 / (tsf * 0.55);
+                    let ring_freq = num_rings * std::f32::consts::PI / (tsf * 0.55);
                     let ring_val = (dist * ring_freq).sin() * 0.5 + 0.5; // 0-1
 
                     // Base tan-brown with ring modulation
@@ -799,7 +805,7 @@ fn generate_tile_rgba(tile_index: u32, tile_size: u32) -> Vec<u8> {
 
                     // 4-5 vertical furrow strips with non-uniform spacing
                     let phase_mod = noise_hash(x / 6, 0, 183) as f32 / 255.0 * 1.5;
-                    let strip_val = ((xf * 4.5 * 6.2832 / tsf + phase_mod).cos() + 1.0) * 0.5;
+                    let strip_val = ((xf * 4.5 * std::f32::consts::TAU / tsf + phase_mod).cos() + 1.0) * 0.5;
 
                     // Dark gaps where strip_val is low
                     let (base_r, base_g, base_b) = if strip_val < 0.2 {
@@ -1161,7 +1167,7 @@ fn generate_tile_rgba(tile_index: u32, tile_size: u32) -> Vec<u8> {
                     let mn = multi_noise(x, y, 350);
 
                     // Vertical ribs using cosine — peaks are rib crests
-                    let rib_phase = (x as f32 * num_ribs * 6.2832 / tsf).cos();
+                    let rib_phase = (x as f32 * num_ribs * std::f32::consts::TAU / tsf).cos();
                     let on_rib = rib_phase > 0.0; // top half of cosine = rib
                     let rib_intensity = if on_rib { rib_phase } else { 0.0 };
 
@@ -1205,9 +1211,9 @@ fn generate_tile_rgba(tile_index: u32, tile_size: u32) -> Vec<u8> {
                     let mn = multi_noise(x, y, 360);
 
                     // Prominent diagonal wind ripple waves
-                    let wave = ((x as f32 * 0.75 + y as f32 * 0.65) * 6.2832 / period).sin() * 0.5 + 0.5;
+                    let wave = ((x as f32 * 0.75 + y as f32 * 0.65) * std::f32::consts::TAU / period).sin() * 0.5 + 0.5;
                     // Secondary subtle wave for complexity
-                    let wave2 = ((x as f32 * 0.3 - y as f32 * 0.9) * 6.2832 / (period * 2.5)).sin() * 0.15 + 0.5;
+                    let wave2 = ((x as f32 * 0.3 - y as f32 * 0.9) * std::f32::consts::TAU / (period * 2.5)).sin() * 0.15 + 0.5;
 
                     let combined = wave * 0.8 + wave2 * 0.2;
 
