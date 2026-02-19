@@ -8,6 +8,8 @@
 //! - Chunk loading progress bar shows world generation status
 //! - Uses egui for rendering, consistent with the rest of the editor UI
 
+use std::f32::consts::TAU;
+
 use bevy::prelude::*;
 use bevy_egui::{egui, EguiContexts};
 
@@ -312,7 +314,7 @@ fn chunk_loading_progress_system(
         bar_state.opacity = (bar_state.opacity + dt * 4.0).min(1.0);
         bar_state.was_loading = true;
         // Advance pulse timer (wraps at 2π for smooth looping)
-        bar_state.pulse_timer = (bar_state.pulse_timer + dt * 3.0) % std::f32::consts::TAU;
+        bar_state.pulse_timer = (bar_state.pulse_timer + dt * 3.0) % TAU;
     } else if bar_state.was_loading {
         // Just finished loading — start fade out
         bar_state.was_loading = false;
