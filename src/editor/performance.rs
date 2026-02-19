@@ -18,6 +18,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::engine::memory;
+use crate::world::chunk_metrics::ChunkMemoryStats;
 use crate::world::ChunkLoadMetrics;
 
 // ============================================================================
@@ -629,6 +630,7 @@ pub fn render_dashboard_with_exports(
     mut pending: ResMut<PendingExport>,
     chunk_manager: Option<Res<crate::world::ChunkManager>>,
     load_metrics: Option<Res<ChunkLoadMetrics>>,
+    memory_stats: Option<Res<ChunkMemoryStats>>,
 ) {
     if !dashboard.visible {
         return;
@@ -641,6 +643,7 @@ pub fn render_dashboard_with_exports(
         chunk_count,
         load_metrics.as_deref(),
         Some(&mut pending),
+        memory_stats.as_deref(),
     );
 }
 
@@ -705,6 +708,7 @@ pub fn draw_performance_dashboard(
     chunk_count: usize,
     load_metrics: Option<&ChunkLoadMetrics>,
     pending_export: Option<&mut PendingExport>,
+    memory_stats: Option<&ChunkMemoryStats>,
 ) {
     egui::Window::new("⚡ Performance Dashboard")
         .default_pos([400.0, 20.0])
@@ -996,6 +1000,140 @@ pub fn draw_performance_dashboard(
 
             ui.separator();
 
+            // ── Chunk Memory Panel ──────────────────────────
+            if let Some(stats) = memory_stats {
+                if stats.panel_visible {
+                    egui::CollapsingHeader::new("🧱 Chunk Memory")
+                        .default_open(true)
+                        .show(ui, |ui| {
+                            // Total allocated
+                            ui.horizontal(|ui| {
+                                ui.label("Total chunk memory:");
+                                ui.strong(memory::format_bytes(stats.total_allocated as usize));
+                            });
+
+                            ui.add_space(4.0);
+
+                            // Per-state breakdown
+                            ui.label("By state:");
+                            let states = [
+                                crate::world::chunk_metrics::ChunkState::Active,
+                                crate::world::chunk_metrics::ChunkState::Pending,
+                                crate::world::chunk_metrics::ChunkState::Unloading,
+                            ];
+                            for state in &states {
+                                let bytes = stats.per_state_breakdown.get(state).copied().unwrap_or(0);
+                                let count = stats.per_state_count.get(state).copied().unwrap_or(0);
+                                if count > 0 || stats.state_filter == Some(*state) {
+                                    let color = match state {
+                                        crate::world::chunk_metrics::ChunkState::Active => {
+                                            egui::Color32::from_rgb(100, 255, 100)
+                                        }
+                                        crate::world::chunk_metrics::ChunkState::Pending => {
+                                            egui::Color32::from_rgb(255, 255, 100)
+                                        }
+                                        crate::world::chunk_metrics::ChunkState::Unloading => {
+                                            egui::Color32::from_rgb(255, 150, 100)
+                                        }
+                                    };
+
+                                    // Memory bar
+                                    let max_bytes = stats.total_allocated.max(1) as f32;
+                                    let frac = bytes as f32 / max_bytes;
+
+                                    ui.horizontal(|ui| {
+                                        let selected = stats.state_filter == Some(*state);
+                                        let label = if selected {
+                                            format!("▸ {} ({})", state, count)
+                                        } else {
+                                            format!("  {} ({})", state, count)
+                                        };
+                                        ui.colored_label(color, label);
+
+                                        let (rect, _) = ui.allocate_exact_size(
+                                            egui::vec2(100.0, 12.0),
+                                            egui::Sense::hover(),
+                                        );
+                                        ui.painter().rect_filled(
+                                            rect,
+                                            2.0,
+                                            egui::Color32::from_rgb(40, 40, 40),
+                                        );
+                                        let fill = egui::Rect::from_min_size(
+                                            rect.min,
+                                            egui::vec2(rect.width() * frac, rect.height()),
+                                        );
+                                        ui.painter().rect_filled(fill, 2.0, color);
+
+                                        ui.monospace(memory::format_bytes(bytes as usize));
+                                    });
+                                }
+                            }
+
+                            ui.add_space(4.0);
+
+                            // Filter info
+                            ui.horizontal(|ui| {
+                                ui.small("Filter:");
+                                let filter_text = match stats.state_filter {
+                                    None => "All".to_string(),
+                                    Some(s) => format!("{}", s),
+                                };
+                                ui.small(format!("{} (N to cycle)", filter_text));
+                            });
+
+                            ui.add_space(4.0);
+
+                            // Top consumers
+                            ui.label("Top consumers:");
+                            let consumers: Vec<_> = stats
+                                .largest_consumers
+                                .iter()
+                                .filter(|c| {
+                                    stats.state_filter.is_none()
+                                        || stats.state_filter == Some(c.state)
+                                })
+                                .take(10)
+                                .collect();
+
+                            if consumers.is_empty() {
+                                ui.small("No chunks loaded");
+                            } else {
+                                for entry in &consumers {
+                                    let color = match entry.state {
+                                        crate::world::chunk_metrics::ChunkState::Active => {
+                                            egui::Color32::from_rgb(180, 255, 180)
+                                        }
+                                        crate::world::chunk_metrics::ChunkState::Pending => {
+                                            egui::Color32::from_rgb(255, 255, 180)
+                                        }
+                                        crate::world::chunk_metrics::ChunkState::Unloading => {
+                                            egui::Color32::from_rgb(255, 200, 180)
+                                        }
+                                    };
+                                    ui.horizontal(|ui| {
+                                        ui.colored_label(
+                                            color,
+                                            format!(
+                                                "[{},{},{}]",
+                                                entry.position.x,
+                                                entry.position.y,
+                                                entry.position.z
+                                            ),
+                                        );
+                                        ui.monospace(memory::format_bytes(entry.bytes as usize));
+                                    });
+                                }
+                            }
+                        });
+
+                    ui.separator();
+                } else {
+                    ui.small("Press M to show chunk memory panel");
+                    ui.separator();
+                }
+            }
+
             // ── Export controls ─────────────────────────────
             if let Some(pending) = pending_export {
                 egui::CollapsingHeader::new("📤 Export")
@@ -1038,7 +1176,7 @@ pub fn draw_performance_dashboard(
                 ui.separator();
             }
 
-            ui.small("F8 toggle | Updates every frame");
+            ui.small("F8 toggle | M chunk memory | Updates every frame");
         });
 }
 
