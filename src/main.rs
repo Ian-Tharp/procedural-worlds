@@ -19,6 +19,7 @@ use procedural_worlds::health;
 use procedural_worlds::inventory;
 use procedural_worlds::inventory_health;
 use procedural_worlds::physics;
+use procedural_worlds::water;
 use procedural_worlds::weather;
 use procedural_worlds::world;
 
@@ -83,6 +84,7 @@ fn main() {
         .add_plugins(creatures::CreaturePlugin)
         .add_plugins(inventory_health::InventoryHealthPlugin)
         .add_plugins(weather::WeatherPlugin)
+        .add_plugins(water::WaterPlugin)
         // Startup systems
         .add_systems(Startup, setup_scene)
         .run();

@@ -21,5 +21,6 @@ pub mod inventory_health;
 pub mod physics;
 pub mod persistence;
 pub mod rendering;
+pub mod water;
 pub mod weather;
 pub mod world;
