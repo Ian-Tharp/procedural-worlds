@@ -28,6 +28,7 @@ pub mod chunk_metrics;
 pub mod chunk_priority;
 pub mod chunk_streaming;
 pub mod interaction;
+pub mod light_propagation;
 pub mod mesh_cache;
 pub mod meshing;
 pub mod persistence;
@@ -669,6 +670,8 @@ impl Plugin for WorldPlugin {
             .add_plugins(interaction::BlockInteractionPlugin)
             // Render batching — merge stable chunk meshes to reduce draw calls
             .add_plugins(render_batching::RenderBatchingPlugin)
+            // Block light propagation (BFS-based per-chunk light levels)
+            .add_plugins(light_propagation::LightPropagationPlugin)
             .configure_sets(
                 Update,
                 (

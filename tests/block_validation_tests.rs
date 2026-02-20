@@ -29,6 +29,7 @@ fn valid_block(id: &str, numeric_id: u16) -> BlockDefinition {
         hardness: 1.0,
         tool_required: "any".to_string(),
         category: BlockCategory::Natural,
+        light_emission: 0,
     }
 }
 
