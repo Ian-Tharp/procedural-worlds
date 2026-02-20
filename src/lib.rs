@@ -18,6 +18,7 @@ pub mod generation;
 pub mod health;
 pub mod inventory;
 pub mod inventory_health;
+pub mod particles;
 pub mod physics;
 pub mod persistence;
 pub mod rendering;
