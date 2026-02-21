@@ -164,7 +164,7 @@ fn set_block_at(
     if let Some(&entity) = chunk_manager.chunks.get(&chunk_pos) {
         if let Ok(mut chunk) = chunks.get_mut(entity) {
             chunk.set_block(local.x as usize, local.y as usize, local.z as usize, block);
-            chunk.dirty = true;
+            // set_block already calls mark_dirty()
             return true;
         }
     }
@@ -176,7 +176,7 @@ fn mark_chunk_dirty(pos: IVec3, chunk_manager: &ChunkManager, chunks: &mut Query
     let (chunk_pos, _) = world_to_chunk_and_local(pos);
     if let Some(&entity) = chunk_manager.chunks.get(&chunk_pos) {
         if let Ok(mut chunk) = chunks.get_mut(entity) {
-            chunk.dirty = true;
+            chunk.mark_dirty();
         }
     }
 }

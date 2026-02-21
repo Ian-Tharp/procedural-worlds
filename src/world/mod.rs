@@ -174,6 +174,10 @@ pub struct Chunk {
     pub position: IVec3,
     /// Whether this chunk needs its mesh rebuilt
     pub dirty: bool,
+    /// Monotonically increasing counter bumped whenever the chunk becomes dirty.
+    /// Used to detect stale meshes: mesh tasks capture this value at queue time,
+    /// and `poll_pending_meshes` only applies the result if it still matches.
+    pub dirty_generation: u32,
     /// Whether this chunk has been modified since generation/loading
     /// (e.g., by player block placement). Modified chunks are saved to
     /// disk before unloading; unmodified chunks can be regenerated.
@@ -192,6 +196,7 @@ impl Chunk {
             blocks: [BlockType::Air; CHUNK_VOLUME],
             position,
             dirty: true,
+            dirty_generation: 1,
             modified: false,
         }
     }
@@ -205,6 +210,7 @@ impl Chunk {
             blocks,
             position,
             dirty: true,
+            dirty_generation: 1,
             modified: false,
         }
     }
@@ -229,11 +235,21 @@ impl Chunk {
         }
     }
 
+    /// Mark this chunk as needing a mesh rebuild and bump the generation counter.
+    ///
+    /// All code that needs to dirty a chunk should call this method instead of
+    /// setting `dirty = true` directly, so that the generation counter stays in
+    /// sync and stale mesh tasks can be detected.
+    pub fn mark_dirty(&mut self) {
+        self.dirty = true;
+        self.dirty_generation = self.dirty_generation.wrapping_add(1);
+    }
+
     /// Set block at local coordinates
     pub fn set_block(&mut self, x: usize, y: usize, z: usize, block: BlockType) {
         if x < CHUNK_SIZE && y < CHUNK_SIZE && z < CHUNK_SIZE {
             self.blocks[Self::index(x, y, z)] = block;
-            self.dirty = true;
+            self.mark_dirty();
         }
     }
 
@@ -241,7 +257,7 @@ impl Chunk {
     #[allow(dead_code)]
     pub fn fill(&mut self, block: BlockType) {
         self.blocks.fill(block);
-        self.dirty = true;
+        self.mark_dirty();
     }
 
     /// Get chunk position in world coordinates (block units)
@@ -285,6 +301,10 @@ pub struct PendingChunk {
 pub struct PendingMesh {
     /// The async task that produces the mesh data (opaque + optional water).
     task: Task<(Mesh, Option<Mesh>)>,
+    /// The `dirty_generation` of the chunk when this mesh task was queued.
+    /// If the chunk's generation has advanced by the time the task completes,
+    /// the mesh is stale and should be discarded.
+    queued_generation: u32,
 }
 
 /// Resource for tracking loaded chunks
@@ -1051,7 +1071,7 @@ fn poll_pending_chunks(
                 if let Some(&neighbor_entity) = chunk_manager.chunks.get(&neighbor_pos)
                     && let Ok(mut neighbor_chunk) = chunk_query.get_mut(neighbor_entity)
                 {
-                    neighbor_chunk.dirty = true;
+                    neighbor_chunk.mark_dirty();
                 }
             }
         }
@@ -1142,16 +1162,22 @@ fn mesh_dirty_chunks(
             .collect()
     };
 
-    // Phase 2: Identify dirty chunks and their positions.
+    // Don't process any dirty chunks until the material is ready, otherwise
+    // cache hits would insert meshes without a material (rendering as invisible).
+    if chunk_material.handle.is_none() {
+        return;
+    }
+
+    // Phase 2: Identify dirty chunks, their positions, and current generation.
     let mut dirty_chunks: Vec<_> = {
         let p0 = param_set.p0();
         p0.iter()
             .filter(|(_, chunk)| chunk.dirty)
-            .map(|(entity, chunk)| (entity, chunk.position))
+            .map(|(entity, chunk)| (entity, chunk.position, chunk.dirty_generation))
             .collect()
     };
 
-    dirty_chunks.sort_by_key(|&(_, pos)| {
+    dirty_chunks.sort_by_key(|&(_, pos, _)| {
         let diff = pos - player_chunk;
         diff.x.abs() + diff.y.abs() + diff.z.abs()
     });
@@ -1164,7 +1190,7 @@ fn mesh_dirty_chunks(
 
     let mat = chunk_material.handle.as_ref();
 
-    for (entity, pos) in dirty_chunks {
+    for (entity, pos, generation) in dirty_chunks {
         if tasks_spawned >= MAX_MESH_TASKS_PER_FRAME && !mesh_cache.enabled {
             break;
         }
@@ -1240,7 +1266,7 @@ fn mesh_dirty_chunks(
             meshing::build_chunk_mesh_with_neighbors(&chunk_data, atlas_cfg, &neighbors)
         });
 
-        commands.entity(entity).insert(PendingMesh { task });
+        commands.entity(entity).insert(PendingMesh { task, queued_generation: generation });
         to_mesh.push(entity);
         tasks_spawned += 1;
     }
@@ -1277,6 +1303,14 @@ fn poll_pending_meshes(
 
     for (entity, chunk, mut pending) in &mut pending_query {
         if let Some((opaque_mesh, water_mesh)) = block_on(future::poll_once(&mut pending.task)) {
+            // If the chunk was re-dirtied while this mesh was building, the
+            // result is stale. Discard it and remove PendingMesh so the chunk
+            // becomes eligible for mesh_dirty_chunks again next frame.
+            if chunk.dirty || chunk.dirty_generation != pending.queued_generation {
+                commands.entity(entity).remove::<PendingMesh>();
+                continue;
+            }
+
             // Write to mesh cache if enabled (fire-and-forget, don't block on errors)
             if mesh_cache.enabled {
                 if let Err(e) = mesh_cache.cache_mesh(
@@ -2503,5 +2537,79 @@ mod tests {
             "remeshing with neighbor data should reduce vertex count: \
              before={verts_before}, after={verts_after}"
         );
+    }
+
+    // ====================================================================
+    // Dirty generation lifecycle tests
+    // ====================================================================
+
+    #[test]
+    fn test_new_chunk_starts_dirty_gen_one() {
+        let chunk = Chunk::new(IVec3::ZERO);
+        assert!(chunk.dirty);
+        assert_eq!(chunk.dirty_generation, 1);
+    }
+
+    #[test]
+    fn test_from_blocks_starts_dirty_gen_one() {
+        let chunk = Chunk::from_blocks(IVec3::ZERO, [BlockType::Air; CHUNK_VOLUME]);
+        assert!(chunk.dirty);
+        assert_eq!(chunk.dirty_generation, 1);
+    }
+
+    #[test]
+    fn test_mark_dirty_increments_generation() {
+        let mut chunk = Chunk::new(IVec3::ZERO);
+        let gen0 = chunk.dirty_generation;
+
+        chunk.dirty = false; // simulate mesh_dirty_chunks clearing
+        chunk.mark_dirty();
+        assert!(chunk.dirty);
+        assert_eq!(chunk.dirty_generation, gen0 + 1);
+
+        chunk.dirty = false;
+        chunk.mark_dirty();
+        assert_eq!(chunk.dirty_generation, gen0 + 2);
+    }
+
+    #[test]
+    fn test_set_block_bumps_generation() {
+        let mut chunk = Chunk::new(IVec3::ZERO);
+        let gen_before = chunk.dirty_generation;
+
+        chunk.dirty = false;
+        chunk.set_block(0, 0, 0, BlockType::Stone);
+        assert!(chunk.dirty);
+        assert!(chunk.dirty_generation > gen_before);
+    }
+
+    #[test]
+    fn test_stale_mesh_detection() {
+        // Simulate the race condition scenario:
+        // 1. Chunk is dirty (generation=1)
+        // 2. mesh_dirty_chunks captures generation=1, clears dirty
+        // 3. Something re-dirties chunk (generation=2)
+        // 4. poll_pending_meshes should detect staleness
+        let mut chunk = Chunk::new(IVec3::ZERO); // dirty=true, gen=1
+        let queued_gen = chunk.dirty_generation;  // capture: gen=1
+        chunk.dirty = false;                      // mesh_dirty_chunks clears
+
+        // Simulate re-dirtying (e.g., neighbor chunk loads)
+        chunk.mark_dirty(); // dirty=true, gen=2
+
+        let is_stale = chunk.dirty || chunk.dirty_generation != queued_gen;
+        assert!(is_stale, "Mesh should be detected as stale");
+    }
+
+    #[test]
+    fn test_fresh_mesh_detection() {
+        // If chunk was NOT re-dirtied, mesh should be fresh
+        let mut chunk = Chunk::new(IVec3::ZERO); // dirty=true, gen=1
+        let queued_gen = chunk.dirty_generation;  // capture: gen=1
+        chunk.dirty = false;                      // mesh_dirty_chunks clears
+
+        // No re-dirtying happens
+        let is_stale = chunk.dirty || chunk.dirty_generation != queued_gen;
+        assert!(!is_stale, "Mesh should NOT be stale when chunk was not re-dirtied");
     }
 }

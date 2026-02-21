@@ -445,25 +445,13 @@ fn sync_grounded_state(
 
 /// Estimate terrain height using noise (fallback when chunks not loaded)
 ///
-/// Returns the Y coordinate of the TOP surface block (integer, matching actual terrain)
+/// Returns the Y coordinate of the TOP surface block (integer, matching actual terrain).
+/// Uses the full biome-blended noise pipeline from the generation module so the
+/// estimate matches the actual generated terrain at all positions.
 pub fn estimate_terrain_height(world_x: f32, world_z: f32, config: &TerrainConfig) -> f32 {
-    use noise::{NoiseFn, Simplex};
-
-    let noise = Simplex::new(config.seed);
-
-    let mut height = 0.0;
-    let mut amplitude = 1.0;
-    let mut frequency = config.frequency;
-
-    for _ in 0..config.octaves {
-        height += noise.get([world_x as f64 * frequency, world_z as f64 * frequency]) * amplitude;
-        amplitude *= 0.5;
-        frequency *= 2.0;
-    }
-
-    // Cast to i32 first to match terrain generation (blocky terrain)
-    let block_height = (config.base_height + height * config.height_scale) as i32;
-    block_height as f32
+    let (terrain_height, _biome) =
+        crate::generation::terrain_height_at(world_x.floor() as i32, world_z.floor() as i32, config);
+    terrain_height as f32
 }
 
 /// Convert world position to chunk coordinates (used in tests)
@@ -576,5 +564,16 @@ mod tests {
         assert_eq!(TERMINAL_VELOCITY, 78.0);
         assert_eq!(JUMP_VELOCITY, 8.4);
         assert_eq!(STEP_HEIGHT, 0.6);
+    }
+
+    #[test]
+    fn test_estimate_terrain_height_matches_generation() {
+        let config = TerrainConfig::default();
+        let estimated = estimate_terrain_height(32.0, 32.0, &config);
+        let (actual, _) = crate::generation::terrain_height_at(32, 32, &config);
+        assert_eq!(
+            estimated, actual as f32,
+            "Estimated height should match generation terrain height"
+        );
     }
 }

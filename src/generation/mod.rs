@@ -412,6 +412,70 @@ fn terrain_column(
     (terrain_height, biome)
 }
 
+/// Get the terrain surface height at a specific world (x, z) coordinate.
+///
+/// Uses the exact same biome-blended noise pipeline as chunk terrain generation,
+/// so the result matches the actual generated terrain even before chunks load.
+///
+/// Returns `(terrain_height, biome)` where `terrain_height` is the Y coordinate
+/// of the topmost solid surface block.
+pub fn terrain_height_at(world_x: i32, world_z: i32, config: &TerrainConfig) -> (i32, BiomeType) {
+    let terrain_noise = Simplex::new(config.seed);
+    let biome_noise = Simplex::new(config.seed.wrapping_add(config.biome_seed_offset));
+    let transition_noise = Perlin::new(config.seed.wrapping_add(config.biome_seed_offset + 500));
+    terrain_column(world_x, world_z, &terrain_noise, &biome_noise, &transition_noise, config)
+}
+
+/// Find a safe spawn height at the given world (x, z) position.
+///
+/// Uses the exact same biome-blended noise pipeline as terrain generation,
+/// so the result matches the actual generated terrain even before chunks load.
+///
+/// Returns `(feet_y, biome)` where `feet_y` is the Y coordinate to place
+/// the player's feet (one block above the terrain surface).
+///
+/// If the spawn position is underwater, searches outward in a spiral
+/// to find dry land within 64 blocks.
+pub fn find_safe_spawn_height(
+    world_x: i32,
+    world_z: i32,
+    config: &TerrainConfig,
+) -> (f32, BiomeType) {
+    let (height, biome) = terrain_height_at(world_x, world_z, config);
+    let effective_sea_level = config.sea_level + biome.params().sea_level_offset;
+
+    if height > effective_sea_level {
+        return ((height + 1) as f32, biome);
+    }
+
+    // Underwater -- spiral search outward for dry land
+    for radius in 1..=64_i32 {
+        // Top and bottom edges of the ring
+        for dx in -radius..=radius {
+            for &dz in &[-radius, radius] {
+                let (h, b) = terrain_height_at(world_x + dx, world_z + dz, config);
+                let eff_sl = config.sea_level + b.params().sea_level_offset;
+                if h > eff_sl {
+                    return ((h + 1) as f32, b);
+                }
+            }
+        }
+        // Left and right edges of the ring (excluding corners already checked)
+        for dz in (-radius + 1)..radius {
+            for &dx in &[-radius, radius] {
+                let (h, b) = terrain_height_at(world_x + dx, world_z + dz, config);
+                let eff_sl = config.sea_level + b.params().sea_level_offset;
+                if h > eff_sl {
+                    return ((h + 1) as f32, b);
+                }
+            }
+        }
+    }
+
+    // Fallback: spawn above water level
+    ((effective_sea_level + 1) as f32, biome)
+}
+
 /// Generates terrain for a chunk using simplex noise and biome parameters.
 ///
 /// When biome blending is enabled, terrain shape (amplitude, frequency) is
@@ -2312,5 +2376,109 @@ mod tests {
                 }
             }
         }
+    }
+
+    // ====================================================================
+    // Spawn height tests
+    // ====================================================================
+
+    #[test]
+    fn test_terrain_height_at_deterministic() {
+        let config = TerrainConfig::default();
+        let (h1, b1) = terrain_height_at(32, 32, &config);
+        let (h2, b2) = terrain_height_at(32, 32, &config);
+        assert_eq!(h1, h2);
+        assert_eq!(b1, b2);
+    }
+
+    #[test]
+    fn test_terrain_height_at_matches_chunk_generation() {
+        let config = TerrainConfig::default();
+        let (height, _biome) = terrain_height_at(0, 0, &config);
+
+        // Generate the chunk containing this column at the surface height
+        let chunk_y = height.div_euclid(CHUNK_SIZE as i32);
+        let mut chunk = Chunk::new(IVec3::new(0, chunk_y, 0));
+        generate_chunk_terrain(&mut chunk, &config);
+
+        let local_y = height.rem_euclid(CHUNK_SIZE as i32) as usize;
+        let surface_block = chunk.get_block(0, local_y, 0);
+        assert_ne!(
+            surface_block,
+            BlockType::Air,
+            "Surface at terrain_height={} should be solid, got {:?}",
+            height, surface_block
+        );
+
+        // Block above surface (if within same chunk) should be air or water
+        if local_y + 1 < CHUNK_SIZE {
+            let above = chunk.get_block(0, local_y + 1, 0);
+            assert!(
+                above == BlockType::Air || above == BlockType::Water,
+                "Block above terrain surface should be air/water, got {:?}",
+                above
+            );
+        }
+    }
+
+    #[test]
+    fn test_find_safe_spawn_height_above_terrain() {
+        let config = TerrainConfig::default();
+        let (spawn_y, _biome) = find_safe_spawn_height(32, 32, &config);
+        let (terrain_h, _) = terrain_height_at(32, 32, &config);
+        assert_eq!(
+            spawn_y, (terrain_h + 1) as f32,
+            "Player feet should be one block above terrain surface"
+        );
+    }
+
+    #[test]
+    fn test_find_safe_spawn_height_deterministic() {
+        let config = TerrainConfig::default();
+        let (y1, b1) = find_safe_spawn_height(32, 32, &config);
+        let (y2, b2) = find_safe_spawn_height(32, 32, &config);
+        assert_eq!(y1, y2);
+        assert_eq!(b1, b2);
+    }
+
+    #[test]
+    fn test_find_safe_spawn_height_not_underwater() {
+        // Use a config where sea level is very high
+        let config = TerrainConfig {
+            sea_level: 80,
+            ..Default::default()
+        };
+        let (spawn_y, biome) = find_safe_spawn_height(0, 0, &config);
+        let eff_sea = config.sea_level + biome.params().sea_level_offset;
+        assert!(
+            spawn_y as i32 > eff_sea,
+            "Player should not spawn underwater: spawn_y={}, sea_level={}",
+            spawn_y, eff_sea
+        );
+    }
+
+    #[test]
+    fn test_find_safe_spawn_height_various_positions() {
+        let config = TerrainConfig::default();
+        for &x in &[0, 16, 32, 64, 128, -32, -64] {
+            for &z in &[0, 16, 32, 64, 128, -32, -64] {
+                let (y, _) = find_safe_spawn_height(x, z, &config);
+                assert!(
+                    y > 0.0 && y < 200.0,
+                    "Spawn at ({},{}) gave unreasonable Y={}",
+                    x, z, y
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_find_safe_spawn_height_different_seeds() {
+        let config_a = TerrainConfig { seed: 1, ..Default::default() };
+        let config_b = TerrainConfig { seed: 99999, ..Default::default() };
+        let (ya, _) = find_safe_spawn_height(32, 32, &config_a);
+        let (yb, _) = find_safe_spawn_height(32, 32, &config_b);
+        // Different seeds should (almost certainly) produce different heights
+        assert_ne!(ya, yb, "Different seeds should produce different terrain");
     }
 }

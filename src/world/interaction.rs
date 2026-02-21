@@ -130,7 +130,7 @@ fn dirty_neighbors_if_boundary(
             let neighbor_pos = chunk_pos + offset;
             if let Some(&entity) = chunk_manager.chunks.get(&neighbor_pos) {
                 if let Ok(mut neighbor_chunk) = chunks.get_mut(entity) {
-                    neighbor_chunk.dirty = true;
+                    neighbor_chunk.mark_dirty();
                 }
             }
         }
@@ -208,7 +208,7 @@ fn break_block(
             local.z as usize,
             BlockType::Air,
         );
-        chunk.dirty = true;
+        // set_block already calls mark_dirty(); just flag as player-modified
         chunk.modified = true;
 
         // Invalidate cached mesh since block data changed
@@ -276,7 +276,7 @@ fn place_block(
             local.z as usize,
             selected_block.block_type,
         );
-        chunk.dirty = true;
+        // set_block already calls mark_dirty(); just flag as player-modified
         chunk.modified = true;
 
         // Invalidate cached mesh since block data changed

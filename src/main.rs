@@ -15,6 +15,7 @@ use procedural_worlds::creatures;
 use procedural_worlds::drops;
 use procedural_worlds::editor;
 use procedural_worlds::engine;
+use procedural_worlds::generation;
 use procedural_worlds::health;
 use procedural_worlds::inventory;
 use procedural_worlds::inventory_health;
@@ -91,23 +92,33 @@ fn main() {
 }
 
 /// Initial scene setup - creates player entity with camera, and lighting
-fn setup_scene(mut commands: Commands) {
+fn setup_scene(
+    mut commands: Commands,
+    terrain_config: Res<generation::TerrainConfig>,
+) {
     info!("Procedural Worlds Engine v{}", env!("CARGO_PKG_VERSION"));
     info!("Setting up initial scene...");
+
+    // Calculate terrain-aware spawn position so the player lands on solid ground
+    let spawn_x = 32;
+    let spawn_z = 32;
+    let (spawn_y, biome) = generation::find_safe_spawn_height(spawn_x, spawn_z, &terrain_config);
 
     // Spawn player entity with camera as child
     // Position is FEET position, camera is offset by eye height (1.62)
     // Start in walking mode with gravity
-    let player_feet_y = 100.0 - actors::CapsuleCollider::EYE_HEIGHT; // Eyes at 100 (above base_height=64)
-    let player_id = actors::spawn_player_flying(
+    let player_id = actors::spawn_player(
         &mut commands,
-        Vec3::new(32.0, player_feet_y, 32.0),
+        Vec3::new(spawn_x as f32, spawn_y, spawn_z as f32),
     );
-    info!("Spawned player entity: {:?}", player_id);
+    info!(
+        "Spawned player entity: {:?} at ({}, {}, {}) in {:?} biome",
+        player_id, spawn_x, spawn_y, spawn_z, biome
+    );
 
     // NOTE: DirectionalLight (sun) and AmbientLight are now managed by
     // DayNightPlugin — see engine::lighting
 
-    info!("Scene setup complete! Player spawned, terrain will generate around you.");
+    info!("Scene setup complete! Player spawned on terrain, gravity active.");
     info!("Controls: WASD move, Mouse look, F toggle fly, N toggle noclip, F4 profiler");
 }
