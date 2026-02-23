@@ -461,16 +461,19 @@ fn add_greedy_face(
 /// Determine whether a face of `block` should be rendered given its `neighbor`.
 ///
 /// - Air never renders faces.
-/// - Water hides faces adjacent to other water (internal culling), but shows
-///   faces adjacent to air or any other transparent block.
+/// - Water hides faces adjacent to other water (internal culling) and adjacent
+///   to solid blocks (prevents z-fighting). Only shows faces toward air or
+///   other transparent non-water blocks.
 /// - Solid blocks show faces when the neighbor is transparent (air or water).
 fn should_render_face(block: BlockType, neighbor: BlockType) -> bool {
     if block == BlockType::Air {
         return false;
     }
     if block == BlockType::Water {
-        // Water-to-water faces are hidden; water-to-anything-else is shown.
-        return neighbor != BlockType::Water;
+        // Water-to-water and water-to-solid faces are hidden.
+        // Only render water faces toward air (or other transparent non-water blocks)
+        // to prevent z-fighting with solid block faces.
+        return neighbor.is_transparent() && neighbor != BlockType::Water;
     }
     // Solid blocks: show face when neighbor is transparent
     neighbor.is_transparent()
@@ -2111,5 +2114,56 @@ mod tests {
             mesh_vertex_count(&mesh_empty_neighbors),
             "empty neighbors should produce the same mesh as legacy (no neighbor data)"
         );
+    }
+
+    // ==================================================================
+    //  Water face culling tests
+    // ==================================================================
+
+    #[test]
+    fn test_water_does_not_render_toward_solid() {
+        // Water should NOT render faces toward solid blocks (prevents z-fighting).
+        assert!(!should_render_face(BlockType::Water, BlockType::Stone));
+        assert!(!should_render_face(BlockType::Water, BlockType::Dirt));
+        assert!(!should_render_face(BlockType::Water, BlockType::Grass));
+        assert!(!should_render_face(BlockType::Water, BlockType::Sand));
+    }
+
+    #[test]
+    fn test_water_renders_toward_air() {
+        // Water SHOULD render faces toward air (the water surface).
+        assert!(should_render_face(BlockType::Water, BlockType::Air));
+    }
+
+    #[test]
+    fn test_water_does_not_render_toward_water() {
+        // Water-to-water faces are hidden (internal culling).
+        assert!(!should_render_face(BlockType::Water, BlockType::Water));
+    }
+
+    #[test]
+    fn test_solid_renders_toward_water() {
+        // Solid blocks SHOULD render faces toward water (underwater terrain visible).
+        assert!(should_render_face(BlockType::Stone, BlockType::Water));
+        assert!(should_render_face(BlockType::Dirt, BlockType::Water));
+        assert!(should_render_face(BlockType::Sand, BlockType::Water));
+    }
+
+    #[test]
+    fn test_solid_renders_toward_air() {
+        assert!(should_render_face(BlockType::Stone, BlockType::Air));
+    }
+
+    #[test]
+    fn test_solid_does_not_render_toward_solid() {
+        assert!(!should_render_face(BlockType::Stone, BlockType::Stone));
+        assert!(!should_render_face(BlockType::Dirt, BlockType::Stone));
+    }
+
+    #[test]
+    fn test_air_never_renders() {
+        assert!(!should_render_face(BlockType::Air, BlockType::Air));
+        assert!(!should_render_face(BlockType::Air, BlockType::Stone));
+        assert!(!should_render_face(BlockType::Air, BlockType::Water));
     }
 }
