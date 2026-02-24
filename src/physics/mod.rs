@@ -23,6 +23,7 @@ use crate::generation::TerrainConfig;
 use crate::world::{Chunk, ChunkManager, CHUNK_SIZE};
 
 pub mod collision;
+pub mod swimming;
 
 pub use collision::{
     check_ceiling, check_ground, resolve_collision, CollisionParams,
