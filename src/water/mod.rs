@@ -195,6 +195,33 @@ pub fn water_render_height(level: u8) -> f32 {
     }
 }
 
+/// Compute how deeply a point is submerged as a fraction (0.0–1.0).
+///
+/// Returns 0.0 if the position is at or above the water surface (or no water),
+/// and 1.0 if fully submerged at the bottom of the water block.
+/// Intermediate values scale linearly with depth below the surface.
+///
+/// This is the bridge between the water level map and swimming physics:
+/// pass the result to `swimming::net_vertical_acceleration` as `depth_fraction`.
+pub fn compute_depth_fraction(pos: Vec3, water_levels: &WaterLevelMap) -> f32 {
+    let block_pos = IVec3::new(
+        pos.x.floor() as i32,
+        pos.y.floor() as i32,
+        pos.z.floor() as i32,
+    );
+    let level = water_levels.get_level(block_pos);
+    if level == 0 {
+        return 0.0;
+    }
+    let height = water_render_height(level);
+    let local_y = pos.y - block_pos.y as f32;
+    if local_y >= height {
+        return 0.0;
+    }
+    // Fraction: 0.0 at surface, 1.0 at block floor
+    ((height - local_y) / height).clamp(0.0, 1.0)
+}
+
 /// Check if a world position is submerged in water.
 ///
 /// Returns true if the position is inside a water block and the Y coordinate
@@ -511,6 +538,77 @@ mod tests {
         assert!(is_submerged(Vec3::new(5.5, 10.3, 5.5), &map));
         // At y=10.5, local_y = 0.5 > 0.4286 -> not submerged
         assert!(!is_submerged(Vec3::new(5.5, 10.5, 5.5), &map));
+    }
+
+    #[test]
+    fn test_depth_fraction_no_water() {
+        let map = WaterLevelMap::default();
+        assert_eq!(compute_depth_fraction(Vec3::new(5.5, 10.5, 5.5), &map), 0.0);
+    }
+
+    #[test]
+    fn test_depth_fraction_above_surface() {
+        let mut map = WaterLevelMap::default();
+        map.set_level(IVec3::new(5, 10, 5), MAX_WATER_LEVEL);
+        // Water height is 0.875; local_y = 0.9 is above surface
+        assert_eq!(compute_depth_fraction(Vec3::new(5.5, 10.9, 5.5), &map), 0.0);
+    }
+
+    #[test]
+    fn test_depth_fraction_at_surface() {
+        let mut map = WaterLevelMap::default();
+        map.set_level(IVec3::new(5, 10, 5), MAX_WATER_LEVEL);
+        let height = water_render_height(MAX_WATER_LEVEL); // 0.875
+        let frac = compute_depth_fraction(Vec3::new(5.5, 10.0 + height, 5.5), &map);
+        assert!(frac.abs() < 0.001, "At surface should be ~0.0, got {}", frac);
+    }
+
+    #[test]
+    fn test_depth_fraction_at_bottom() {
+        let mut map = WaterLevelMap::default();
+        map.set_level(IVec3::new(5, 10, 5), MAX_WATER_LEVEL);
+        let frac = compute_depth_fraction(Vec3::new(5.5, 10.0, 5.5), &map);
+        assert!((frac - 1.0).abs() < 0.001, "At bottom should be ~1.0, got {}", frac);
+    }
+
+    #[test]
+    fn test_depth_fraction_half_submerged() {
+        let mut map = WaterLevelMap::default();
+        map.set_level(IVec3::new(5, 10, 5), MAX_WATER_LEVEL);
+        let height = water_render_height(MAX_WATER_LEVEL); // 0.875
+        let mid_y = 10.0 + height / 2.0;
+        let frac = compute_depth_fraction(Vec3::new(5.5, mid_y, 5.5), &map);
+        assert!((frac - 0.5).abs() < 0.01, "Half submerged should be ~0.5, got {}", frac);
+    }
+
+    #[test]
+    fn test_depth_fraction_partial_water_level() {
+        let mut map = WaterLevelMap::default();
+        map.set_level(IVec3::new(5, 10, 5), 3);
+        let h = water_render_height(3); // 3/7 ≈ 0.4286
+        // At block floor: fraction = 1.0
+        let frac = compute_depth_fraction(Vec3::new(5.5, 10.0, 5.5), &map);
+        assert!((frac - 1.0).abs() < 0.001, "At bottom of partial water should be 1.0, got {}", frac);
+        // Above partial water: fraction = 0.0
+        let frac2 = compute_depth_fraction(Vec3::new(5.5, 10.0 + h + 0.01, 5.5), &map);
+        assert_eq!(frac2, 0.0);
+    }
+
+    #[test]
+    fn test_depth_fraction_consistent_with_is_submerged() {
+        let mut map = WaterLevelMap::default();
+        map.set_level(IVec3::new(5, 10, 5), MAX_WATER_LEVEL);
+        // If submerged, depth_fraction > 0; if not, depth_fraction == 0
+        let test_positions = [
+            Vec3::new(5.5, 10.3, 5.5),  // submerged
+            Vec3::new(5.5, 10.9, 5.5),  // above surface
+            Vec3::new(5.5, 10.0, 5.5),  // at bottom
+        ];
+        for pos in test_positions {
+            let sub = is_submerged(pos, &map);
+            let frac = compute_depth_fraction(pos, &map);
+            assert_eq!(sub, frac > 0.0, "Submerged={} but depth_fraction={} at {:?}", sub, frac, pos);
+        }
     }
 
     #[test]
