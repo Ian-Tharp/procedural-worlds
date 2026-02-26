@@ -6,6 +6,8 @@
 //! - Flow simulation runs at 4 updates/sec with max 64 block updates per tick
 //! - Swimming physics modify gravity, speed, and add buoyancy
 
+pub mod current;
+
 use std::collections::{HashMap, HashSet, VecDeque};
 
 use bevy::prelude::*;
