@@ -15,6 +15,7 @@ pub mod drops;
 pub mod editor;
 pub mod engine;
 pub mod generation;
+pub mod particles;
 pub mod health;
 pub mod inventory;
 pub mod inventory_health;
