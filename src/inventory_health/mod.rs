@@ -5,6 +5,8 @@
 //! - Death drops: when a player dies, drop all inventory items as loot entities
 //! - HUD indicators: show available food items and their restoration amounts
 
+use std::f32::consts::TAU;
+
 use bevy::prelude::*;
 use bevy_egui::{EguiContexts, EguiSet, egui};
 
@@ -236,7 +238,7 @@ fn spawn_dropped_loot(
     for event in drop_events.read() {
         for (i, stack) in event.items.iter().enumerate() {
             // Scatter items around the death position
-            let angle = (i as f32 / event.items.len() as f32) * std::f32::consts::TAU;
+            let angle = (i as f32 / event.items.len() as f32) * TAU;
             let offset = Vec3::new(angle.cos() * 1.5, 0.5, angle.sin() * 1.5);
             let pos = event.position + offset;
 

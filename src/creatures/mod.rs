@@ -4,6 +4,8 @@
 //! Passive mobs (Cow, Sheep, Chicken) wander and flee when hit.
 //! Hostile mobs (Zombie, Skeleton, Spider) chase and attack the player.
 
+use std::f32::consts::TAU;
+
 use bevy::prelude::*;
 use rand::Rng;
 
@@ -270,7 +272,7 @@ pub fn creature_spawning_system(
     };
 
     // Pick a random spawn position around the player
-    let angle: f32 = rng.gen_range(0.0..std::f32::consts::TAU);
+    let angle: f32 = rng.gen_range(0.0..TAU);
     let distance: f32 = rng.gen_range(MIN_SPAWN_DISTANCE..SPAWN_RADIUS);
     let spawn_pos = Vec3::new(
         player_pos.x + angle.cos() * distance,
@@ -342,7 +344,7 @@ pub fn creature_ai_system(
                 } else if ai.behavior_timer <= 0.0 {
                     // Random chance to start wandering
                     if rng.gen_range(0.0..1.0) < 0.3 {
-                        let angle: f32 = rng.gen_range(0.0..std::f32::consts::TAU);
+                        let angle: f32 = rng.gen_range(0.0..TAU);
                         ai.move_direction = Vec3::new(angle.cos(), 0.0, angle.sin());
                         ai.behavior = CreatureBehavior::Wander;
                         ai.behavior_timer = rng.gen_range(2.0..5.0);
