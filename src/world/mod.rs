@@ -35,6 +35,7 @@ pub mod persistence;
 pub mod preload_hints;
 pub mod render_batching;
 pub mod save;
+pub mod schematic;
 pub mod streaming;
 pub mod texture_atlas;
 pub mod texture_variation;
