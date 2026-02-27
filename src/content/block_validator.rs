@@ -458,6 +458,7 @@ mod tests {
             hardness: 3.0,
             tool_required: "pickaxe".to_string(),
             category: BlockCategory::Natural,
+            light_emission: 0,
         }
     }
 

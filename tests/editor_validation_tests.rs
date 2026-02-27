@@ -14,6 +14,7 @@ fn test_block() -> BlockDefinition {
         hardness: 1.0,
         tool_required: "pickaxe".into(),
         category: BlockCategory::Natural,
+        light_emission: 0,
     }
 }
 

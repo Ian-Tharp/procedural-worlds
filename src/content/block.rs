@@ -78,6 +78,10 @@ pub struct BlockDefinition {
     /// Visual properties
     #[serde(default)]
     pub visuals: BlockVisuals,
+    /// Light emission level (0–15, 0 = no light).
+    /// Used by the light propagation system to seed BFS.
+    #[serde(default)]
+    pub light_emission: u8,
     /// Mining hardness (1.0 = dirt, 5.0 = obsidian)
     #[serde(default = "default_hardness")]
     pub hardness: f32,
@@ -120,6 +124,7 @@ impl BlockDefinition {
             numeric_id,
             physics,
             visuals,
+            light_emission: crate::world::light_propagation::block_light_emission(block_type),
             hardness: block_type_hardness(block_type),
             tool_required: block_type_tool(block_type),
             category,
