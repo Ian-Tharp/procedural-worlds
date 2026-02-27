@@ -13,16 +13,12 @@ use crate::actors::{Grounded, Movement, Player, Velocity};
 // ============================================================================
 
 /// Game mode — controls whether damage, hunger, etc. are active.
-#[derive(Resource, Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Resource, Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum GameMode {
+    /// Default to creative for development
+    #[default]
     Creative,
     Survival,
-}
-
-impl Default for GameMode {
-    fn default() -> Self {
-        GameMode::Creative // Default to creative for development
-    }
 }
 
 // ============================================================================

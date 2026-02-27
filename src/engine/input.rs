@@ -158,7 +158,7 @@ impl InputMap {
         // Add to forward map
         self.bindings
             .entry(action)
-            .or_insert_with(Vec::new)
+            .or_default()
             .push(binding.clone());
         
         // Add to reverse map

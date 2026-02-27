@@ -127,19 +127,10 @@ pub fn default_recipes() -> Vec<Recipe> {
 // ============================================================================
 
 /// Tracks whether the crafting UI is open and which recipe is selected.
-#[derive(Resource, Debug)]
+#[derive(Resource, Debug, Default)]
 pub struct CraftingState {
     pub open: bool,
     pub selected_recipe: Option<usize>,
-}
-
-impl Default for CraftingState {
-    fn default() -> Self {
-        Self {
-            open: false,
-            selected_recipe: None,
-        }
-    }
 }
 
 // ============================================================================

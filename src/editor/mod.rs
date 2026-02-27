@@ -50,7 +50,7 @@ pub struct EditorPlugin;
 
 impl Plugin for EditorPlugin {
     fn build(&self, app: &mut App) {
-        app.add_plugins(FrameTimeDiagnosticsPlugin::default())
+        app.add_plugins(FrameTimeDiagnosticsPlugin)
             .add_plugins(BlockHighlightPlugin)
             .add_plugins(WorldGenPanelPlugin)
             .add_plugins(crate::rendering::ShaderHotReloadPlugin)

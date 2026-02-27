@@ -288,7 +288,7 @@ pub fn weather_hud_system(
         None
     };
 
-    let base_temp = biome.map(|b| biome_base_temperature(b)).unwrap_or(20.0);
+    let base_temp = biome.map(biome_base_temperature).unwrap_or(20.0);
 
     let time_offset = day_night
         .as_ref()
