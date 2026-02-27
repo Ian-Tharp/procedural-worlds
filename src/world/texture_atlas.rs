@@ -1,8 +1,8 @@
-﻿//! Texture atlas system for block face textures.
+//! Texture atlas system for block face textures.
 //!
 //! Generates a procedural texture atlas at startup where each block type has
 //! per-face textures (e.g., grass top differs from grass sides). The atlas is
-//! a grid of 16×16-pixel tiles packed into a power-of-2 image.
+//! a grid of 16�16-pixel tiles packed into a power-of-2 image.
 //!
 //! Architecture is designed so that procedural generation can be swapped for
 //! PNG loading later.
@@ -12,6 +12,7 @@ use bevy::image::{Image, ImageAddressMode, ImageFilterMode, ImageSampler, ImageS
 use bevy::render::render_asset::RenderAssetUsages;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 
+use std::f32::consts::{PI, TAU};
 use super::BlockType;
 use super::meshing::Face;
 
@@ -48,49 +49,49 @@ pub fn block_face_texture(block: BlockType, face: Face) -> u32 {
 /// own tile slot. The assignment must stay in sync with `generate_tile_rgba`.
 pub fn block_textures(block: BlockType) -> BlockTextures {
     match block {
-        // Air — never rendered; placeholder index 0
+        // Air � never rendered; placeholder index 0
         BlockType::Air => BlockTextures { top: 0, bottom: 0, side: 0 },
 
-        // Stone — all faces: tile 0 (grey with noise/cracks)
+        // Stone � all faces: tile 0 (grey with noise/cracks)
         BlockType::Stone => BlockTextures { top: 0, bottom: 0, side: 0 },
 
-        // Dirt — all faces: tile 1 (brown with speckles)
+        // Dirt � all faces: tile 1 (brown with speckles)
         BlockType::Dirt => BlockTextures { top: 1, bottom: 1, side: 1 },
 
-        // Grass — top: tile 2 (green), bottom: tile 1 (dirt), sides: tile 3 (gradient)
+        // Grass � top: tile 2 (green), bottom: tile 1 (dirt), sides: tile 3 (gradient)
         BlockType::Grass => BlockTextures { top: 2, bottom: 1, side: 3 },
 
-        // Sand — all faces: tile 4 (tan/yellow grain)
+        // Sand � all faces: tile 4 (tan/yellow grain)
         BlockType::Sand => BlockTextures { top: 4, bottom: 4, side: 4 },
 
-        // Water — all faces: tile 5 (blue semi-transparent)
+        // Water � all faces: tile 5 (blue semi-transparent)
         BlockType::Water => BlockTextures { top: 5, bottom: 5, side: 5 },
 
-        // Wood — top/bottom: tile 6 (rings), sides: tile 7 (bark)
+        // Wood � top/bottom: tile 6 (rings), sides: tile 7 (bark)
         BlockType::Wood => BlockTextures { top: 6, bottom: 6, side: 7 },
 
-        // Leaves — all faces: tile 8 (varied green with holes)
+        // Leaves � all faces: tile 8 (varied green with holes)
         BlockType::Leaves => BlockTextures { top: 8, bottom: 8, side: 8 },
 
-        // Sandstone — all faces: tile 9 (layered tan)
+        // Sandstone � all faces: tile 9 (layered tan)
         BlockType::Sandstone => BlockTextures { top: 9, bottom: 9, side: 9 },
 
-        // Snow — all faces: tile 10 (white with subtle blue)
+        // Snow � all faces: tile 10 (white with subtle blue)
         BlockType::Snow => BlockTextures { top: 10, bottom: 10, side: 10 },
 
-        // Ice — all faces: tile 11 (light blue)
+        // Ice � all faces: tile 11 (light blue)
         BlockType::Ice => BlockTextures { top: 11, bottom: 11, side: 11 },
 
-        // Obsidian — all faces: tile 12 (dark purple/black)
+        // Obsidian � all faces: tile 12 (dark purple/black)
         BlockType::Obsidian => BlockTextures { top: 12, bottom: 12, side: 12 },
 
-        // VolcanicRock — all faces: tile 13 (dark grey + orange veins)
+        // VolcanicRock � all faces: tile 13 (dark grey + orange veins)
         BlockType::VolcanicRock => BlockTextures { top: 13, bottom: 13, side: 13 },
 
-        // Cactus — top: tile 14 (cactus top), sides: tile 15 (green stripes)
+        // Cactus � top: tile 14 (cactus top), sides: tile 15 (green stripes)
         BlockType::Cactus => BlockTextures { top: 14, bottom: 14, side: 15 },
 
-        // SandDunes — all faces: tile 16 (golden wave pattern)
+        // SandDunes � all faces: tile 16 (golden wave pattern)
         BlockType::SandDunes => BlockTextures { top: 16, bottom: 16, side: 16 },
 
         // Ores - distinct tile indices for each
@@ -116,12 +117,12 @@ pub const MAX_TILE_INDEX: u32 = 20;
 
 /// Compute the UV rectangle for a tile in the atlas.
 ///
-/// Returns `(u_min, v_min, u_size, v_size)` where a single 1×1 block face maps
+/// Returns `(u_min, v_min, u_size, v_size)` where a single 1�1 block face maps
 /// to `[u_min .. u_min + u_size, v_min .. v_min + v_size]`.
 ///
 /// Note on greedy meshing + atlases:
 /// - With a classic packed atlas and Bevy's `StandardMaterial`, you **cannot**
-///   "repeat within a single tile" just by scaling UVs — scaling makes the UVs
+///   "repeat within a single tile" just by scaling UVs � scaling makes the UVs
 ///   walk into neighboring tiles.
 /// - To truly tile per-block while still greedy-merging geometry, you'd need a
 ///   custom shader (or texture arrays) that applies `fract()` *within the tile*
@@ -215,7 +216,7 @@ pub struct BlockTextureAtlas {
 
 /// Build the procedural atlas `Image` and return it along with layout metadata.
 ///
-/// The image is `atlas_size × atlas_size` pixels, RGBA8, with `Nearest` filtering
+/// The image is `atlas_size � atlas_size` pixels, RGBA8, with `Nearest` filtering
 /// and `Repeat` address mode (required for greedy-mesh UV tiling).
 pub fn build_atlas_image(tile_size: u32, grid_size: u32) -> Image {
     let atlas_size = tile_size * grid_size;
@@ -287,7 +288,7 @@ pub fn setup_block_texture_atlas(
     // MAX_TILE_INDEX is inclusive, so we need at least MAX_TILE_INDEX + 1 tiles.
     if total_tiles <= MAX_TILE_INDEX {
         warn!(
-            "Texture atlas grid too small: {}×{} = {} tiles, but code uses tile indices up to {}. \
+            "Texture atlas grid too small: {}�{} = {} tiles, but code uses tile indices up to {}. \
              Increase render.atlas_grid_size or reduce MAX_TILE_INDEX/texture mappings.",
             grid_size,
             grid_size,
@@ -307,7 +308,7 @@ pub fn setup_block_texture_atlas(
     });
 
     info!(
-        "Block texture atlas created: {}×{} pixels, {} tiles ({}×{}px each)",
+        "Block texture atlas created: {}�{} pixels, {} tiles ({}�{}px each)",
         atlas_size, atlas_size, grid_size * grid_size, tile_size, tile_size,
     );
 }
@@ -334,7 +335,7 @@ fn multi_noise(x: u32, y: u32, seed: u32) -> f32 {
     n1 * 0.5 + n2 * 0.3 + n3 * 0.2
 }
 
-/// Cell/Voronoi noise — creates organic cobblestone/cell patterns.
+/// Cell/Voronoi noise � creates organic cobblestone/cell patterns.
 ///
 /// Returns 0.0 near cell centers and approaches 1.0 at cell boundaries.
 fn cell_noise(x: u32, y: u32, tile_size: u32, seed: u32, num_cells: u32) -> f32 {
@@ -373,7 +374,7 @@ fn cell_noise_with_id(x: u32, y: u32, tile_size: u32, seed: u32, num_cells: u32)
     ((min_dist / ts * 4.0).min(1.0), (second_dist / ts * 4.0).min(1.0), nearest)
 }
 
-/// Line distance — for crack/vein rendering.
+/// Line distance � for crack/vein rendering.
 fn dist_to_line(x: f32, y: f32, x1: f32, y1: f32, x2: f32, y2: f32) -> f32 {
     let dx = x2 - x1;
     let dy = y2 - y1;
@@ -423,7 +424,7 @@ fn generate_tile_rgba(tile_index: u32, tile_size: u32) -> Vec<u8> {
     let tsf = tile_size as f32;
 
     match tile_index {
-        // ── 0: Stone — cell-noise cobblestone with cracks and mineral speckles ──
+        // -- 0: Stone � cell-noise cobblestone with cracks and mineral speckles --
         0 => {
             let num_cells: u32 = 7;
             let cell_seed: u32 = 42;
@@ -465,7 +466,7 @@ fn generate_tile_rgba(tile_index: u32, tile_size: u32) -> Vec<u8> {
             }
         }
 
-        // ── 1: Dirt — warm brown with pebbles, organic patches, horizontal layering ──
+        // -- 1: Dirt � warm brown with pebbles, organic patches, horizontal layering --
         1 => {
             // Pre-generate 4 pebble positions
             let mut pebbles = [(0.0f32, 0.0f32, 0.0f32); 5];
@@ -486,7 +487,7 @@ fn generate_tile_rgba(tile_index: u32, tile_size: u32) -> Vec<u8> {
                     let mut b = 55.0 + variation * 0.6;
 
                     // Subtle horizontal layering
-                    let layer_val = ((y as f32 * 3.0 * std::f32::consts::PI / tsf).sin() * 0.3 + 0.5) * 5.0;
+                    let layer_val = ((y as f32 * 3.0 * PI / tsf).sin() * 0.3 + 0.5) * 5.0;
                     r += layer_val;
                     g += layer_val * 0.7;
                     b += layer_val * 0.4;
@@ -525,7 +526,7 @@ fn generate_tile_rgba(tile_index: u32, tile_size: u32) -> Vec<u8> {
             }
         }
 
-        // ── 2: Grass top — rich green with blade streaks, color patches, highlights ──
+        // -- 2: Grass top � rich green with blade streaks, color patches, highlights --
         2 => {
             // Pre-generate 18 blade streaks (1px wide, 3-5px long, random angles)
             let blade_count = 18usize;
@@ -533,7 +534,7 @@ fn generate_tile_rgba(tile_index: u32, tile_size: u32) -> Vec<u8> {
             for i in 0..blade_count {
                 let bx = noise_hash(i as u32, 0, 130) as f32 / 255.0 * tsf;
                 let by = noise_hash(i as u32, 1, 130) as f32 / 255.0 * tsf;
-                let angle = noise_hash(i as u32, 2, 130) as f32 / 255.0 * std::f32::consts::PI;
+                let angle = noise_hash(i as u32, 2, 130) as f32 / 255.0 * PI;
                 let len = 3.0 + (noise_hash(i as u32, 3, 130) as f32 / 255.0) * 2.0;
                 blades[i] = (bx, by, bx + angle.cos() * len, by + angle.sin() * len);
             }
@@ -582,7 +583,7 @@ fn generate_tile_rgba(tile_index: u32, tile_size: u32) -> Vec<u8> {
             }
         }
 
-        // ── 3: Grass side — green top ~18% with dangling blade tips, jagged transition, dirt bottom ──
+        // -- 3: Grass side � green top ~18% with dangling blade tips, jagged transition, dirt bottom --
         3 => {
             let green_rows = (tsf * 0.18) as u32;
 
@@ -617,7 +618,7 @@ fn generate_tile_rgba(tile_index: u32, tile_size: u32) -> Vec<u8> {
                         let b = (62.0 + (mn - 0.5) * 14.0).clamp(0.0, 255.0);
                         set(&mut data, x, y, r as u8, g as u8, b as u8, 255, ts);
                     } else if y < blade_tip {
-                        // Dangling blade tip zone — intermittent green pixels
+                        // Dangling blade tip zone � intermittent green pixels
                         let blade_noise = noise_hash(x, y, 177);
                         if blade_noise < 150 {
                             let fade = (y - green_rows) as f32 / (blade_tip - green_rows).max(1) as f32;
@@ -685,7 +686,7 @@ fn generate_tile_rgba(tile_index: u32, tile_size: u32) -> Vec<u8> {
             }
         }
 
-        // ── 4: Sand — warm tan with diagonal ripple pattern and grain ──
+        // -- 4: Sand � warm tan with diagonal ripple pattern and grain --
         4 => {
             let period = tsf / 5.3; // ~12px at 64
             for y in 0..ts {
@@ -693,7 +694,7 @@ fn generate_tile_rgba(tile_index: u32, tile_size: u32) -> Vec<u8> {
                     let mn = multi_noise(x, y, 210);
 
                     // Diagonal ripple pattern
-                    let ripple = ((x as f32 * 0.7 + y as f32 * 0.3) * std::f32::consts::TAU / period).sin() * 0.5 + 0.5;
+                    let ripple = ((x as f32 * 0.7 + y as f32 * 0.3) * TAU / period).sin() * 0.5 + 0.5;
 
                     let mut r = 220.0 + (mn - 0.5) * 16.0 + ripple * 10.0;
                     let mut g = 210.0 + (mn - 0.5) * 14.0 + ripple * 8.0;
@@ -722,7 +723,7 @@ fn generate_tile_rgba(tile_index: u32, tile_size: u32) -> Vec<u8> {
             }
         }
 
-        // ── 5: Water — deep blue with caustic cell-noise patches, semi-transparent ──
+        // -- 5: Water � deep blue with caustic cell-noise patches, semi-transparent --
         5 => {
             for y in 0..ts {
                 for x in 0..ts {
@@ -744,7 +745,7 @@ fn generate_tile_rgba(tile_index: u32, tile_size: u32) -> Vec<u8> {
             }
         }
 
-        // ── 6: Wood top — off-center concentric growth rings with radial grain ──
+        // -- 6: Wood top � off-center concentric growth rings with radial grain --
         6 => {
             // Slightly off-center ring origin
             let cx = tsf * 0.45;
@@ -758,8 +759,8 @@ fn generate_tile_rgba(tile_index: u32, tile_size: u32) -> Vec<u8> {
                     let dist = (dx * dx + dy * dy).sqrt();
                     let mn = multi_noise(x, y, 170);
 
-                    // Concentric growth rings — alternate lighter/darker bands
-                    let ring_freq = num_rings * std::f32::consts::PI / (tsf * 0.55);
+                    // Concentric growth rings � alternate lighter/darker bands
+                    let ring_freq = num_rings * PI / (tsf * 0.55);
                     let ring_val = (dist * ring_freq).sin() * 0.5 + 0.5; // 0-1
 
                     // Base tan-brown with ring modulation
@@ -787,7 +788,7 @@ fn generate_tile_rgba(tile_index: u32, tile_size: u32) -> Vec<u8> {
             }
         }
 
-        // ── 7: Wood bark — dark brown vertical furrows with horizontal cracks ──
+        // -- 7: Wood bark � dark brown vertical furrows with horizontal cracks --
         7 => {
             // Pre-generate 3 horizontal crack lines
             let mut cracks = [(0.0f32, 0.0f32, 0.0f32, 0.0f32); 3];
@@ -805,7 +806,7 @@ fn generate_tile_rgba(tile_index: u32, tile_size: u32) -> Vec<u8> {
 
                     // 4-5 vertical furrow strips with non-uniform spacing
                     let phase_mod = noise_hash(x / 6, 0, 183) as f32 / 255.0 * 1.5;
-                    let strip_val = ((xf * 4.5 * std::f32::consts::TAU / tsf + phase_mod).cos() + 1.0) * 0.5;
+                    let strip_val = ((xf * 4.5 * TAU / tsf + phase_mod).cos() + 1.0) * 0.5;
 
                     // Dark gaps where strip_val is low
                     let (base_r, base_g, base_b) = if strip_val < 0.2 {
@@ -840,7 +841,7 @@ fn generate_tile_rgba(tile_index: u32, tile_size: u32) -> Vec<u8> {
             }
         }
 
-        // ── 8: Leaves — random leaf blobs with gap holes and color variety ──
+        // -- 8: Leaves � random leaf blobs with gap holes and color variety --
         8 => {
             // Pre-generate 10 leaf blob centers
             let blob_count = 10usize;
@@ -892,7 +893,7 @@ fn generate_tile_rgba(tile_index: u32, tile_size: u32) -> Vec<u8> {
             }
         }
 
-        // ── 9: Sandstone — horizontal stratification layers with wavy boundaries ──
+        // -- 9: Sandstone � horizontal stratification layers with wavy boundaries --
         9 => {
             // Pre-compute 7 layer boundary y-positions (wavy)
             let num_layers = 7u32;
@@ -935,7 +936,7 @@ fn generate_tile_rgba(tile_index: u32, tile_size: u32) -> Vec<u8> {
             }
         }
 
-        // ── 10: Snow — near-white with subtle blue shadows and sparkle pixels ──
+        // -- 10: Snow � near-white with subtle blue shadows and sparkle pixels --
         10 => {
             for y in 0..ts {
                 for x in 0..ts {
@@ -967,7 +968,7 @@ fn generate_tile_rgba(tile_index: u32, tile_size: u32) -> Vec<u8> {
             }
         }
 
-        // ── 11: Ice — light blue with crack line network, bubbles, semi-transparent ──
+        // -- 11: Ice � light blue with crack line network, bubbles, semi-transparent --
         11 => {
             // Pre-generate 4 crack line segments forming a network
             let mut cracks = [(0.0f32, 0.0f32, 0.0f32, 0.0f32); 4];
@@ -1014,7 +1015,7 @@ fn generate_tile_rgba(tile_index: u32, tile_size: u32) -> Vec<u8> {
             }
         }
 
-        // ── 12: Obsidian — very dark with diagonal glossy streaks and purple tint ──
+        // -- 12: Obsidian � very dark with diagonal glossy streaks and purple tint --
         12 => {
             // Pre-generate 3 diagonal glossy streak lines
             let mut streaks = [(0.0f32, 0.0f32, 0.0f32, 0.0f32); 3];
@@ -1058,7 +1059,7 @@ fn generate_tile_rgba(tile_index: u32, tile_size: u32) -> Vec<u8> {
             }
         }
 
-        // ── 13: VolcanicRock — dark grey-brown with orange-red vein network, porous dots ──
+        // -- 13: VolcanicRock � dark grey-brown with orange-red vein network, porous dots --
         13 => {
             for y in 0..ts {
                 for x in 0..ts {
@@ -1101,7 +1102,7 @@ fn generate_tile_rgba(tile_index: u32, tile_size: u32) -> Vec<u8> {
             }
         }
 
-        // ── 14: Cactus top — central star pattern with darker rim and thorn dots ──
+        // -- 14: Cactus top � central star pattern with darker rim and thorn dots --
         14 => {
             let cx = tsf / 2.0;
             let cy = tsf / 2.0;
@@ -1129,7 +1130,7 @@ fn generate_tile_rgba(tile_index: u32, tile_size: u32) -> Vec<u8> {
                             38.0 + (mn - 0.5) * 8.0,
                         )
                     } else if arm_dist < 2.5 {
-                        // On a star arm — lighter
+                        // On a star arm � lighter
                         (
                             82.0 + (mn - 0.5) * 12.0,
                             158.0 + (mn - 0.5) * 16.0,
@@ -1157,7 +1158,7 @@ fn generate_tile_rgba(tile_index: u32, tile_size: u32) -> Vec<u8> {
             }
         }
 
-        // ── 15: Cactus side — 4 vertical ribs with darker valleys and thorn dots ──
+        // -- 15: Cactus side � 4 vertical ribs with darker valleys and thorn dots --
         15 => {
             let num_ribs = 4.0f32;
             let _rib_width = tsf / (num_ribs * 2.0); // ~8px at 64
@@ -1166,8 +1167,8 @@ fn generate_tile_rgba(tile_index: u32, tile_size: u32) -> Vec<u8> {
                 for x in 0..ts {
                     let mn = multi_noise(x, y, 350);
 
-                    // Vertical ribs using cosine — peaks are rib crests
-                    let rib_phase = (x as f32 * num_ribs * std::f32::consts::TAU / tsf).cos();
+                    // Vertical ribs using cosine � peaks are rib crests
+                    let rib_phase = (x as f32 * num_ribs * TAU / tsf).cos();
                     let on_rib = rib_phase > 0.0; // top half of cosine = rib
                     let rib_intensity = if on_rib { rib_phase } else { 0.0 };
 
@@ -1203,7 +1204,7 @@ fn generate_tile_rgba(tile_index: u32, tile_size: u32) -> Vec<u8> {
             }
         }
 
-        // ── 16: SandDunes — golden with prominent diagonal wind ripple waves ──
+        // -- 16: SandDunes � golden with prominent diagonal wind ripple waves --
         16 => {
             let period = tsf / 6.4; // ~10px at 64
             for y in 0..ts {
@@ -1211,9 +1212,9 @@ fn generate_tile_rgba(tile_index: u32, tile_size: u32) -> Vec<u8> {
                     let mn = multi_noise(x, y, 360);
 
                     // Prominent diagonal wind ripple waves
-                    let wave = ((x as f32 * 0.75 + y as f32 * 0.65) * std::f32::consts::TAU / period).sin() * 0.5 + 0.5;
+                    let wave = ((x as f32 * 0.75 + y as f32 * 0.65) * TAU / period).sin() * 0.5 + 0.5;
                     // Secondary subtle wave for complexity
-                    let wave2 = ((x as f32 * 0.3 - y as f32 * 0.9) * std::f32::consts::TAU / (period * 2.5)).sin() * 0.15 + 0.5;
+                    let wave2 = ((x as f32 * 0.3 - y as f32 * 0.9) * TAU / (period * 2.5)).sin() * 0.15 + 0.5;
 
                     let combined = wave * 0.8 + wave2 * 0.2;
 
@@ -1232,7 +1233,7 @@ fn generate_tile_rgba(tile_index: u32, tile_size: u32) -> Vec<u8> {
             }
         }
 
-        // ── 17: CopperOre — stone base with orange-brown copper veins ──
+        // -- 17: CopperOre � stone base with orange-brown copper veins --
         17 => {
             for y in 0..ts {
                 for x in 0..ts {
@@ -1273,7 +1274,7 @@ fn generate_tile_rgba(tile_index: u32, tile_size: u32) -> Vec<u8> {
             }
         }
         
-        // ── 18: IronOre — stone base with dark grey-brown iron deposits ──
+        // -- 18: IronOre � stone base with dark grey-brown iron deposits --
         18 => {
             for y in 0..ts {
                 for x in 0..ts {
@@ -1312,7 +1313,7 @@ fn generate_tile_rgba(tile_index: u32, tile_size: u32) -> Vec<u8> {
             }
         }
         
-        // ── 19: SilverOre — stone base with bright silver-white veins ──
+        // -- 19: SilverOre � stone base with bright silver-white veins --
         19 => {
             for y in 0..ts {
                 for x in 0..ts {
@@ -1352,7 +1353,7 @@ fn generate_tile_rgba(tile_index: u32, tile_size: u32) -> Vec<u8> {
             }
         }
         
-        // ── 20: GoldOre — stone base with rich golden veins ──
+        // -- 20: GoldOre � stone base with rich golden veins --
         20 => {
             for y in 0..ts {
                 for x in 0..ts {
@@ -1392,7 +1393,7 @@ fn generate_tile_rgba(tile_index: u32, tile_size: u32) -> Vec<u8> {
             }
         }
 
-        // ── Unused tiles: magenta debug fill ────────────
+        // -- Unused tiles: magenta debug fill ------------
         _ => {
             for y in 0..ts {
                 for x in 0..ts {
@@ -1416,24 +1417,24 @@ mod tests {
 
     #[test]
     fn test_atlas_uv_computation() {
-        // Tile 0 in a 16-tiles-per-row atlas with 16px tiles → 256px atlas
+        // Tile 0 in a 16-tiles-per-row atlas with 16px tiles ? 256px atlas
         let (u_min, v_min, u_size, v_size) = atlas_uv(0, 16, 16, 256);
         assert!((u_min - 0.0).abs() < 1e-6);
         assert!((v_min - 0.0).abs() < 1e-6);
         assert!((u_size - 1.0 / 16.0).abs() < 1e-6);
         assert!((v_size - 1.0 / 16.0).abs() < 1e-6);
 
-        // Tile 1 → second column
+        // Tile 1 ? second column
         let (u_min, v_min, _, _) = atlas_uv(1, 16, 16, 256);
         assert!((u_min - 1.0 / 16.0).abs() < 1e-6);
         assert!((v_min - 0.0).abs() < 1e-6);
 
-        // Tile 16 → first column, second row
+        // Tile 16 ? first column, second row
         let (u_min, v_min, _, _) = atlas_uv(16, 16, 16, 256);
         assert!((u_min - 0.0).abs() < 1e-6);
         assert!((v_min - 1.0 / 16.0).abs() < 1e-6);
 
-        // Tile 17 → second column, second row
+        // Tile 17 ? second column, second row
         let (u_min, v_min, _, _) = atlas_uv(17, 16, 16, 256);
         assert!((u_min - 1.0 / 16.0).abs() < 1e-6);
         assert!((v_min - 1.0 / 16.0).abs() < 1e-6);
