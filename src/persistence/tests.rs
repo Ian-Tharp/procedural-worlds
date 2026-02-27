@@ -392,3 +392,181 @@ fn test_state_format_extension() {
 fn test_state_format_default_is_bincode() {
     assert_eq!(StateFormat::default(), StateFormat::Bincode);
 }
+
+// ============================================================================
+// Save Management Utilities
+// ============================================================================
+
+#[test]
+fn test_save_exists_false_for_nonexistent() {
+    assert!(!save_exists("definitely_not_a_real_save_xyz123"));
+}
+
+#[test]
+fn test_save_exists_true_after_save() {
+    let session = format!("test_exists_{}", std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos());
+    
+    assert!(!save_exists(&session));
+    
+    let state = WorldState::new("test");
+    save_world_state(&state, &session, StateFormat::Bincode).unwrap();
+    
+    assert!(save_exists(&session));
+    
+    // Cleanup
+    let _ = fs::remove_dir_all(PathBuf::from("saves").join(&session));
+}
+
+#[test]
+fn test_get_save_info_nonexistent() {
+    let info = get_save_info("nonexistent_save_xyz456");
+    assert!(!info.is_valid);
+    assert_eq!(info.size_bytes, 0);
+}
+
+#[test]
+fn test_get_save_info_valid() {
+    let session = format!("test_info_{}", std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos());
+    
+    let state = sample_world_state();
+    save_world_state(&state, &session, StateFormat::Bincode).unwrap();
+    
+    let info = get_save_info(&session);
+    assert!(info.is_valid);
+    assert!(info.size_bytes > 0);
+    assert_eq!(info.format, StateFormat::Bincode);
+    assert_eq!(info.name, session);
+    assert!(info.modified_timestamp > 0);
+    
+    // Cleanup
+    let _ = fs::remove_dir_all(PathBuf::from("saves").join(&session));
+}
+
+#[test]
+fn test_delete_save_nonexistent_ok() {
+    // Deleting a nonexistent save should succeed (idempotent)
+    let result = delete_save("nonexistent_session_to_delete");
+    assert!(result.is_ok());
+}
+
+#[test]
+fn test_delete_save_removes_session() {
+    let session = format!("test_delete_{}", std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos());
+    
+    let state = WorldState::new("test");
+    save_world_state(&state, &session, StateFormat::Bincode).unwrap();
+    
+    assert!(save_exists(&session));
+    
+    let result = delete_save(&session);
+    assert!(result.is_ok());
+    assert!(!save_exists(&session));
+}
+
+#[test]
+fn test_rename_save() {
+    let old_name = format!("test_rename_old_{}", std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos());
+    let new_name = format!("test_rename_new_{}", std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos());
+    
+    let state = sample_world_state();
+    save_world_state(&state, &old_name, StateFormat::Bincode).unwrap();
+    
+    assert!(save_exists(&old_name));
+    assert!(!save_exists(&new_name));
+    
+    let result = rename_save(&old_name, &new_name);
+    assert!(result.is_ok());
+    
+    assert!(!save_exists(&old_name));
+    assert!(save_exists(&new_name));
+    
+    // Verify data is preserved
+    let loaded = load_world_state(&new_name, StateFormat::Bincode).unwrap();
+    assert_eq!(loaded.entity_count(), state.entity_count());
+    
+    // Cleanup
+    let _ = fs::remove_dir_all(PathBuf::from("saves").join(&new_name));
+}
+
+#[test]
+fn test_rename_save_nonexistent_fails() {
+    let result = rename_save("nonexistent_source_xyz", "some_dest");
+    assert!(result.is_err());
+    assert_eq!(result.unwrap_err().kind(), std::io::ErrorKind::NotFound);
+}
+
+#[test]
+fn test_rename_save_to_existing_fails() {
+    let name_a = format!("test_rename_a_{}", std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos());
+    let name_b = format!("test_rename_b_{}", std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos());
+    
+    let state = WorldState::new("test");
+    save_world_state(&state, &name_a, StateFormat::Bincode).unwrap();
+    save_world_state(&state, &name_b, StateFormat::Bincode).unwrap();
+    
+    let result = rename_save(&name_a, &name_b);
+    assert!(result.is_err());
+    assert_eq!(result.unwrap_err().kind(), std::io::ErrorKind::AlreadyExists);
+    
+    // Cleanup
+    let _ = fs::remove_dir_all(PathBuf::from("saves").join(&name_a));
+    let _ = fs::remove_dir_all(PathBuf::from("saves").join(&name_b));
+}
+
+#[test]
+fn test_duplicate_save() {
+    let source = format!("test_dup_src_{}", std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos());
+    let dest = format!("test_dup_dst_{}", std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos());
+    
+    let state = sample_world_state();
+    save_world_state(&state, &source, StateFormat::Bincode).unwrap();
+    
+    let result = duplicate_save(&source, &dest);
+    assert!(result.is_ok());
+    
+    // Both should exist
+    assert!(save_exists(&source));
+    assert!(save_exists(&dest));
+    
+    // Both should have same data
+    let loaded_src = load_world_state(&source, StateFormat::Bincode).unwrap();
+    let loaded_dst = load_world_state(&dest, StateFormat::Bincode).unwrap();
+    assert_eq!(loaded_src, loaded_dst);
+    
+    // Cleanup
+    let _ = fs::remove_dir_all(PathBuf::from("saves").join(&source));
+    let _ = fs::remove_dir_all(PathBuf::from("saves").join(&dest));
+}
+
+#[test]
+fn test_duplicate_save_nonexistent_fails() {
+    let result = duplicate_save("nonexistent_source_dup", "some_dest_dup");
+    assert!(result.is_err());
+    assert_eq!(result.unwrap_err().kind(), std::io::ErrorKind::NotFound);
+}
+
+#[test]
+fn test_list_saves_with_info() {
+    let session = format!("test_list_info_{}", std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos());
+    
+    let state = WorldState::new("test");
+    save_world_state(&state, &session, StateFormat::Bincode).unwrap();
+    
+    let saves = list_saves_with_info().unwrap();
+    let our_save = saves.iter().find(|s| s.name == session);
+    assert!(our_save.is_some());
+    assert!(our_save.unwrap().is_valid);
+    
+    // Cleanup
+    let _ = fs::remove_dir_all(PathBuf::from("saves").join(&session));
+}
