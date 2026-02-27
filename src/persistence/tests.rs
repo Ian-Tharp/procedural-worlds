@@ -570,3 +570,74 @@ fn test_list_saves_with_info() {
     // Cleanup
     let _ = fs::remove_dir_all(PathBuf::from("saves").join(&session));
 }
+
+// ============================================================================
+// Save versioning
+// ============================================================================
+
+#[test]
+fn test_save_with_version_header() {
+    let state = sample_world_state();
+    let bytes = serialize_world_state(&state, StateFormat::Bincode).unwrap();
+
+    // First 4 bytes must be the magic
+    assert_eq!(&bytes[0..4], b"PWLD", "Missing PWLD magic header");
+
+    // Next 4 bytes must be the current version (little-endian)
+    let version = u32::from_le_bytes([bytes[4], bytes[5], bytes[6], bytes[7]]);
+    assert_eq!(version, SaveVersion::CURRENT.as_u32());
+
+    // Must still round-trip correctly
+    let loaded = deserialize_world_state(&bytes, StateFormat::Bincode).unwrap();
+    assert_eq!(state, loaded);
+}
+
+#[test]
+fn test_load_unknown_version() {
+    // Craft a file with valid magic but unknown version 9999
+    let mut bytes = Vec::new();
+    bytes.extend_from_slice(b"PWLD");
+    bytes.extend_from_slice(&9999u32.to_le_bytes());
+    bytes.extend_from_slice(b"garbage payload");
+
+    let result = deserialize_world_state(&bytes, StateFormat::Bincode);
+    assert!(result.is_err());
+    let err = result.unwrap_err();
+    assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
+    assert!(
+        err.to_string().contains("Unknown save version"),
+        "Error should mention unknown version, got: {}",
+        err
+    );
+}
+
+#[test]
+fn test_load_legacy_v1_no_header() {
+    // Simulate a legacy V1 file: raw bincode with no header
+    let state = sample_world_state();
+    let raw_payload = bincode::serialize(&state).unwrap();
+
+    // deserialize_world_state should detect missing header and treat as V1
+    let loaded = deserialize_world_state(&raw_payload, StateFormat::Bincode).unwrap();
+    assert_eq!(state, loaded);
+}
+
+#[test]
+fn test_detect_save_version_current() {
+    let header = write_version_header(SaveVersion::CURRENT);
+    let mut bytes = header;
+    bytes.extend_from_slice(b"dummy");
+    let (version, offset) = detect_save_version(&bytes).unwrap();
+    assert_eq!(version, SaveVersion::CURRENT);
+    assert_eq!(offset, VERSION_HEADER_SIZE);
+}
+
+#[test]
+fn test_json_format_unaffected_by_versioning() {
+    // JSON format should NOT have the binary version header
+    let state = sample_world_state();
+    let bytes = serialize_world_state(&state, StateFormat::Json).unwrap();
+    assert_ne!(&bytes[0..4], b"PWLD", "JSON should not have binary header");
+    let loaded = deserialize_world_state(&bytes, StateFormat::Json).unwrap();
+    assert_eq!(state, loaded);
+}
