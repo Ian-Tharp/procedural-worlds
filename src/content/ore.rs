@@ -16,8 +16,7 @@ use serde::{Deserialize, Serialize};
 // ============================================================================
 
 /// Which biomes an ore can spawn in
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[derive(Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub enum BiomeFilter {
     /// Spawns in all biomes
     #[default]
