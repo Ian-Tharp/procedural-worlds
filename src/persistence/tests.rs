@@ -641,3 +641,55 @@ fn test_json_format_unaffected_by_versioning() {
     let loaded = deserialize_world_state(&bytes, StateFormat::Json).unwrap();
     assert_eq!(state, loaded);
 }
+
+// ============================================================================
+// Integration: versioning + management combined
+// ============================================================================
+
+#[test]
+fn test_duplicate_preserves_version_header() {
+    let source = format!("test_dup_ver_src_{}", std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos());
+    let dest = format!("test_dup_ver_dst_{}", std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos());
+    
+    let state = sample_world_state();
+    save_world_state(&state, &source, StateFormat::Bincode).unwrap();
+    duplicate_save(&source, &dest).unwrap();
+    
+    // Load duplicated save — should still have version header and deserialize correctly
+    let loaded = load_world_state(&dest, StateFormat::Bincode).unwrap();
+    assert_eq!(loaded, state);
+    
+    // Verify the raw bytes have the PWLD header
+    let path = save_file_path(&dest, StateFormat::Bincode);
+    let raw = fs::read(&path).unwrap();
+    assert_eq!(&raw[0..4], b"PWLD");
+    
+    // Cleanup
+    let _ = fs::remove_dir_all(PathBuf::from("saves").join(&source));
+    let _ = fs::remove_dir_all(PathBuf::from("saves").join(&dest));
+}
+
+#[test]
+fn test_migrate_v1_to_v2_no_op() {
+    // V1 → V2 migration should be a no-op (same schema)
+    let state = sample_world_state();
+    let payload = bincode::serialize(&state).unwrap();
+    let migrated = migrate(SaveVersion::V1, SaveVersion::V2, &payload).unwrap();
+    assert_eq!(payload, migrated);
+}
+
+#[test]
+fn test_migrate_same_version_is_identity() {
+    let data = b"some test data";
+    let result = migrate(SaveVersion::V2, SaveVersion::V2, data).unwrap();
+    assert_eq!(result, data);
+}
+
+#[test]
+fn test_cannot_downgrade_version() {
+    let data = b"some data";
+    let result = migrate(SaveVersion::V2, SaveVersion::V1, data);
+    assert!(result.is_err());
+}
